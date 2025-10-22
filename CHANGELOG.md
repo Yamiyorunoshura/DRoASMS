@@ -7,18 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- Initial project setup
-- Basic project structure
+### Planned
+- 完成 Discord Bot Python 模組化主流程
+- 建立 PostgreSQL schema 與遷移腳本
 
-## [0.1.0] - 2025-10-17
+## [0.1.0] - 2025-10-18
 
-### Added
-- Project initialization
-- README documentation
-- Apache 2.0 License
-- Rust project structure
-
-[Unreleased]: https://github.com/Yamiyorunoshura/DRoASMS/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/Yamiyorunoshura/DRoASMS/releases/tag/v0.1.0
-
+### Changed
+- 將專案技術棧更新為 Python 與 PostgreSQL
+- 調整 README 與開發流程文件以支援 Python 工具鏈
+- 更新 `.gitignore` 以忽略 Python 相關暫存檔案與虛擬環境

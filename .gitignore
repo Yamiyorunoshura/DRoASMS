@@ -65,3 +65,12 @@ Desktop.ini
 .directory
 .Trash-*
 
+# Codex
+.codex/
+
+# Github spec-kit
+.specify/
+spec/
+
+# Shell environment
+.envrc
