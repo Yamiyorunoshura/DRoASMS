@@ -18,6 +18,7 @@ Cargo.lock
 .env
 .env.local
 .env.*.local
+.env*
 
 # IDE
 .vscode/
@@ -35,6 +36,18 @@ Cargo.lock
 *.dll
 *.so
 *.dylib
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Test coverage
 *.profraw
@@ -70,7 +83,16 @@ Desktop.ini
 
 # Github spec-kit
 .specify/
-spec/
+specs/
 
 # Shell environment
 .envrc
+
+# Claude code
+.claude/
+
+# Pytest
+.pytest_cache/
+
+# Ruff
+.ruff_cache/

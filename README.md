@@ -8,9 +8,10 @@ DRoASMS 是以 Python 打造的 Discord 機器人原型，專注於社群的經�
 - 互動式社群參與體驗
 
 ## 系統需求
-- Python 3.12 或更新版本（完整支援 async/await）
-- PostgreSQL 16 以上版本（儲存帳戶、交易與治理資料）
-- 推薦使用 `uv` 或 `pip` 做為套件管理工具
+- Python 3.13（專案使用 `uv python pin 3.13` 鎖定解譯器）
+- PostgreSQL 15 以上版本（儲存帳戶、交易與治理資料）
+- 必須啟用 PostgreSQL 擴充套件：`pg_cron`、`pgcrypto`
+- 推薦使用 `uv` 作為套件管理工具
 
 ## 安裝步驟
 ```bash
@@ -46,13 +47,13 @@ python sunnycore/scripts/shard-architecture.py
 ```
 
 ## 環境設定
-在專案根目錄建立 `.env` 檔案，填入必要的 Discord 憑證與設定：
+複製 `.env.example` 產生 `.env` 檔案，填入必要的 Discord 憑證與設定。預設範例已包含：
 
-```
-DISCORD_TOKEN=your_bot_token_here
-```
+- `DISCORD_TOKEN`
+- `DATABASE_URL`
+- `DISCORD_GUILD_ALLOWLIST`
 
-如果需要多個環境設定，可使用 `.env.development.local`、`.env.production.local` 等檔案搭配設定管理工具。
+若需要多個環境設定，可搭配 `.env.development.local`、`.env.production.local` 等檔案與設定管理工具。
 
 ## 測試與品質維護
 ```bash
