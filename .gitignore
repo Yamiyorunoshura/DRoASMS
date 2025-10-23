@@ -70,7 +70,19 @@ Desktop.ini
 
 # Github spec-kit
 .specify/
-spec/
+specs/
 
 # Shell environment
 .envrc
+
+# Ruff
+.ruff_cache/
+
+# Mypy
+.mypy_cache/
+
+# pytest
+.pytest_cache/
+
+# Virtual environment
+.venv/
