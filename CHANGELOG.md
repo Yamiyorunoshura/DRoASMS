@@ -8,8 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned
-- 完成 Discord Bot Python 模組化主流程
-- 建立 PostgreSQL schema 與遷移腳本
+- 進一步的監控與可觀測性（metrics/log tracing）
+- 更多治理功能與工作流程命令
+
+## [0.2.1] - 2025-10-23
+
+### Added
+- 新增 `compose.yaml` + `Dockerfile`，可透過 `docker compose up -d` 一鍵啟動 Bot 與 PostgreSQL（與選用 pgAdmin），避免因未啟動資料庫導致連線被拒。
+- 新增 `docker/init/001_extensions.sql`，首次啟動自動建立 `pgcrypto` 擴充。
+
+### Changed
+- README：擴充安裝與啟動指南，加入 Docker Compose（可直接啟動 Bot）、連線自測、故障排除，並新增「使用 Git 更新專案」章節。
+- 專案版本提升至 0.2.1。
+
+### Notes
+- Alembic 遷移 `004_economy_archival` 需要 `pg_cron`。若環境未安裝 `pg_cron`，可先升級至 `003_economy_adjustments` 後再升級至 `head`。
 
 ## [0.2.0] - 2025-10-23
 

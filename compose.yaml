@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: droasms-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: bot
+      POSTGRES_PASSWORD: bot
+      POSTGRES_DB: economy
+      TZ: UTC
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bot -d economy -h 127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: droasms-bot
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # 以 Compose 服務名稱存取資料庫，避免使用 localhost
+      DATABASE_URL: postgresql://bot:bot@postgres:5432/economy
+      # 預設先升到 003（官方 postgres 未內建 pg_cron，避免 004 失敗）
+      ALEMBIC_UPGRADE_TARGET: 003_economy_adjustments
+      PYTHONUNBUFFERED: "1"
+    restart: unless-stopped
+    command: >-
+      bash -lc "uv run alembic upgrade $${ALEMBIC_UPGRADE_TARGET:-003_economy_adjustments} && uv run -m src.bot.main"
+
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: droasms-pgadmin
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      TZ: UTC
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin:/var/lib/pgadmin
+    profiles: ["dev"]
+
+volumes:
+  pgdata:
+  pgadmin:
