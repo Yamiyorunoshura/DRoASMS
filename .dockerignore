@@ -1,0 +1,15 @@
+# Reduce Docker build context size
+.git/
+.gitignore
+.dockerignore
+.codex/
+.specify/
+specs/
+.venv/
+node_modules/
+__pycache__/
+*.py[cod]
+*.log*
+.env*
+coverage/
+.DS_Store
