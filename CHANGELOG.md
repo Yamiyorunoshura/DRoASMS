@@ -11,6 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 進一步的監控與可觀測性（metrics/log tracing）
 - 更多治理功能與工作流程命令
 
+## [0.2.2] - 2025-10-24
+
+### Added
+- 新增 `docker/Dockerfile`（基於 uv 的精簡建置流程）與 `docker/bin/entrypoint.sh`（啟動前環境檢查、DB 連線重試、Alembic 自動遷移、結構化 JSON 日誌事件）。
+- 新增 `src/infra/logging/config.py`：統一 JSON Lines 日誌格式（鍵包含 `ts`,`level`,`msg`,`event`），並內建敏感值遮罩（`token`/`authorization`/`password` 等）。
+- 新增契約與規格（`specs/002-docker-run-bot`）：Compose 環境變數 Schema、日誌事件 Schema、OpenAPI 草案等。
+- 新增測試覆蓋：
+  - contracts：`.env.example` 必要鍵驗證、日誌事件 Schema、日誌遮罩。
+  - integration：Compose 就緒（於 120s 內 `{"event":"bot.ready"}`）、依賴順序、外部 DB 覆寫/不可用（退出碼 69）、遷移失敗（退出碼 70）、缺少必要環境（退出碼 64）、重試退避參數行為等。
+- 新增 `scripts/check_image_layers.sh` 供鏡像層級敏感字樣掃描；新增 `.envrc`（direnv）。
+
+### Changed
+- 將根目錄 `Dockerfile` 移至 `docker/Dockerfile`，`compose.yaml` 改以新路徑建置；調整 `.dockerignore` 以縮小映像內容。
+- 更新 `.env.example`：新增 `ALEMBIC_UPGRADE_TARGET` 與 pgAdmin 預設設定與說明。
+- README：新增「日誌與可觀測性」章節，補充就緒事件與退出碼說明。
+
+### Security
+- 日誌遮罩常見敏感鍵，避免在 stdout 泄露密碼或 Token。
+
+### Notes
+- 無安裝 `pg_cron` 的環境預設遷移目標為 `003_economy_adjustments`；如需每日歸檔請安裝 `pg_cron` 後升級至 `head`。
+- 直接透過 Docker 建置時請使用 `-f docker/Dockerfile`。
+
 ## [0.2.1] - 2025-10-23
 
 ### Added

@@ -242,12 +242,13 @@ wheels = [
 
 [[package]]
 name = "droasms-bot"
-version = "0.2.0"
+version = "0.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
     { name = "discord-py" },
+    { name = "psycopg2-binary" },
     { name = "python-dotenv" },
     { name = "sqlalchemy" },
     { name = "structlog" },
@@ -257,7 +258,6 @@ dependencies = [
 dev = [
     { name = "black" },
     { name = "mypy" },
-    { name = "psycopg2-binary" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -268,6 +268,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.13.0,<2.0.0" },
     { name = "asyncpg", specifier = ">=0.30.0,<0.31.0" },
     { name = "discord-py", specifier = ">=2.4.0,<3.0.0" },
+    { name = "psycopg2-binary", specifier = ">=2.9.11" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.30,<3.0.0" },
     { name = "structlog", specifier = ">=24.1.0,<25.0.0" },
@@ -277,7 +278,6 @@ requires-dist = [
 dev = [
     { name = "black", specifier = ">=24.8.0,<25.0.0" },
     { name = "mypy", specifier = ">=1.11.0,<2.0.0" },
-    { name = "psycopg2-binary", specifier = ">=2.9.11" },
     { name = "pytest", specifier = ">=8.3.0,<9.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0,<0.24.0" },
     { name = "ruff", specifier = ">=0.6.0,<0.7.0" },

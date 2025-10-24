@@ -118,7 +118,7 @@ docker exec -it postgres psql -U bot -d economy -c "CREATE EXTENSION IF NOT EXIS
 專案已提供 `compose.yaml`（Docker Compose 預設支援的檔名；亦可使用 `docker-compose.yml/yaml`），可一鍵啟動「機器人 + PostgreSQL（與可選 pgAdmin）」。
 
 ```bash
-# 1) 準備 .env（至少要正確的 DISCORD_TOKEN；DATABASE_URL 會由 Compose 覆寫為指向 postgres 服務）
+# 1) 準備 .env（至少要正確的 DISCORD_TOKEN；Compose 會提供預設的 `DATABASE_URL` 指向 `postgres` 服務，但可由 `.env` 中的 `DATABASE_URL` 覆寫為外部資料庫）
 cp .env.example .env
 # 編輯 .env，填入 DISCORD_TOKEN 與（選填）DISCORD_GUILD_ALLOWLIST
 
@@ -128,13 +128,16 @@ docker compose up -d
 # 檢查健康狀態
 docker compose ps
 
-# （可選）啟用 pgAdmin 介面（在 5050 連線，帳密 admin@example.com / admin）
+# （可選）啟用 pgAdmin 介面（預設 8081，或以 .env 中 PGADMIN_PORT 覆寫；帳密 admin@example.com / admin）
 docker compose --profile dev up -d pgadmin
 
 # 停止 / 移除
 docker compose down        # 停止
 docker compose down -v     # 停止並刪除資料卷（會清空資料庫）
 ```
+
+> 目標：啟動後於 60 秒內觀察到 `{"event":"bot.ready"}`（P95 ≤ 120 秒）。
+> 可透過 `docker compose logs -f bot | rg '"event"\s*:\s*"bot.ready"'` 觀察就緒訊號。
 
 Compose 預設內容：
 - PostgreSQL：使用者 `bot`、密碼 `bot`、資料庫 `economy`、埠對外 `5432`
@@ -369,6 +372,23 @@ A: 請確認：
 - 機器人在線上且有權限存取頻道
 - 命令格式正確
 - 機器人有讀取訊息和發送訊息的權限
+
+## 日誌與可觀測性
+
+- 輸出格式：JSON Lines（每行一筆 JSON），核心鍵為 `ts`、`level`、`msg`、`event`。
+- 重要事件：
+  - `bot.ready`：機器人完成啟動與初始化（就緒訊號）。
+  - `db.connect.attempt` / `db.connect.retry` / `db.connect.success` / `db.unavailable`：入口腳本的資料庫連線重試流程與結果。
+  - `bot.migrate.start` / `bot.migrate.done` / `bot.migrate.error`：Alembic 遷移狀態。
+- 敏感遮罩：應用端日誌會遮罩常見敏感鍵（例如 `token`、`authorization`、`password` 等），避免在 stdout 洩露密碼或 Token。
+- 退出碼對照：
+  - `64`：缺少必要環境變數（例如未設定 `DISCORD_TOKEN`）。
+  - `69`：依賴不可用（例如資料庫在期限內不可達）。
+  - `70`：遷移失敗（Alembic 升級錯誤）。
+  - `78`：無效設定/Schema（例如 `DATABASE_URL` 非 `postgresql://` 開頭）。
+- 觀察就緒：
+  - `docker compose logs -f bot | rg '"event"\s*:\s*"bot.ready"'`
+  - 建議搭配 `jq`：`docker compose logs -f bot | jq -cr`
 
 ## 測試與品質維護
 ```bash

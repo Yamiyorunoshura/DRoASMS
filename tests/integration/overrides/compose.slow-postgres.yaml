@@ -1,0 +1,5 @@
+services:
+  postgres:
+    # 在啟動 PostgreSQL 前先延遲，模擬依賴未就緒情境
+    entrypoint: ["bash", "-lc", "sleep ${SLOW_START_SECONDS:-20}; exec docker-entrypoint.sh postgres"]
+

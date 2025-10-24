@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "droasms-bot"
-version = "0.2.1"
+version = "0.2.2"
 description = "Discord bot economy foundations."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -19,6 +19,7 @@ dependencies = [
     "SQLAlchemy>=2.0.30,<3.0.0",
     "structlog>=24.1.0,<25.0.0",
     "python-dotenv>=1.0.1,<2.0.0",
+    "psycopg2-binary>=2.9.11",
 ]
 
 [dependency-groups]
@@ -28,7 +29,6 @@ dev = [
     "mypy>=1.11.0,<2.0.0",
     "ruff>=0.6.0,<0.7.0",
     "black>=24.8.0,<25.0.0",
-    "psycopg2-binary>=2.9.11",
 ]
 
 [tool.hatch.build.targets.wheel]

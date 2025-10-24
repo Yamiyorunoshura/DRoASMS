@@ -13,8 +13,11 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 from src.db import pool as db_pool
+from src.infra.logging.config import configure_logging
 from src.infra.telemetry.listener import TelemetryListener
 
+# Configure logging as soon as this module is imported
+configure_logging()
 LOGGER = structlog.get_logger(__name__)
 
 
@@ -79,6 +82,10 @@ class EconomyBot(discord.Client):
         finally:
             await db_pool.close_pool()
             await super().close()
+
+    async def on_ready(self) -> None:  # T015: emit readiness event
+        user = str(self.user) if getattr(self, "user", None) else None
+        LOGGER.info("bot.ready", user=user)
 
     async def _sync_guild_commands(self, guild_ids: Sequence[int]) -> None:
         for guild_id in guild_ids:
