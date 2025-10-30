@@ -16,7 +16,8 @@ from src.db.gateway.council_governance import (
     Tally,
 )
 from src.db.pool import get_pool
-from src.infra.events.council_events import CouncilEvent, publish as publish_council_event
+from src.infra.events.council_events import CouncilEvent
+from src.infra.events.council_events import publish as publish_council_event
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -217,7 +218,11 @@ class CouncilService:
                 event = CouncilEvent(
                     guild_id=proposal.guild_id,
                     proposal_id=proposal.proposal_id,
-                    kind="proposal_status_changed" if final_status != "進行中" else "proposal_updated",
+                    kind=(
+                        "proposal_status_changed"
+                        if final_status != "進行中"
+                        else "proposal_updated"
+                    ),
                     status=final_status,
                 )
 

@@ -6,6 +6,7 @@ import discord
 import structlog
 from discord import app_commands
 
+from src.bot.services.council_service import CouncilService, GovernanceNotConfiguredError
 from src.bot.services.transfer_service import (
     InsufficientBalanceError,
     TransferError,
@@ -15,7 +16,6 @@ from src.bot.services.transfer_service import (
     TransferValidationError,
 )
 from src.db import pool as db_pool
-from src.bot.services.council_service import CouncilService, GovernanceNotConfiguredError
 
 LOGGER = structlog.get_logger(__name__)
 _TRANSFER_SERVICE: TransferService | None = None
@@ -61,7 +61,10 @@ def build_transfer_command(service: TransferService) -> app_commands.Command[Any
                 cfg = await CouncilService().get_config(guild_id=guild_id)
             except GovernanceNotConfiguredError:
                 await interaction.response.send_message(
-                    content="尚未完成理事會設定，無法以身分組為目標。請通知管理員執行 /council config_role。",
+                    content=(
+                        "尚未完成理事會設定，無法以身分組為目標。"
+                        "請通知管理員執行 /council config_role。"
+                    ),
                     ephemeral=True,
                 )
                 return

@@ -38,9 +38,9 @@ class BotSettings:
             raise RuntimeError("Missing DISCORD_TOKEN environment variable.")
 
         allowlist_raw = os.getenv("DISCORD_GUILD_ALLOWLIST", "")
-        guild_allowlist = tuple(
-            int(value.strip()) for value in allowlist_raw.split(",") if value.strip()
-        )
+        parsed_ids = [int(value.strip()) for value in allowlist_raw.split(",") if value.strip()]
+        # 以保序去重，避免同一 guild 被重複同步造成潛在副作用或額外延遲
+        guild_allowlist = tuple(dict.fromkeys(parsed_ids))
 
         return cls(token=token, guild_allowlist=guild_allowlist)
 
@@ -68,6 +68,10 @@ class EconomyBot(discord.Client):
 
         if self.settings.guild_allowlist:
             await self._sync_guild_commands(self.settings.guild_allowlist)
+            # 為避免允許清單中的伺服器同時看到「全域」與「Guild 專屬」兩份指令，
+            # 在完成 Guild 同步後，主動清空並同步全域指令為空集合，
+            # 以移除先前部署遺留在應用程式層的全域指令。
+            await self._clear_global_commands()
         else:
             await self.tree.sync()
 
@@ -109,6 +113,27 @@ class EconomyBot(discord.Client):
                 LOGGER.info("bot.commands.synced_guild", guild_id=guild_id)
             except Exception as exc:  # pragma: no cover - defensive
                 LOGGER.exception("bot.commands.sync_error", guild_id=guild_id, error=str(exc))
+
+    async def _clear_global_commands(self) -> None:
+        """Purge global application commands to avoid duplicates in allowed guilds.
+
+        當採用 guild allowlist 時，我們只需要在指定的 Guild 中註冊指令。
+        若歷史上曾經同步過全域指令，Discord 可能會同時顯示全域與 Guild 版，
+        導致使用者在允許的 Guild 看到重複的斜線指令。本方法會將本地的全域
+        指令集清空並同步，藉此刪除應用程式上殘留的全域指令。
+        """
+        try:
+            if not hasattr(self.tree, "clear_commands"):
+                # 舊版 discord.py 若無法清空本地集合，避免意外將全域指令再次同步上去
+                LOGGER.warning("bot.commands.clear_global_unsupported")
+                return
+
+            # 不帶 guild 參數即代表清空全域命令集合
+            self.tree.clear_commands(guild=None)
+            await self.tree.sync()
+            LOGGER.info("bot.commands.cleared_global")
+        except Exception as exc:  # pragma: no cover - 防禦性處理
+            LOGGER.exception("bot.commands.clear_global_error", error=str(exc))
 
 
 def _bootstrap_command_tree(tree: app_commands.CommandTree) -> None:

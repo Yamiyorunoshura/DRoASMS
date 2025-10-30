@@ -12,8 +12,8 @@ from src.bot.services.adjustment_service import (
     UnauthorizedAdjustmentError,
     ValidationError,
 )
-from src.db import pool as db_pool
 from src.bot.services.council_service import CouncilService, GovernanceNotConfiguredError
+from src.db import pool as db_pool
 
 LOGGER = structlog.get_logger(__name__)
 _ADJUST_SERVICE: AdjustmentService | None = None
@@ -74,7 +74,9 @@ def build_adjust_command(
                 cfg = await CouncilService().get_config(guild_id=guild_id)
             except GovernanceNotConfiguredError:
                 await interaction.response.send_message(
-                    content="尚未完成理事會設定，無法以身分組為目標。請先執行 /council config_role。",
+                    content=(
+                        "尚未完成理事會設定，無法以身分組為目標。" "請先執行 /council config_role。"
+                    ),
                     ephemeral=True,
                 )
                 return
