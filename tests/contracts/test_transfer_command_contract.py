@@ -83,7 +83,8 @@ async def test_transfer_command_contract() -> None:
     assert "currency" in command.description.lower()
     parameter_names = [param.name for param in command.parameters]
     assert parameter_names == ["target", "amount", "reason"]
-    assert command.parameters[0].type == AppCommandOptionType.user
+    # 參數改為 mentionable（成員或身分組）
+    assert command.parameters[0].type == AppCommandOptionType.mentionable
     assert command.parameters[1].type == AppCommandOptionType.integer
     assert command.parameters[1].required is True
     assert command.parameters[2].required is False

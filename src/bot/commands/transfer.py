@@ -15,6 +15,7 @@ from src.bot.services.transfer_service import (
     TransferValidationError,
 )
 from src.db import pool as db_pool
+from src.bot.services.council_service import CouncilService, GovernanceNotConfiguredError
 
 LOGGER = structlog.get_logger(__name__)
 _TRANSFER_SERVICE: TransferService | None = None
@@ -35,13 +36,13 @@ def build_transfer_command(service: TransferService) -> app_commands.Command[Any
         description="Transfer virtual currency to another member in this guild.",
     )
     @app_commands.describe(
-        target="要接收點數的成員",
+        target="要接收點數的成員或理事會身分組",
         amount="要轉出的整數點數",
         reason="選填，會記錄在交易歷史中的備註",
     )
     async def transfer(
         interaction: discord.Interaction,
-        target: Union[discord.Member, discord.User],
+        target: Union[discord.Member, discord.User, discord.Role],
         amount: int,
         reason: Optional[str] = None,
     ) -> None:
@@ -53,11 +54,32 @@ def build_transfer_command(service: TransferService) -> app_commands.Command[Any
             )
             return
 
+        # 允許以理事會身分組映射至理事會帳戶
+        target_id: int
+        if isinstance(target, discord.Role):
+            try:
+                cfg = await CouncilService().get_config(guild_id=guild_id)
+            except GovernanceNotConfiguredError:
+                await interaction.response.send_message(
+                    content="尚未完成理事會設定，無法以身分組為目標。請通知管理員執行 /council config_role。",
+                    ephemeral=True,
+                )
+                return
+            if target.id != cfg.council_role_id:
+                await interaction.response.send_message(
+                    content="僅支援提及常任理事會身分組或個別成員。",
+                    ephemeral=True,
+                )
+                return
+            target_id = CouncilService.derive_council_account_id(guild_id)
+        else:
+            target_id = target.id
+
         try:
             result = await service.transfer_currency(
                 guild_id=guild_id,
                 initiator_id=interaction.user.id,
-                target_id=target.id,
+                target_id=target_id,
                 amount=amount,
                 reason=reason,
                 connection=None,
@@ -87,7 +109,7 @@ def build_transfer_command(service: TransferService) -> app_commands.Command[Any
 
 def _format_success_message(
     initiator: Union[discord.Member, discord.User],
-    target: Union[discord.Member, discord.User],
+    target: Union[discord.Member, discord.User, discord.Role],
     result: TransferResult,
 ) -> str:
     parts = [

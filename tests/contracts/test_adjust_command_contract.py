@@ -72,7 +72,8 @@ async def test_adjust_command_contract() -> None:
     assert "currency" in command.description.lower() or "點數" in command.description
     names = [p.name for p in command.parameters]
     assert names == ["target", "amount", "reason"]
-    assert command.parameters[0].type == AppCommandOptionType.user
+    # 參數改為 mentionable（成員或身分組）
+    assert command.parameters[0].type == AppCommandOptionType.mentionable
     assert command.parameters[1].type == AppCommandOptionType.integer
     assert command.parameters[1].required is True
     assert command.parameters[2].required is True  # reason required by spec

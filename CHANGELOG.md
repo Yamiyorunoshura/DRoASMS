@@ -11,6 +11,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 進一步的監控與可觀測性（metrics/log tracing）
 - 更多治理功能與工作流程命令
 
+## [0.3.0] - 2025-10-30
+
+### Added
+- **治理系統（Council Governance）**：實現完整的常任理事會提案與投票機制
+  - `/council config_role`：設定常任理事身分組（需管理員權限）
+  - `/council panel`：開啟理事會面板，整合建案、投票、撤案與匯出功能
+  - 理事會面板支援即時更新（透過事件訂閱機制）
+  - 提案建立時自動鎖定理事名冊快照（N 人）並計算門檻（T = ⌊N/2⌋ + 1）
+  - 72 小時投票期限，截止前 24 小時 DM 提醒未投票理事
+  - 達門檻自動執行轉帳；餘額不足或錯誤記錄「執行失敗」
+  - 結案時向全體理事與提案人揭露個別最終投票
+  - 同一伺服器進行中提案上限 5 個
+  - 提案人可於無票前撤案
+- 新增 `src/infra/events/council_events.py`：治理事件發布訂閱機制（支援 Panel 即時更新）
+- 新增 `src/db/gateway/council_governance.py`：治理資料層（CouncilConfig、Proposal、Vote、Tally）
+- 新增 `src/bot/services/council_service.py`：治理業務邏輯層（建案、投票、執行、匯出）
+- 新增 `src/bot/commands/council.py`：Discord UI（Panel、VotingView、Modal）與背景排程器
+- 新增資料庫 migration `005_governance_council.py`：建立 governance schema（council_config、proposals、proposal_snapshots、votes）
+- 新增完整測試覆蓋：
+  - `tests/unit/test_council_service.py`：服務層單元測試
+  - `tests/unit/test_council_math.py`：門檻計算邏輯測試
+  - `tests/integration/council/test_council_flow.py`：完整提案流程整合測試
+  - `tests/integration/council/test_panel_contract.py`：面板契約測試
+- 新增 `AGENTS.md`：OpenSpec 指引（AI 助手開發規範）
+
+### Changed
+- `/adjust` 與 `/transfer` 命令支援以理事會身分組為目標（自動映射至理事會帳戶）
+- `src/bot/main.py`：啟用成員 Intent（`intents.members = True`）以讀取角色成員清單
+- `src/bot/main.py`：改進指令同步機制（使用 `copy_global_to()` 加速公會內指令可見性）
+- `compose.yaml`：改用自訂 `docker/postgres.Dockerfile` 並啟用 pg_cron（`shared_preload_libraries=pg_cron`）
+- `docker/init/001_extensions.sql`：新增 `CREATE EXTENSION pg_cron`
+- `.gitignore`：新增 `*.pyc`、`.envrc`、`.claude/`、`.cursor/`、`openspec/`
+- README.md：新增「治理（Council Governance，MVP）」與「理事會面板（Panel）」完整使用說明
+
+### Removed
+- 刪除 `.envrc`（已加入 .gitignore）
+- 清理所有 `__pycache__/*.pyc` 編譯快取檔案
+
+### Notes
+- 治理功能需要 Discord 開發者後台啟用「成員 Intent」
+- MVP 版本僅透過 DM 進行互動與通知，無公開頻道摘要
+- 需要 PostgreSQL 安裝 pg_cron 擴充以支援背景排程任務
+
 ## [0.2.2] - 2025-10-24
 
 ### Added

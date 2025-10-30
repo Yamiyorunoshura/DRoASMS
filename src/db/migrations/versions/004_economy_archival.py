@@ -71,18 +71,18 @@ def upgrade() -> None:
     # Schedule daily job at 02:10 UTC (non-peak window) if not already present
     op.execute(
         """
-        DO $$
+        DO $outer$
         BEGIN
             IF NOT EXISTS (
                 SELECT 1 FROM cron.job WHERE jobname = 'economy_archive_30d'
             ) THEN
                 PERFORM cron.schedule(
-                    jobname => 'economy_archive_30d',
-                    schedule => '10 2 * * *',
-                    command => $$CALL economy.proc_archive_old_transactions();$$
+                    'economy_archive_30d',
+                    '10 2 * * *',
+                    $cmd$CALL economy.proc_archive_old_transactions();$cmd$
                 );
             END IF;
-        END$$;
+        END$outer$;
         """
     )
 

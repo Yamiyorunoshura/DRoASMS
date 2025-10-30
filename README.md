@@ -198,6 +198,32 @@ python -m src.bot.main
 - PostgreSQL 正在執行，且 `pg_isready -h 127.0.0.1 -p 5432` 顯示 ready（或以 Unix Socket 連線）
 - 已執行 `uv run alembic upgrade head`（或至少升級到 `003_economy_adjustments`）
 
+## 治理（Council Governance，MVP）
+
+本功能提供「常任理事會」以提案＋投票決議是否由「理事會帳戶」向指定成員執行轉帳。
+
+- 設定理事角色：`/council config_role <role>`（需管理員或管理伺服器權限）
+- 建立轉帳提案：`/council propose_transfer <target> <amount> <description> [attachment_url]`（僅理事可用）
+  - 建案瞬間鎖定理事名冊快照 N，門檻 `T = floor(N/2) + 1`，截止時間 +72 小時
+  - 同一伺服器進行中提案最多 5 個
+  - 會以 DM 向理事發送投票訊息（按鈕：同意／反對／棄權）
+  - 進行中僅顯示合計票數；結案時揭露個別最終投票
+  - 達門檻即嘗試執行轉帳；若餘額不足或其他錯誤 → 記錄「執行失敗」
+  - 截止前 24 小時會 DM 提醒未投者
+  - 截止未達門檻 → 「已逾時」
+- 撤案：`/council cancel <proposal_id>`（無人投票前可撤）
+- 匯出：`/council export <start> <end> <json|csv>`（管理者）
+
+### 理事會面板（Panel）
+- 開啟面板：`/council panel`（僅理事）
+  - 在單一面板完成：建立提案（Modal）、選擇進行中提案並投票、（僅提案人且無票前）撤案
+  - 匯出：按「匯出資料」按鈕取得 `/council export` 使用指引（仍由 Slash 指令執行）
+  - 面板為 ephemeral（僅自己可見），投票按鈕沿用 persistent `VotingView`（重開機後仍有效）
+
+注意事項：
+- 需要於 Discord 開發者後台啟用「成員 Intent」以取得角色成員清單（本專案已於程式中啟用 `intents.members = True`）。
+- MVP 僅以 DM 進行互動與通知，沒有公開頻道摘要。
+
 ## 使用 Git 更新專案
 
 當專案有更新時，建議以下流程（保持歷史乾淨並避免意外 merge commit）：
@@ -404,6 +430,15 @@ ruff check .
 # 程式碼格式化
 black src/
 ```
+
+## 生產環境實作要求
+
+根據專案憲章原則 X，本專案禁止在生產環境中使用模擬實現：
+
+- **真實資料整合**：所有外部服務整合（Discord API、資料庫連線、第三方服務）必須使用真實端點與認證
+- **禁止模擬資料**：生產環境程式碼不得包含 mock data 或假資料接入
+- **環境區隔**：開發階段的模擬介面必須明確標記為開發用途，並在發行前替換為真實實現
+- **驗證機制**：若需使用模擬實現進行開發，必須提供明確的環境配置區隔（如 `DEVELOPMENT_MODE=true`），並確保生產環境無法啟用此模式
 
 ## 貢獻指南
 歡迎提交 Issue 或 Pull Request，分享你的想法與改善建議。
