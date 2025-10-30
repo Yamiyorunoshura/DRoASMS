@@ -12,10 +12,12 @@ build/
 *.egg-info/
 .coverage*
 htmlcov/
+*.pyc
 
 # Env & secrets
 .env
 .env.*
+.envrc
 
 # Editors/OS
 .DS_Store
@@ -40,3 +42,12 @@ node_modules/
 # git spec kit
 .specify/
 specs/
+
+# claude code
+.claude/
+
+# cursor
+.cursor/
+
+# openspec
+openspec/

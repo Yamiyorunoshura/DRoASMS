@@ -1,6 +1,8 @@
 services:
   postgres:
-    image: postgres:16
+    build:
+      context: .
+      dockerfile: docker/postgres.Dockerfile
     environment:
       POSTGRES_USER: bot
       POSTGRES_PASSWORD: bot
@@ -8,6 +10,8 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./docker/init:/docker-entrypoint-initdb.d:ro
+    # 啟用 pg_cron 所需的 shared_preload_libraries 與 cron.database_name
+    command: ["postgres","-c","shared_preload_libraries=pg_cron","-c","cron.database_name=economy"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U bot -d economy"]
       interval: 5s

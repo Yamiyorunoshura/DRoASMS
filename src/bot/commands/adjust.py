@@ -13,6 +13,7 @@ from src.bot.services.adjustment_service import (
     ValidationError,
 )
 from src.db import pool as db_pool
+from src.bot.services.council_service import CouncilService, GovernanceNotConfiguredError
 
 LOGGER = structlog.get_logger(__name__)
 _ADJUST_SERVICE: AdjustmentService | None = None
@@ -46,13 +47,13 @@ def build_adjust_command(
         description="管理員調整成員點數（正數加值，負數扣點）。",
     )
     @app_commands.describe(
-        target="要調整點數的成員",
+        target="要調整點數的成員或理事會身分組",
         amount="可以為正數（加值）或負數（扣點）",
         reason="必填，將寫入審計紀錄",
     )
     async def adjust(
         interaction: discord.Interaction,
-        target: Union[discord.Member, discord.User],
+        target: Union[discord.Member, discord.User, discord.Role],
         amount: int,
         reason: str,
     ) -> None:
@@ -65,11 +66,32 @@ def build_adjust_command(
             return
 
         has_right = predicate(interaction)
+
+        # 允許以理事會身分組映射至理事會帳戶
+        target_id: int
+        if isinstance(target, discord.Role):
+            try:
+                cfg = await CouncilService().get_config(guild_id=guild_id)
+            except GovernanceNotConfiguredError:
+                await interaction.response.send_message(
+                    content="尚未完成理事會設定，無法以身分組為目標。請先執行 /council config_role。",
+                    ephemeral=True,
+                )
+                return
+            if target.id != cfg.council_role_id:
+                await interaction.response.send_message(
+                    content="僅支援提及常任理事會身分組或個別成員。",
+                    ephemeral=True,
+                )
+                return
+            target_id = CouncilService.derive_council_account_id(guild_id)
+        else:
+            target_id = target.id
         try:
             result = await service.adjust_balance(
                 guild_id=guild_id,
                 admin_id=interaction.user.id,
-                target_id=target.id,
+                target_id=target_id,
                 amount=amount,
                 reason=reason,
                 can_adjust=has_right,
@@ -96,7 +118,7 @@ def build_adjust_command(
 
 
 def _format_success_message(
-    target: Union[discord.Member, discord.User], result: AdjustmentResult
+    target: Union[discord.Member, discord.User, discord.Role], result: AdjustmentResult
 ) -> str:
     action = "加值" if result.direction == "adjustment_grant" else "扣點"
     parts = [

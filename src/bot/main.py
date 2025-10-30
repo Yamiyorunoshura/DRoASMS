@@ -51,6 +51,8 @@ class EconomyBot(discord.Client):
     def __init__(self, settings: BotSettings) -> None:
         intents = discord.Intents.default()
         intents.guilds = True
+        # Council governance requires reading role membership for snapshots.
+        intents.members = True
 
         super().__init__(intents=intents)
         self.settings = settings
@@ -88,8 +90,25 @@ class EconomyBot(discord.Client):
         LOGGER.info("bot.ready", user=user)
 
     async def _sync_guild_commands(self, guild_ids: Sequence[int]) -> None:
+        """Sync commands to specific guilds for immediate availability.
+
+        In discord.py, commands registered on the command tree are global by
+        default. To make them appear instantly in selected guilds we need to
+        copy the global commands to each guild before syncing that guild.
+        """
         for guild_id in guild_ids:
-            await self.tree.sync(guild=discord.Object(id=guild_id))
+            guild = discord.Object(id=guild_id)
+            # Copy global commands to the guild for instant propagation.
+            try:
+                # Older/newer discord.py versions may or may not have
+                # clear_commands; guard its usage for compatibility.
+                if hasattr(self.tree, "clear_commands"):
+                    self.tree.clear_commands(guild=guild)
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+                LOGGER.info("bot.commands.synced_guild", guild_id=guild_id)
+            except Exception as exc:  # pragma: no cover - defensive
+                LOGGER.exception("bot.commands.sync_error", guild_id=guild_id, error=str(exc))
 
 
 def _bootstrap_command_tree(tree: app_commands.CommandTree) -> None:
