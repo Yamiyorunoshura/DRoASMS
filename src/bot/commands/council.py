@@ -18,7 +18,8 @@ from src.bot.services.council_service import (
     PermissionDeniedError,
 )
 from src.db.pool import get_pool
-from src.infra.events.council_events import CouncilEvent, subscribe as subscribe_council_events
+from src.infra.events.council_events import CouncilEvent
+from src.infra.events.council_events import subscribe as subscribe_council_events
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -497,9 +498,7 @@ class CouncilPanelView(discord.ui.View):
                 ephemeral=True,
             )
             return
-        await interaction.response.send_modal(
-            ExportModal(service=self.service, guild=self.guild)
-        )
+        await interaction.response.send_modal(ExportModal(service=self.service, guild=self.guild))
 
     async def _on_select_proposal(self, interaction: discord.Interaction) -> None:
         # 直接讀取選擇值
@@ -719,19 +718,19 @@ class ExportModal(discord.ui.Modal, title="匯出治理資料"):
         self.service = service
         self.guild = guild
 
-        self.start = discord.ui.TextInput(
+        self.start: discord.ui.TextInput[Any] = discord.ui.TextInput(
             label="起始時間（ISO 8601，例如 2025-01-01T00:00:00Z）",
             required=True,
             placeholder="2025-01-01T00:00:00Z",
             max_length=40,
         )
-        self.end = discord.ui.TextInput(
+        self.end: discord.ui.TextInput[Any] = discord.ui.TextInput(
             label="結束時間（ISO 8601，例如 2025-01-31T23:59:59Z）",
             required=True,
             placeholder="2025-01-31T23:59:59Z",
             max_length=40,
         )
-        self.format = discord.ui.TextInput(
+        self.format: discord.ui.TextInput[Any] = discord.ui.TextInput(
             label="格式（json 或 csv）",
             required=True,
             placeholder="json 或 csv",
@@ -755,6 +754,7 @@ class ExportModal(discord.ui.Modal, title="匯出治理資料"):
 
         # 解析 ISO 8601
         try:
+
             def _parse_iso8601(s: str) -> datetime:
                 t = s.strip()
                 if t.endswith("Z"):
@@ -777,7 +777,7 @@ class ExportModal(discord.ui.Modal, title="匯出治理資料"):
             await interaction.response.send_message("起始時間不可晚於結束時間。", ephemeral=True)
             return
 
-        fmt = (str(self.format.value or "").strip().lower())
+        fmt = str(self.format.value or "").strip().lower()
         if fmt not in ("json", "csv"):
             await interaction.response.send_message("格式必須是 json 或 csv。", ephemeral=True)
             return
@@ -854,6 +854,7 @@ class ExportModal(discord.ui.Modal, title="匯出治理資料"):
             count=len(data),
             format=fmt,
         )
+
 
 class ProposalActionView(discord.ui.View):
     def __init__(self, *, service: CouncilService, proposal_id: UUID, can_cancel: bool) -> None:

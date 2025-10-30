@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 進一步的監控與可觀測性（metrics/log tracing）
 - 更多治理功能與工作流程命令
 
+## [0.3.1] - 2025-10-30
+
+### Fixed
+- **斜線指令重複顯示問題**：修復使用 Guild Allowlist 時，允許清單中的伺服器同時看到全域與 Guild 專屬兩份指令的問題
+  - Guild Allowlist 現在會自動去重，避免同一 Guild 被重複同步造成潛在副作用或額外延遲
+  - 完成 Guild 指令同步後，自動清除全域指令，避免歷史遺留的全域指令與 Guild 指令重複
+
+### Changed
+- 改善程式碼品質：優化 import 語句排序、加強類型註解、改善字串格式化
+
 ## [0.3.0] - 2025-10-30
 
 ### Added
