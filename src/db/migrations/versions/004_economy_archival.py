@@ -17,8 +17,24 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Ensure cron extension exists (no-op if already installed)
-    op.execute("CREATE EXTENSION IF NOT EXISTS pg_cron")
+    # Best-effort enable pg_cron when available. On vanilla postgres images
+    # the extension may be absent; in that case we skip scheduling but still
+    # create the archive table and procedure.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_available_extensions WHERE name = 'pg_cron'
+            ) THEN
+                -- Install if present in the instance; no-op if already installed
+                EXECUTE 'CREATE EXTENSION IF NOT EXISTS pg_cron';
+            ELSE
+                RAISE NOTICE 'pg_cron extension not available; skipping installation';
+            END IF;
+        END$$;
+        """
+    )
 
     # Create archive table with same columns as currency_transactions
     # Use LIKE INCLUDING to copy constraints/defaults where sensible
@@ -68,19 +84,24 @@ def upgrade() -> None:
         """
     )
 
-    # Schedule daily job at 02:10 UTC (non-peak window) if not already present
+    # Schedule daily job at 02:10 UTC (non-peak window) if pg_cron is installed
+    # Skips silently on environments without pg_cron (e.g. CI postgres:16 image)
     op.execute(
         """
         DO $outer$
         BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM cron.job WHERE jobname = 'economy_archive_30d'
-            ) THEN
-                PERFORM cron.schedule(
-                    'economy_archive_30d',
-                    '10 2 * * *',
-                    $cmd$CALL economy.proc_archive_old_transactions();$cmd$
-                );
+            IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
+                IF NOT EXISTS (
+                    SELECT 1 FROM cron.job WHERE jobname = 'economy_archive_30d'
+                ) THEN
+                    PERFORM cron.schedule(
+                        'economy_archive_30d',
+                        '10 2 * * *',
+                        $cmd$CALL economy.proc_archive_old_transactions();$cmd$
+                    );
+                END IF;
+            ELSE
+                RAISE NOTICE 'pg_cron not installed; skipping schedule creation';
             END IF;
         END$outer$;
         """
@@ -88,16 +109,18 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Unschedule job if exists
+    # Unschedule job if exists and pg_cron is installed
     op.execute(
         """
         DO $$
         DECLARE
             jid int;
         BEGIN
-            SELECT jobid INTO jid FROM cron.job WHERE jobname = 'economy_archive_30d';
-            IF jid IS NOT NULL THEN
-                PERFORM cron.unschedule(jid);
+            IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
+                SELECT jobid INTO jid FROM cron.job WHERE jobname = 'economy_archive_30d';
+                IF jid IS NOT NULL THEN
+                    PERFORM cron.unschedule(jid);
+                END IF;
             END IF;
         END$$;
         """
