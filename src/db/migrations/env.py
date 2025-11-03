@@ -4,12 +4,11 @@ import os
 from logging.config import fileConfig
 from typing import Any
 
-import structlog
+from alembic import context
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, pool
 from sqlalchemy.engine import Engine
-
-from alembic import context
+import structlog
 
 # Alembic Config object, provides access to `.ini` values.
 config = context.config

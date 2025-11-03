@@ -56,6 +56,7 @@ select = [
 "src/db/seeds/*.py" = ["E501"]
 "tests/**/*.py" = ["E501"]
 "src/bot/commands/state_council.py" = ["E501"]
+"src/db/migrations/env.py" = ["I001"]
 
 [tool.black]
 line-length = 100
