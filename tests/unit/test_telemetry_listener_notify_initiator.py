@@ -75,12 +75,13 @@ async def test_notify_initiator_server_with_token(
     mock_http.request.assert_called_once()
     call_args = mock_http.request.call_args
 
-    # Check route
+    # Check route (discord.py Route no longer exposes kwargs; validate via url)
     route = call_args[0][0]
     assert route.path == "/webhooks/{application_id}/{interaction_token}"
     assert route.method == "POST"
-    assert route.kwargs["application_id"] == mock_client.application_id
-    assert route.kwargs["interaction_token"] == interaction_token
+    url = getattr(route, "url", "")
+    assert str(mock_client.application_id) in url
+    assert interaction_token in url
 
     # Check payload
     payload = call_args[1]["json"]
