@@ -12,6 +12,7 @@ import structlog
 from discord import app_commands
 from dotenv import load_dotenv
 
+from src.bot.services.transfer_event_pool import TransferEventPoolCoordinator
 from src.db import pool as db_pool
 from src.infra.logging.config import configure_logging
 from src.infra.telemetry.listener import TelemetryListener
@@ -57,11 +58,27 @@ class EconomyBot(discord.Client):
         super().__init__(intents=intents)
         self.settings = settings
         self.tree = app_commands.CommandTree(self)
-        self._telemetry_listener = TelemetryListener()
+
+        # Initialize transfer event pool coordinator if enabled
+        load_dotenv(override=False)
+        event_pool_enabled = os.getenv("TRANSFER_EVENT_POOL_ENABLED", "false").lower() == "true"
+        self._transfer_coordinator: TransferEventPoolCoordinator | None = None
+        if event_pool_enabled:
+            self._transfer_coordinator = TransferEventPoolCoordinator()
+
+        self._telemetry_listener = TelemetryListener(
+            transfer_coordinator=self._transfer_coordinator,
+            discord_client=self,
+        )
 
     async def setup_hook(self) -> None:
         """Run once when the bot starts up to prepare global services."""
         await db_pool.init_pool()
+
+        # Start transfer event pool coordinator if enabled
+        if self._transfer_coordinator is not None:
+            await self._transfer_coordinator.start()
+
         _bootstrap_command_tree(self.tree)
 
         LOGGER.info("bot.commands.loaded", count=len(self.tree.get_commands()))
@@ -79,12 +96,15 @@ class EconomyBot(discord.Client):
         LOGGER.info(
             "bot.setup.complete",
             guild_allowlist=list(self.settings.guild_allowlist),
+            event_pool_enabled=self._transfer_coordinator is not None,
         )
 
     async def close(self) -> None:
         """Ensure background workers shut down before closing the client."""
         try:
             await self._telemetry_listener.stop()
+            if self._transfer_coordinator is not None:
+                await self._transfer_coordinator.stop()
         finally:
             await db_pool.close_pool()
             await super().close()

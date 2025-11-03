@@ -4,15 +4,15 @@ import asyncio
 import secrets
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
-from discord import AppCommandOptionType
+from discord import AppCommandOptionType, Interaction
 
 from src.bot.commands.adjust import build_adjust_command
-from src.bot.services.adjustment_service import AdjustmentResult
+from src.bot.services.adjustment_service import AdjustmentResult, AdjustmentService
 
 
 def _snowflake() -> int:
@@ -41,7 +41,7 @@ class _StubInteraction:
 
 class _StubMember(SimpleNamespace):
     @property
-    def mention(self) -> str:  # type: ignore[override]
+    def mention(self) -> str:
         return f"<@{self.id}>"
 
 
@@ -67,7 +67,7 @@ async def test_adjust_command_contract() -> None:
         )
     )
 
-    command = build_adjust_command(service, can_adjust=lambda i: True)
+    command = build_adjust_command(cast(AdjustmentService, service), can_adjust=lambda i: True)
     assert command.name == "adjust"
     assert "currency" in command.description.lower() or "點數" in command.description
     names = [p.name for p in command.parameters]
@@ -81,7 +81,9 @@ async def test_adjust_command_contract() -> None:
     interaction = _StubInteraction(guild_id=guild_id, user_id=admin_id, is_admin=True)
     target = _StubMember(id=target_id, display_name="Member")
 
-    await command._callback(interaction, target, 150, "Bonus")  # type: ignore[attr-defined]
+    await command._callback(
+        cast(Interaction[Any], interaction), cast(Interaction[Any], target), 150, "Bonus"
+    )
 
     service.adjust_balance.assert_awaited_once_with(
         guild_id=guild_id,

@@ -4,15 +4,15 @@ import asyncio
 import secrets
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
-from discord import AppCommandOptionType
+from discord import AppCommandOptionType, Interaction
 
 from src.bot.commands.transfer import build_transfer_command
-from src.bot.services.transfer_service import TransferResult
+from src.bot.services.transfer_service import TransferResult, TransferService
 
 
 def _snowflake() -> int:
@@ -50,7 +50,7 @@ class _StubInteraction:
 
 class _StubMember(SimpleNamespace):
     @property
-    def mention(self) -> str:  # type: ignore[override]
+    def mention(self) -> str:
         return f"<@{self.id}>"
 
 
@@ -78,7 +78,7 @@ async def test_transfer_command_contract() -> None:
         )
     )
 
-    command = build_transfer_command(service)
+    command = build_transfer_command(cast(TransferService, service))
     assert command.name == "transfer"
     assert "currency" in command.description.lower()
     parameter_names = [param.name for param in command.parameters]
@@ -92,7 +92,9 @@ async def test_transfer_command_contract() -> None:
     interaction = _StubInteraction(guild_id=guild_id, user_id=initiator_id)
     target = _StubMember(id=target_id, display_name="Receiver")
 
-    await command._callback(interaction, target, 250, "Congrats!")  # type: ignore[attr-defined]
+    await command._callback(
+        cast(Interaction[Any], interaction), cast(Interaction[Any], target), 250, "Congrats!"
+    )
 
     service.transfer_currency.assert_awaited_once_with(
         guild_id=guild_id,
@@ -101,6 +103,7 @@ async def test_transfer_command_contract() -> None:
         amount=250,
         reason="Congrats!",
         connection=None,
+        metadata=None,
     )
     assert interaction.response.sent is True
     assert interaction.response.kwargs is not None

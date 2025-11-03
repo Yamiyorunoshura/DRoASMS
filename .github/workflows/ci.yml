@@ -1,0 +1,428 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  PYTHON_VERSION: "3.13"
+  UV_VERSION: "0.5.0"
+  # Default placeholder token - tests that require real Discord token will skip automatically
+  # To run tests that need real token, set TEST_DISCORD_TOKEN or DISCORD_TOKEN in GitHub Secrets
+  DISCORD_TOKEN: "test-token-placeholder"
+  TEST_DISCORD_TOKEN: "test-token-placeholder"
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run ruff check
+        run: uv run ruff check .
+
+  type-check:
+    name: Type Check (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run mypy
+        run: uv run mypy src/
+
+  format-check:
+    name: Format Check (black)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Check formatting with black
+        run: uv run black --check src/ tests/
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bot
+          POSTGRES_PASSWORD: bot
+          POSTGRES_DB: economy
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgresql://bot:bot@localhost:5432/economy
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Setup database extensions
+        run: |
+          PGPASSWORD=bot psql -h localhost -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+        continue-on-error: true
+
+      - name: Run database migrations
+        run: uv run alembic upgrade head
+
+      - name: Run unit tests
+        run: uv run pytest tests/unit/ -v
+
+  contract-tests:
+    name: Contract Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bot
+          POSTGRES_PASSWORD: bot
+          POSTGRES_DB: economy
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgresql://bot:bot@localhost:5432/economy
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Setup database extensions
+        run: |
+          PGPASSWORD=bot psql -h localhost -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+        continue-on-error: true
+
+      - name: Run database migrations
+        run: uv run alembic upgrade head
+
+      - name: Override with real token if available (optional)
+        run: |
+          # Override default placeholder if real token is provided via secrets
+          # Tests that require real token will run; others will use placeholder
+          if [ -n "${{ secrets.TEST_DISCORD_TOKEN }}" ]; then
+            echo "TEST_DISCORD_TOKEN=${{ secrets.TEST_DISCORD_TOKEN }}" >> $GITHUB_ENV
+            echo "DISCORD_TOKEN=${{ secrets.TEST_DISCORD_TOKEN }}" >> $GITHUB_ENV
+          elif [ -n "${{ secrets.DISCORD_TOKEN }}" ]; then
+            echo "TEST_DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}" >> $GITHUB_ENV
+            echo "DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}" >> $GITHUB_ENV
+          fi
+          # If no secrets provided, default placeholder from global env will be used
+
+      - name: Run contract tests
+        run: uv run pytest tests/contracts/ -v
+
+  economy-tests:
+    name: Economy Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bot
+          POSTGRES_PASSWORD: bot
+          POSTGRES_DB: economy
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgresql://bot:bot@localhost:5432/economy
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Setup database extensions
+        run: |
+          PGPASSWORD=bot psql -h localhost -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+        continue-on-error: true
+
+      - name: Run database migrations
+        run: uv run alembic upgrade head
+
+      - name: Run economy tests
+        run: uv run pytest tests/economy/ -v
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_DOCKER_CLI_BUILD: "1"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install Docker Compose
+        run: |
+          sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+
+      - name: Override with real token if available (optional)
+        run: |
+          # Override default placeholder if real token is provided via secrets
+          # Tests that require real token (like test_compose_ready, test_db_not_ready_retry) 
+          # will run if real token is provided, otherwise they will skip automatically
+          if [ -n "${{ secrets.TEST_DISCORD_TOKEN }}" ]; then
+            echo "TEST_DISCORD_TOKEN=${{ secrets.TEST_DISCORD_TOKEN }}" >> $GITHUB_ENV
+            echo "DISCORD_TOKEN=${{ secrets.TEST_DISCORD_TOKEN }}" >> $GITHUB_ENV
+          elif [ -n "${{ secrets.DISCORD_TOKEN }}" ]; then
+            echo "TEST_DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}" >> $GITHUB_ENV
+            echo "DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}" >> $GITHUB_ENV
+          fi
+          # If no secrets provided, default placeholder from global env will be used
+
+      - name: Run integration tests
+        run: uv run pytest tests/integration/ -v
+        continue-on-error: false
+
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bot
+          POSTGRES_PASSWORD: bot
+          POSTGRES_DB: economy
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgresql://bot:bot@localhost:5432/economy
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Setup database extensions
+        run: |
+          PGPASSWORD=bot psql -h localhost -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+        continue-on-error: true
+
+      - name: Run database migrations
+        run: uv run alembic upgrade head
+
+      - name: Run performance tests
+        run: uv run pytest tests/performance/ -v -m performance
+
+  db-function-tests:
+    name: Database Function Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bot
+          POSTGRES_PASSWORD: bot
+          POSTGRES_DB: economy
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgresql://bot:bot@localhost:5432/economy
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Setup database extensions
+        run: |
+          PGPASSWORD=bot psql -h localhost -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+        continue-on-error: true
+
+      - name: Run database migrations
+        run: uv run alembic upgrade head
+
+      - name: Run database function tests
+        run: uv run pytest tests/db/ -v
+
+  council-tests:
+    name: Council Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bot
+          POSTGRES_PASSWORD: bot
+          POSTGRES_DB: economy
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgresql://bot:bot@localhost:5432/economy
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Setup database extensions
+        run: |
+          PGPASSWORD=bot psql -h localhost -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+        continue-on-error: true
+
+      - name: Run database migrations
+        run: uv run alembic upgrade head
+
+      - name: Run council tests
+        run: uv run pytest tests/council/ -v

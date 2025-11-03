@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from src.bot.services.council_service import CouncilService
@@ -7,7 +9,7 @@ from tests.unit.test_council_service import _FakeConnection, _FakeGateway, _Fake
 
 
 class _FakeGatewayWithList(_FakeGateway):
-    async def list_active_proposals(self, conn):  # type: ignore[override]
+    async def list_active_proposals(self, conn: Any) -> list[Any]:
         return [p for p in self._proposals.values() if p.status == "進行中"]
 
 

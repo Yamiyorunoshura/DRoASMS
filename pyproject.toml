@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "droasms-bot"
-version = "0.3.1"
+version = "0.4.0"
 description = "Discord bot economy foundations."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -54,6 +54,8 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 "src/db/migrations/versions/*.py" = ["E501", "I001"]
 "src/db/seeds/*.py" = ["E501"]
+"tests/**/*.py" = ["E501"]
+"src/bot/commands/state_council.py" = ["E501"]
 
 [tool.black]
 line-length = 100

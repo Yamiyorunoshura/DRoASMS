@@ -94,6 +94,12 @@ PY
     exit 69
   fi
 
+  # 已達最大嘗試次數，直接終止（避免多一次多餘嘗試導致 off-by-one）
+  if (( attempt >= RETRY_MAX_ATTEMPTS )); then
+    json_log "ERROR" "db.unavailable" "database not reachable within timeout" "\"attempts\":${attempt},\"elapsed_ms\":${elapsed}"
+    exit 69
+  fi
+
   # 指數退避 + 最小抖動（±20%）
   delay=$(( RETRY_BASE_DELAY_MS * (2 ** (attempt-1)) ))
   # 上限 10 秒避免過長
@@ -112,14 +118,24 @@ time.sleep(ms/1000)
 PY
 done
 
-# 預設 Alembic 目標（無 pg_cron 的環境）
+# 遷移策略：先嘗試升到 head；若失敗（常見於 004 需要 pg_cron），退回到設定目標（預設 003）
 : "${ALEMBIC_UPGRADE_TARGET:=003_economy_adjustments}"
-
-json_log "INFO" "bot.migrate.start" "running alembic upgrade" "\"target\":\"${ALEMBIC_UPGRADE_TARGET}\""
-if ! alembic upgrade "${ALEMBIC_UPGRADE_TARGET}"; then
-  json_log "ERROR" "bot.migrate.error" "alembic upgrade failed" "\"target\":\"${ALEMBIC_UPGRADE_TARGET}\""
-  exit 70
+# 若使用者將目標設為 head，fallback 會無效；此時以 003 作為保守回退點
+FALLBACK_TARGET="${ALEMBIC_UPGRADE_TARGET}"
+if [[ "${FALLBACK_TARGET}" == "head" ]]; then
+  FALLBACK_TARGET="003_economy_adjustments"
 fi
-json_log "INFO" "bot.migrate.done" "alembic upgrade finished" "\"target\":\"${ALEMBIC_UPGRADE_TARGET}\""
+
+json_log "INFO" "bot.migrate.start" "running alembic upgrade head (with fallback)" "\"fallback\":\"${FALLBACK_TARGET}\""
+if alembic upgrade head; then
+  json_log "INFO" "bot.migrate.done" "alembic upgrade head finished" "\"applied\":\"head\""
+else
+  json_log "WARN" "bot.migrate.head_failed" "head upgrade failed; falling back to target" "\"fallback\":\"${FALLBACK_TARGET}\""
+  if ! alembic upgrade "${FALLBACK_TARGET}"; then
+    json_log "ERROR" "bot.migrate.error" "alembic upgrade failed" "\"target\":\"${ALEMBIC_UPGRADE_TARGET}\""
+    exit 70
+  fi
+  json_log "INFO" "bot.migrate.done" "alembic upgrade finished (fallback)" "\"applied\":\"${FALLBACK_TARGET}\""
+fi
 
 exec python -m src.bot.main

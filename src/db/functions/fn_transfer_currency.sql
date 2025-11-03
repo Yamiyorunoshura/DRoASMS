@@ -106,7 +106,10 @@ DECLARE
     v_transaction_id uuid;
     v_created_at timestamptz;
     v_reason text := nullif(v_metadata->>'reason', '');
-    v_daily_limit bigint := 500;
+    -- 以連線層 GUC 控制每日上限；未設定或 <= 0 視為「無上限」
+    v_daily_limit_text text := current_setting('app.transfer_daily_limit', true);
+    v_daily_limit bigint;
+    v_is_government boolean := false;
 BEGIN
     IF p_initiator_id = p_target_id THEN
         RAISE EXCEPTION 'Initiator and target must be distinct members for transfers.'
@@ -127,43 +130,56 @@ BEGIN
     VALUES (p_guild_id, p_target_id, 0, v_now, v_now)
     ON CONFLICT (guild_id, member_id) DO NOTHING;
 
+    -- 判斷是否為政府部門帳戶（免除每日上限與冷卻限制）
+    SELECT EXISTS (
+               SELECT 1
+               FROM governance.government_accounts ga
+               WHERE ga.account_id = p_initiator_id AND ga.guild_id = p_guild_id
+           )
+    INTO v_is_government;
+
     SELECT current_balance, throttled_until
     INTO v_initiator_balance, v_throttled_until
     FROM economy.guild_member_balances
     WHERE guild_id = p_guild_id AND member_id = p_initiator_id
     FOR UPDATE;
 
-    IF v_throttled_until IS NOT NULL AND v_throttled_until > v_now THEN
+    -- 政府帳戶不受冷卻限制
+    IF (NOT v_is_government) AND v_throttled_until IS NOT NULL AND v_throttled_until > v_now THEN
         RAISE EXCEPTION 'Transfer throttled: member is on cooldown until %.', v_throttled_until
             USING ERRCODE = 'P0001';
     END IF;
 
-    SELECT coalesce(SUM(amount), 0)
-    INTO v_total_today
-    FROM economy.currency_transactions
-    WHERE guild_id = p_guild_id
-      AND initiator_id = p_initiator_id
-      AND direction = 'transfer'
-      AND created_at >= date_trunc('day', v_now);
+    -- 非政府帳戶才檢查每日上限；未設定 GUC 或 <= 0 則跳過檢查（視為無上限）
+    IF NOT v_is_government THEN
+        IF v_daily_limit_text IS NOT NULL AND NULLIF(v_daily_limit_text, '') IS NOT NULL THEN
+            v_daily_limit := v_daily_limit_text::bigint;
+            IF v_daily_limit > 0 THEN
+                SELECT coalesce(SUM(amount), 0)
+                INTO v_total_today
+                FROM economy.currency_transactions
+                WHERE guild_id = p_guild_id
+                  AND initiator_id = p_initiator_id
+                  AND direction = 'transfer'
+                  AND created_at >= date_trunc('day', v_now);
 
-    IF v_total_today + p_amount > v_daily_limit THEN
-        PERFORM economy.fn_record_throttle(
-            p_guild_id,
-            p_initiator_id,
-            jsonb_build_object(
-                'reason',
-                'daily_limit_exceeded',
-                'limit',
-                v_daily_limit,
-                'attempted_amount',
-                p_amount,
-                'total_today',
-                v_total_today
-            )
-        );
+                IF v_total_today + p_amount > v_daily_limit THEN
+                    PERFORM economy.fn_record_throttle(
+                        p_guild_id,
+                        p_initiator_id,
+                        jsonb_build_object(
+                            'reason', 'daily_limit_exceeded',
+                            'limit', v_daily_limit,
+                            'attempted_amount', p_amount,
+                            'total_today', v_total_today
+                        )
+                    );
 
-        RAISE EXCEPTION 'Transfer throttled: daily limit of % exceeded.', v_daily_limit
-            USING ERRCODE = 'P0001';
+                    RAISE EXCEPTION 'Transfer throttled: daily limit of % exceeded.', v_daily_limit
+                        USING ERRCODE = 'P0001';
+                END IF;
+            END IF;
+        END IF;
     END IF;
 
     IF v_initiator_balance < p_amount THEN

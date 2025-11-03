@@ -133,13 +133,6 @@ class CouncilService:
             proposal = await self._gateway.fetch_proposal(conn, proposal_id=proposal_id)
             if proposal is None:
                 return False
-            # Only allow if no vote exists yet
-            votes = await conn.fetchval(
-                "SELECT COUNT(*) FROM governance.votes WHERE proposal_id=$1",
-                proposal_id,
-            )
-            if int(votes or 0) > 0:
-                return False
             ok = await self._gateway.cancel_proposal(conn, proposal_id=proposal_id)
         if ok:
             await publish_council_event(
@@ -265,6 +258,15 @@ class CouncilService:
                 reason=proposal.description or "council_proposal",
                 connection=connection,
             )
+            if isinstance(result, UUID):
+                # Event pool mode - this shouldn't happen in sync mode
+                await self._gateway.mark_status(
+                    connection,
+                    proposal_id=proposal.proposal_id,
+                    status="執行失敗",
+                    execution_error="Transfer returned UUID in sync mode.",
+                )
+                return
             await self._gateway.mark_status(
                 connection,
                 proposal_id=proposal.proposal_id,
@@ -321,13 +323,7 @@ class CouncilService:
     async def list_unvoted_members(self, *, proposal_id: UUID) -> Sequence[int]:
         pool = get_pool()
         async with pool.acquire() as conn:
-            snapshot = await self._gateway.fetch_snapshot(conn, proposal_id=proposal_id)
-            rows = await conn.fetch(
-                "SELECT voter_id FROM governance.votes WHERE proposal_id=$1",
-                proposal_id,
-            )
-            voted = {int(r["voter_id"]) for r in rows}
-            return [mid for mid in snapshot if mid not in voted]
+            return await self._gateway.list_unvoted_members(conn, proposal_id=proposal_id)
 
     async def mark_reminded(self, *, proposal_id: UUID) -> None:
         pool = get_pool()

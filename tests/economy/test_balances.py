@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 
@@ -19,8 +20,8 @@ def _snowflake() -> int:
 
 @pytest.mark.asyncio
 async def test_balance_view_self_initialises_ledger(
-    db_pool,  # type: ignore[no_untyped_call]
-    db_connection,  # type: ignore[no_untyped_call]
+    db_pool: Any,
+    db_connection: Any,
 ) -> None:
     service = BalanceService(db_pool)
     guild_id = _snowflake()
@@ -54,8 +55,8 @@ async def test_balance_view_self_initialises_ledger(
 
 @pytest.mark.asyncio
 async def test_balance_view_other_requires_permission(
-    db_pool,  # type: ignore[no_untyped_call]
-    db_connection,  # type: ignore[no_untyped_call]
+    db_pool: Any,
+    db_connection: Any,
 ) -> None:
     service = BalanceService(db_pool)
     guild_id = _snowflake()

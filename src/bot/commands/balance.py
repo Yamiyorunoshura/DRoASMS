@@ -9,6 +9,7 @@ import discord
 import structlog
 from discord import app_commands
 
+from src.bot.commands.help_data import HelpData
 from src.bot.services.balance_service import (
     BalancePermissionError,
     BalanceService,
@@ -19,6 +20,56 @@ from src.db import pool as db_pool
 
 LOGGER = structlog.get_logger(__name__)
 _BALANCE_SERVICE: BalanceService | None = None
+
+
+def get_help_data() -> dict[str, HelpData]:
+    """Return help information for balance and history commands."""
+    return {
+        "balance": {
+            "name": "balance",
+            "description": "檢視你的虛擬貨幣餘額，或在有權限時查詢他人餘額。",
+            "category": "economy",
+            "parameters": [
+                {
+                    "name": "member",
+                    "description": "選填參數；需要管理權限才能檢視其他成員。",
+                    "required": False,
+                },
+            ],
+            "permissions": [],
+            "examples": ["/balance", "/balance @user"],
+            "tags": ["餘額", "查詢"],
+        },
+        "history": {
+            "name": "history",
+            "description": "檢視虛擬貨幣的近期交易歷史。",
+            "category": "economy",
+            "parameters": [
+                {
+                    "name": "member",
+                    "description": "選填參數；需要管理權限才能檢視其他成員。",
+                    "required": False,
+                },
+                {
+                    "name": "limit",
+                    "description": "最多顯示多少筆紀錄（1-50，預設 10）。",
+                    "required": False,
+                },
+                {
+                    "name": "before",
+                    "description": "選填 ISO 8601 時間戳，僅顯示該時間點之前的紀錄。",
+                    "required": False,
+                },
+            ],
+            "permissions": [],
+            "examples": [
+                "/history",
+                "/history limit:20",
+                "/history @user limit:50",
+            ],
+            "tags": ["歷史", "交易記錄"],
+        },
+    }
 
 
 def register(tree: app_commands.CommandTree) -> None:
@@ -45,11 +96,21 @@ def build_balance_command(service: BalanceService) -> app_commands.Command[Any, 
         member: Optional[Union[discord.Member, discord.User]] = None,
     ) -> None:
         if interaction.guild_id is None:
-            await interaction.response.send_message(
-                content="此命令僅能在伺服器內執行。",
-                ephemeral=True,
-            )
+            await _respond(interaction, "此命令僅能在伺服器內執行。")
             return
+
+        # 先嘗試 defer，以避免超過 3 秒導致 Unknown interaction（10062）
+        try:
+            is_done = bool(getattr(interaction.response, "is_done", lambda: False)())
+        except Exception:
+            is_done = False
+        if not is_done:
+            try:
+                defer = getattr(interaction.response, "defer", None)
+                if callable(defer):
+                    await defer(ephemeral=True)
+            except Exception as exc:  # 防禦性：即使 defer 失敗也不終止流程
+                LOGGER.debug("bot.balance.defer_failed", error=str(exc))
 
         target_id = member.id if member is not None else interaction.user.id
         can_view_others = _has_audit_permission(interaction)
@@ -63,19 +124,16 @@ def build_balance_command(service: BalanceService) -> app_commands.Command[Any, 
                 connection=None,
             )
         except BalancePermissionError as exc:
-            await interaction.response.send_message(content=str(exc), ephemeral=True)
+            await _respond(interaction, str(exc))
             return
         except Exception as exc:  # pragma: no cover - defensive catch
             LOGGER.exception("bot.balance.unexpected_error", error=str(exc))
-            await interaction.response.send_message(
-                content="查詢餘額時發生未預期錯誤，請稍後再試。",
-                ephemeral=True,
-            )
+            await _respond(interaction, "查詢餘額時發生未預期錯誤，請稍後再試。")
             return
 
         target_display = member if member is not None else interaction.user
         message = _format_balance_response(snapshot, target_display)
-        await interaction.response.send_message(content=message, ephemeral=True)
+        await _respond(interaction, message)
 
     return balance
 
@@ -99,11 +157,21 @@ def build_history_command(service: BalanceService) -> app_commands.Command[Any, 
         before: Optional[str] = None,
     ) -> None:
         if interaction.guild_id is None:
-            await interaction.response.send_message(
-                content="此命令僅能在伺服器內執行。",
-                ephemeral=True,
-            )
+            await _respond(interaction, "此命令僅能在伺服器內執行。")
             return
+
+        # 先嘗試 defer，以避免超過 3 秒導致 Unknown interaction（10062）
+        try:
+            is_done = bool(getattr(interaction.response, "is_done", lambda: False)())
+        except Exception:
+            is_done = False
+        if not is_done:
+            try:
+                defer = getattr(interaction.response, "defer", None)
+                if callable(defer):
+                    await defer(ephemeral=True)
+            except Exception as exc:  # 防禦性：即使 defer 失敗也不終止流程
+                LOGGER.debug("bot.history.defer_failed", error=str(exc))
 
         target_id = member.id if member is not None else interaction.user.id
         can_view_others = _has_audit_permission(interaction)
@@ -113,10 +181,7 @@ def build_history_command(service: BalanceService) -> app_commands.Command[Any, 
             try:
                 parsed = datetime.fromisoformat(before)
             except ValueError:
-                await interaction.response.send_message(
-                    content="`before` 參數必須是可解析的 ISO 8601 時間戳。",
-                    ephemeral=True,
-                )
+                await _respond(interaction, "`before` 參數必須是可解析的 ISO 8601 時間戳。")
                 return
             cursor_dt = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
             cursor_dt = cursor_dt.astimezone(timezone.utc)
@@ -132,24 +197,44 @@ def build_history_command(service: BalanceService) -> app_commands.Command[Any, 
                 connection=None,
             )
         except BalancePermissionError as exc:
-            await interaction.response.send_message(content=str(exc), ephemeral=True)
+            await _respond(interaction, str(exc))
             return
         except ValueError as exc:
-            await interaction.response.send_message(content=str(exc), ephemeral=True)
+            await _respond(interaction, str(exc))
             return
         except Exception as exc:  # pragma: no cover - defensive catch
             LOGGER.exception("bot.history.unexpected_error", error=str(exc))
-            await interaction.response.send_message(
-                content="查詢歷史時發生未預期錯誤，請稍後再試。",
-                ephemeral=True,
-            )
+            await _respond(interaction, "查詢歷史時發生未預期錯誤，請稍後再試。")
             return
 
         target_display = member if member is not None else interaction.user
         message = _format_history_response(page, target_display)
-        await interaction.response.send_message(content=message, ephemeral=True)
+        await _respond(interaction, message)
 
     return history
+
+
+async def _respond(interaction: discord.Interaction, content: str) -> None:
+    """安全回覆互動：
+    - 若先前已 defer，優先編輯原始回覆；
+    - 若未 defer（理論上不會發生，但保險），則做初次回覆；
+    - 若編輯失敗，退回 followup.send（仍為 ephemeral）。
+    （兼容單元測試 stub：沒有 is_done()/defer/edit_original_response 時能正常工作。）
+    """
+    try:
+        try:
+            is_done = bool(getattr(interaction.response, "is_done", lambda: False)())
+        except Exception:
+            is_done = False
+        if is_done and hasattr(interaction, "edit_original_response"):
+            await interaction.edit_original_response(content=content)
+        else:
+            await interaction.response.send_message(content=content, ephemeral=True)
+    except Exception:
+        try:
+            await interaction.followup.send(content=content, ephemeral=True)
+        except Exception:
+            LOGGER.exception("bot.respond_failed")
 
 
 def _format_balance_response(
@@ -224,4 +309,4 @@ def _get_balance_service() -> BalanceService:
     return _BALANCE_SERVICE
 
 
-__all__ = ["build_balance_command", "build_history_command", "register"]
+__all__ = ["build_balance_command", "build_history_command", "get_help_data", "register"]

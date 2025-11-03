@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from src.bot.services.council_service import CouncilService
@@ -19,7 +21,7 @@ async def test_propose_vote_execute_success(monkeypatch: pytest.MonkeyPatch) -> 
     pool = _FakePool(conn)
     monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw, transfer_service=_FakeTransferService())
+    svc = CouncilService(gateway=gw, transfer_service=cast(Any, _FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
     p = await svc.create_transfer_proposal(
         guild_id=100,
@@ -44,7 +46,9 @@ async def test_propose_vote_execute_failure(monkeypatch: pytest.MonkeyPatch) -> 
     pool = _FakePool(conn)
     monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw, transfer_service=_FakeTransferService(should_fail=True))
+    svc = CouncilService(
+        gateway=gw, transfer_service=cast(Any, _FakeTransferService(should_fail=True))
+    )
     await svc.set_config(guild_id=1, council_role_id=2)
     p = await svc.create_transfer_proposal(
         guild_id=1,

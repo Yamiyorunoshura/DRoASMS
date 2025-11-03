@@ -8,6 +8,7 @@ import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -43,13 +44,13 @@ def _container_id(service: str) -> str:
     return out.splitlines()[0].strip()
 
 
-def _inspect_json(container: str) -> dict:
+def _inspect_json(container: str) -> dict[str, Any]:
     raw = subprocess.check_output(
         ["bash", "-lc", f"docker inspect {shlex.quote(container)}"],
         cwd=str(REPO_ROOT),
     )
     data = json.loads(raw.decode("utf-8"))
-    return data[0]
+    return data[0]  # type: ignore[no-any-return]
 
 
 def _parse_time(ts: str) -> datetime:
@@ -106,7 +107,7 @@ def test_compose_dependencies_postgres_healthy_before_bot_ready(tmp_path: Path) 
                 log = info["State"]["Health"].get("Log") or []
                 for rec in reversed(log):
                     if (rec.get("ExitCode") == 0) and rec.get("End"):
-                        became_healthy_at = _parse_time(rec["End"])  # type: ignore[assignment]
+                        became_healthy_at = _parse_time(rec["End"])
                         break
                 break
             time.sleep(2)
@@ -117,7 +118,7 @@ def test_compose_dependencies_postgres_healthy_before_bot_ready(tmp_path: Path) 
         # bot 應在 postgres healthy 之後才就緒
         # 先驗證容器啟動時間 > healthy 時間
         bot_id = _container_id("bot")
-        bot_started_at = _parse_time(_inspect_json(bot_id)["State"]["StartedAt"])  # type: ignore[index]
+        bot_started_at = _parse_time(_inspect_json(bot_id)["State"]["StartedAt"])
         assert (
             bot_started_at >= became_healthy_at
         ), f"bot 啟動時間({bot_started_at}) 早於 postgres healthy({became_healthy_at})"

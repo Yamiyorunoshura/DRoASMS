@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime
+from typing import Any
 
 import pytest
 
@@ -21,8 +22,8 @@ def _snowflake() -> int:
 
 @pytest.mark.asyncio
 async def test_transfer_success(
-    db_pool,  # type: ignore[no_untyped_call]
-    db_connection,  # type: ignore[no_untyped_call]
+    db_pool: Any,
+    db_connection: Any,
 ) -> None:
     service = TransferService(db_pool)
     guild_id = _snowflake()
@@ -65,8 +66,8 @@ async def test_transfer_success(
 
 @pytest.mark.asyncio
 async def test_transfer_insufficient_balance(
-    db_pool,  # type: ignore[no_untyped_call]
-    db_connection,  # type: ignore[no_untyped_call]
+    db_pool: Any,
+    db_connection: Any,
 ) -> None:
     service = TransferService(db_pool)
     guild_id = _snowflake()
@@ -107,8 +108,8 @@ async def test_transfer_insufficient_balance(
 
 @pytest.mark.asyncio
 async def test_transfer_invalid_target(
-    db_pool,  # type: ignore[no_untyped_call]
-    db_connection,  # type: ignore[no_untyped_call]
+    db_pool: Any,
+    db_connection: Any,
 ) -> None:
     service = TransferService(db_pool)
     guild_id = _snowflake()

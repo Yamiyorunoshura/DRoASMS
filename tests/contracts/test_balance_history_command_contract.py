@@ -4,18 +4,19 @@ import asyncio
 import secrets
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
-from discord import AppCommandOptionType
+from discord import AppCommandOptionType, Interaction
 
 from src.bot.commands.balance import (
     build_balance_command,
     build_history_command,
 )
 from src.bot.services.balance_service import (
+    BalanceService,
     BalanceSnapshot,
     HistoryEntry,
     HistoryPage,
@@ -54,7 +55,7 @@ class _StubInteraction:
 
 class _StubMember(SimpleNamespace):
     @property
-    def mention(self) -> str:  # type: ignore[override]
+    def mention(self) -> str:
         return f"<@{self.id}>"
 
 
@@ -76,7 +77,7 @@ async def test_balance_command_contract() -> None:
         )
     )
 
-    command = build_balance_command(service)
+    command = build_balance_command(cast(BalanceService, service))
     assert command.name == "balance"
     assert "餘額" in command.description
     parameter_names = [param.name for param in command.parameters]
@@ -85,7 +86,7 @@ async def test_balance_command_contract() -> None:
     assert command.parameters[0].required is False
 
     interaction = _StubInteraction(guild_id=guild_id, user_id=requester_id, manage_guild=False)
-    await command._callback(interaction, None)  # type: ignore[attr-defined]
+    await command._callback(cast(Interaction[Any], interaction), cast(Interaction[Any], None))
 
     service.get_balance_snapshot.assert_awaited_once_with(
         guild_id=guild_id,
@@ -130,7 +131,7 @@ async def test_history_command_contract() -> None:
         )
     )
 
-    command = build_history_command(service)
+    command = build_history_command(cast(BalanceService, service))
     assert command.name == "history"
     assert "歷史" in command.description
 
@@ -149,7 +150,9 @@ async def test_history_command_contract() -> None:
     interaction = _StubInteraction(guild_id=guild_id, user_id=requester_id, manage_guild=True)
     member = _StubMember(id=target_id, display_name="Target")
 
-    await command._callback(interaction, member, 10, None)  # type: ignore[attr-defined]
+    await command._callback(
+        cast(Interaction[Any], interaction), cast(Interaction[Any], member), 10, None
+    )
 
     service.get_history.assert_awaited_once_with(
         guild_id=guild_id,

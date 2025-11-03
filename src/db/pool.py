@@ -145,3 +145,13 @@ async def _configure_connection(connection: asyncpg.Connection) -> None:
         decoder=json.loads,
         format="text",
     )
+    # 允許以環境變數覆寫每日轉帳上限，供 DB 函式透過 GUC 讀取
+    daily_limit = os.getenv("TRANSFER_DAILY_LIMIT")
+    if daily_limit:
+        try:
+            int(daily_limit)  # 驗證可解析為整數
+            await connection.execute(
+                "SELECT set_config('app.transfer_daily_limit', $1, true)", daily_limit
+            )
+        except Exception as exc:  # 防禦性：不阻斷連線建立
+            LOGGER.warning("db.pool.set_guc_failed", key="app.transfer_daily_limit", error=str(exc))

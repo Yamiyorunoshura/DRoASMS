@@ -6,6 +6,7 @@ import discord
 import structlog
 from discord import app_commands
 
+from src.bot.commands.help_data import HelpData
 from src.bot.services.adjustment_service import (
     AdjustmentResult,
     AdjustmentService,
@@ -13,11 +14,50 @@ from src.bot.services.adjustment_service import (
     ValidationError,
 )
 from src.bot.services.council_service import CouncilService, GovernanceNotConfiguredError
-from src.bot.services.state_council_service import StateCouncilService, StateCouncilNotConfiguredError
+from src.bot.services.state_council_service import (
+    StateCouncilNotConfiguredError,
+    StateCouncilService,
+)
 from src.db import pool as db_pool
 
 LOGGER = structlog.get_logger(__name__)
 _ADJUST_SERVICE: AdjustmentService | None = None
+
+
+def get_help_data() -> HelpData:
+    """Return help information for the adjust command."""
+    return {
+        "name": "adjust",
+        "description": (
+            "管理員調整成員點數（正數加值，負數扣點）。"
+            "支援調整個別成員、理事會身分組或部門領導人身分組的點數。"
+        ),
+        "category": "economy",
+        "parameters": [
+            {
+                "name": "target",
+                "description": "要調整點數的成員、理事會身分組或部門領導人身分組",
+                "required": True,
+            },
+            {
+                "name": "amount",
+                "description": "可以為正數（加值）或負數（扣點）",
+                "required": True,
+            },
+            {
+                "name": "reason",
+                "description": "必填，將寫入審計紀錄",
+                "required": True,
+            },
+        ],
+        "permissions": ["administrator", "manage_guild"],
+        "examples": [
+            "/adjust @user 100 活動獎勵",
+            "/adjust @user -50 違規扣點",
+            "/adjust @CouncilRole 1000 理事會補助",
+        ],
+        "tags": ["管理", "調整"],
+    }
 
 
 def register(tree: app_commands.CommandTree) -> None:
@@ -155,4 +195,4 @@ def _get_adjust_service() -> AdjustmentService:
     return _ADJUST_SERVICE
 
 
-__all__ = ["build_adjust_command", "register"]
+__all__ = ["build_adjust_command", "get_help_data", "register"]

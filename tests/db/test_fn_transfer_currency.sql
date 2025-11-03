@@ -105,7 +105,8 @@ SELECT throws_like(
     'self transfer rejected'
 );
 
--- exceed the daily limit (default 500)
+-- exceed the daily limit (explicitly set via GUC to 500)
+SELECT set_config('app.transfer_daily_limit', '500', false);
 SELECT ok(
     (
         SELECT (economy.fn_transfer_currency(

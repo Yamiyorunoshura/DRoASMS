@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
 import asyncpg
 import structlog
 
+from src.db.gateway.economy_pending_transfers import PendingTransferGateway
 from src.db.gateway.economy_transfers import (
     EconomyTransferGateway,
     TransferProcedureResult,
@@ -57,9 +58,15 @@ class TransferService:
         pool: asyncpg.Pool,
         *,
         gateway: EconomyTransferGateway | None = None,
+        pending_gateway: PendingTransferGateway | None = None,
+        event_pool_enabled: bool = False,
+        default_expires_hours: int = 24,
     ) -> None:
         self._pool = pool
         self._gateway = gateway or EconomyTransferGateway()
+        self._pending_gateway = pending_gateway or PendingTransferGateway()
+        self._event_pool_enabled = event_pool_enabled
+        self._default_expires_hours = default_expires_hours
 
     async def transfer_currency(
         self,
@@ -70,16 +77,53 @@ class TransferService:
         amount: int,
         reason: str | None = None,
         connection: asyncpg.Connection | None = None,
-    ) -> TransferResult:
+        expires_hours: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> TransferResult | UUID:
+        """Transfer currency.
+
+        Returns TransferResult if sync mode, UUID (transfer_id) if event pool mode.
+        """
         if initiator_id == target_id:
             raise TransferValidationError("Initiator and target must be different members.")
         if amount <= 0:
             raise TransferValidationError("Transfer amount must be a positive whole number.")
 
-        metadata: dict[str, Any] = {}
+        transfer_metadata: dict[str, Any] = dict(metadata) if metadata else {}
         if reason:
-            metadata["reason"] = reason
+            transfer_metadata["reason"] = reason
 
+        # Event pool mode
+        if self._event_pool_enabled:
+            expires_at = None
+            if expires_hours is not None or self._default_expires_hours > 0:
+                hours = expires_hours if expires_hours is not None else self._default_expires_hours
+                expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
+
+            if connection is not None:
+                transfer_id = await self._create_pending_transfer(
+                    connection,
+                    guild_id=guild_id,
+                    initiator_id=initiator_id,
+                    target_id=target_id,
+                    amount=amount,
+                    metadata=transfer_metadata,
+                    expires_at=expires_at,
+                )
+            else:
+                async with self._pool.acquire() as pooled_connection:
+                    transfer_id = await self._create_pending_transfer(
+                        pooled_connection,
+                        guild_id=guild_id,
+                        initiator_id=initiator_id,
+                        target_id=target_id,
+                        amount=amount,
+                        metadata=transfer_metadata,
+                        expires_at=expires_at,
+                    )
+            return transfer_id
+
+        # Synchronous mode (original behavior)
         if connection is not None:
             return await self._execute_transfer(
                 connection,
@@ -87,7 +131,7 @@ class TransferService:
                 initiator_id=initiator_id,
                 target_id=target_id,
                 amount=amount,
-                metadata=metadata,
+                metadata=transfer_metadata,
             )
 
         async with self._pool.acquire() as pooled_connection:
@@ -97,7 +141,7 @@ class TransferService:
                 initiator_id=initiator_id,
                 target_id=target_id,
                 amount=amount,
-                metadata=metadata,
+                metadata=transfer_metadata,
             )
 
     async def _execute_transfer(
@@ -142,6 +186,54 @@ class TransferService:
             throttled_until=db_result.throttled_until,
             metadata=metadata,
         )
+
+    async def _create_pending_transfer(
+        self,
+        connection: asyncpg.Connection,
+        *,
+        guild_id: int,
+        initiator_id: int,
+        target_id: int,
+        amount: int,
+        metadata: dict[str, Any],
+        expires_at: datetime | None,
+    ) -> UUID:
+        """Create a pending transfer in event pool mode."""
+        transfer_id = await self._pending_gateway.create_pending_transfer(
+            connection,
+            guild_id=guild_id,
+            initiator_id=initiator_id,
+            target_id=target_id,
+            amount=amount,
+            metadata=metadata,
+            expires_at=expires_at,
+        )
+        LOGGER.info(
+            "transfer_service.pending_created",
+            transfer_id=transfer_id,
+            guild_id=guild_id,
+            initiator_id=initiator_id,
+            target_id=target_id,
+            amount=amount,
+        )
+        return transfer_id
+
+    async def get_transfer_status(
+        self,
+        *,
+        transfer_id: UUID,
+        connection: asyncpg.Connection | None = None,
+    ) -> Any | None:
+        """Get the status of a pending transfer."""
+        if connection is not None:
+            return await self._pending_gateway.get_pending_transfer(
+                connection, transfer_id=transfer_id
+            )
+
+        async with self._pool.acquire() as pooled_connection:
+            return await self._pending_gateway.get_pending_transfer(
+                pooled_connection, transfer_id=transfer_id
+            )
 
     @staticmethod
     def _handle_postgres_error(exc: asyncpg.PostgresError) -> None:

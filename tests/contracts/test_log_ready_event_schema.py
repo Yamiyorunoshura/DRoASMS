@@ -25,7 +25,7 @@ def _validate_against_schema(payload: dict[str, Any], schema: dict[str, Any]) ->
                 assert payload["event"] == props["const"]
 
 
-def test_log_ready_event_matches_schema(capsys) -> None:
+def test_log_ready_event_matches_schema(capsys: Any) -> None:
     schema = load_json_schema("log-events.schema.json")
     configure_logging()
     logger = structlog.get_logger("test")

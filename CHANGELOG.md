@@ -11,6 +11,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 進一步的監控與可觀測性（metrics/log tracing）
 - 更多治理功能與工作流程命令
 
+## [0.4.0] - 2025-11-03
+
+### Added
+- **轉帳事件池（Transfer Event Pool）**：實現事件驅動的異步轉帳處理架構
+  - 透過 PostgreSQL NOTIFY/LISTEN 機制實現自動檢查與重試
+  - 支援餘額、冷卻時間、每日上限的異步檢查
+  - 自動重試機制（指數退避，最多 10 次）
+  - 預設過期時間 24 小時，定期清理過期請求
+  - 環境變數 `TRANSFER_EVENT_POOL_ENABLED` 控制啟用（預設 false，向後相容）
+  - 新增 `pending_transfers` 表與相關 SQL 函式（遷移 022-026）
+  - 新增 `TransferEventPoolCoordinator` 協調器與 `TelemetryListener` 事件監聽器
+  - 新增完整測試覆蓋與架構文檔（`docs/transfer-event-pool.md`）
+- **幫助命令系統（/help）**：新增指令說明與查詢功能
+  - `/help`：顯示所有可用指令列表或查詢特定指令詳細資訊
+  - 自動收集指令樹中的指令資訊（名稱、描述、參數、權限、範例）
+  - 支援分類顯示與搜尋功能
+  - 新增 `HelpCollector`、`HelpFormatter`、`HelpData` 模組
+- **國務院治理系統（State Council Governance）**：擴充完整的部門治理功能
+  - `/state_council config_leader`：設定國務院領袖（使用者或身分組）
+  - `/state_council panel`：開啟國務院面板（部門管理、發行點數、匯出）
+  - 部門配置管理：各部門可設定領導人身分組、稅率、發行上限
+  - 部門點數發行：國務院領袖可向各部門發行點數
+  - 部門轉帳：各部門可向成員轉帳（透過政府帳戶）
+  - 匯出功能：支援匯出部門配置與發行記錄
+  - 新增 `StateCouncilService`、`StateCouncilReports`、`StateCouncilScheduler` 服務
+  - 新增 `state_council_governance` 資料庫 schema 與相關 SQL 函式（遷移 006-020）
+  - 新增完整測試覆蓋（單元、整合、契約測試）
+- **CI/CD 工作流程**：新增 GitHub Actions CI 配置
+  - 自動執行測試、型別檢查、程式碼品質檢查
+  - 支援多 Python 版本測試（3.13）
+  - 支援 Docker Compose 整合測試
+  - 自動測試轉帳事件池、國務院治理等新功能
+
+### Changed
+- `/transfer`：支援事件池模式（當 `TRANSFER_EVENT_POOL_ENABLED=true` 時）
+- `/adjust`：支援以部門領導人身分組為目標（自動映射至對應政府帳戶）
+- `/balance`：改善分頁顯示與歷史記錄查詢
+- `/council`：改善面板功能與指令同步
+- 資料庫函式：擴充 `fn_transfer_currency` 支援政府帳戶豁免檢查
+- 測試架構：擴充測試工具與契約測試覆蓋
+
+### Planned
+- 進一步的監控與可觀測性（metrics/log tracing）
+- 更多治理功能與工作流程命令
+
 ## [0.3.1] - 2025-10-30
 
 ### Fixed

@@ -2,22 +2,28 @@ from __future__ import annotations
 
 from dataclasses import replace as dc_replace
 from datetime import datetime, timedelta, timezone
-from typing import Any, Sequence
+from typing import Any, Sequence, cast
 from uuid import UUID, uuid4
 
 import pytest
 
 from src.bot.services.council_service import CouncilService, PermissionDeniedError
-from src.db.gateway.council_governance import CouncilConfig, Proposal, Tally
+from src.bot.services.transfer_service import TransferService
+from src.db.gateway.council_governance import (
+    CouncilConfig,
+    CouncilGovernanceGateway,
+    Proposal,
+    Tally,
+)
 
 # ---- Fakes (no DB required) ----
 
 
 class _FakeTxn:
-    async def __aenter__(self):  # noqa: D401
+    async def __aenter__(self) -> None:  # noqa: D401
         return None
 
-    async def __aexit__(self, exc_type, exc, tb):  # noqa: D401
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:  # noqa: D401
         return False
 
 
@@ -25,7 +31,7 @@ class _FakeConnection:
     def __init__(self, gw: "_FakeGateway") -> None:
         self._gw = gw
 
-    def transaction(self) -> _FakeTxn:  # type: ignore[override]
+    def transaction(self) -> _FakeTxn:
         return _FakeTxn()
 
     async def fetchval(self, sql: str, proposal_id: UUID) -> int:  # minimal SQL hook
@@ -49,7 +55,7 @@ class _FakeAcquire:
     async def __aenter__(self) -> _FakeConnection:
         return self._conn
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: D401
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:  # noqa: D401
         return None
 
 
@@ -57,12 +63,13 @@ class _FakePool:
     def __init__(self, conn: _FakeConnection) -> None:
         self._conn = conn
 
-    def acquire(self) -> _FakeAcquire:  # type: ignore[override]
+    def acquire(self) -> _FakeAcquire:
         return _FakeAcquire(self._conn)
 
 
-class _FakeGateway:
-    def __init__(self) -> None:
+class _FakeGateway(CouncilGovernanceGateway):
+    def __init__(self, *, schema: str = "governance") -> None:
+        super().__init__(schema=schema)
         self._cfg: dict[int, CouncilConfig] = {}
         self._proposals: dict[UUID, Proposal] = {}
         self._snapshot: dict[UUID, list[int]] = {}
@@ -131,8 +138,18 @@ class _FakeGateway:
         return list(self._snapshot.get(proposal_id, []))
 
     async def cancel_proposal(self, conn: Any, *, proposal_id: UUID) -> bool:
+        """模擬資料庫端治理邏輯：
+        - 僅允許在「進行中」狀態撤案
+        - 一旦已有任一票紀錄（votes>0）即不可撤案
+
+        與 production 實作一致：實際行為由 SQL 函式
+        governance.fn_attempt_cancel_proposal 決定，此處僅以測試假物件重現規則。
+        """
         p = self._proposals.get(proposal_id)
         if p is None or p.status != "進行中":
+            return False
+        # 若已有人投票，拒絕撤案（與 DB 邏輯一致）
+        if len(self._votes.get(proposal_id, {})) > 0:
             return False
         self._proposals[proposal_id] = dataclass_replace(p, status="已撤案")
         return True
@@ -245,7 +262,7 @@ async def test_vote_threshold_executes_success(monkeypatch: pytest.MonkeyPatch) 
     pool = _FakePool(conn)
     monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw, transfer_service=_FakeTransferService())
+    svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, _FakeTransferService()))
     # 設定 config（含 council 帳戶）
     await svc.set_config(guild_id=100, council_role_id=200)
 
@@ -274,7 +291,7 @@ async def test_early_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
     pool = _FakePool(conn)
     monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw, transfer_service=_FakeTransferService())
+    svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, _FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
     p = await svc.create_transfer_proposal(
         guild_id=100,
@@ -301,7 +318,7 @@ async def test_cancel_proposal_rejected_after_first_vote(monkeypatch: pytest.Mon
     pool = _FakePool(conn)
     monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw, transfer_service=_FakeTransferService())
+    svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, _FakeTransferService()))
     await svc.set_config(guild_id=5, council_role_id=6)
     p = await svc.create_transfer_proposal(
         guild_id=5,
@@ -340,7 +357,9 @@ async def test_expire_due_proposals_exec_or_timeout(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     # 一筆會通過並執行、一筆逾時
-    svc_ok = CouncilService(gateway=gw, transfer_service=_FakeTransferService())
+    svc_ok = CouncilService(
+        gateway=gw, transfer_service=cast(TransferService, _FakeTransferService())
+    )
     await svc_ok.set_config(guild_id=1, council_role_id=2)
     p1 = await svc_ok.create_transfer_proposal(
         guild_id=1,
@@ -358,7 +377,9 @@ async def test_expire_due_proposals_exec_or_timeout(monkeypatch: pytest.MonkeyPa
     await svc_ok.vote(proposal_id=p1.proposal_id, voter_id=1, choice="approve")
     await svc_ok.vote(proposal_id=p1.proposal_id, voter_id=2, choice="approve")  # T 達成
 
-    svc_to = CouncilService(gateway=gw, transfer_service=_FakeTransferService())
+    svc_to = CouncilService(
+        gateway=gw, transfer_service=cast(TransferService, _FakeTransferService())
+    )
     p2 = await svc_to.create_transfer_proposal(
         guild_id=1,
         proposer_id=3,
@@ -385,7 +406,7 @@ async def test_non_snapshot_voter_rejected(monkeypatch: pytest.MonkeyPatch) -> N
     conn = _FakeConnection(gw)
     pool = _FakePool(conn)
     monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
-    svc = CouncilService(gateway=gw, transfer_service=_FakeTransferService())
+    svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, _FakeTransferService()))
     await svc.set_config(guild_id=7, council_role_id=8)
     p = await svc.create_transfer_proposal(
         guild_id=7,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 
@@ -14,8 +15,8 @@ def _snowflake() -> int:
 
 @pytest.mark.asyncio
 async def test_history_returns_paginated_entries(
-    db_pool,  # type: ignore[no_untyped_call]
-    db_connection,  # type: ignore[no_untyped_call]
+    db_pool: Any,
+    db_connection: Any,
 ) -> None:
     service = BalanceService(db_pool)
     guild_id = _snowflake()
@@ -94,8 +95,8 @@ async def test_history_returns_paginated_entries(
 
 @pytest.mark.asyncio
 async def test_history_limit_validation(
-    db_pool,  # type: ignore[no_untyped_call]
-    db_connection,  # type: ignore[no_untyped_call]
+    db_pool: Any,
+    db_connection: Any,
 ) -> None:
     service = BalanceService(db_pool)
     guild_id = _snowflake()

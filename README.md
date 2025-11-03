@@ -17,9 +17,16 @@ DRoASMS 是以 Python 打造的 Discord 機器人原型，專注於社群的經�
 - **安全審計**：所有管理員操作都會記錄並可追蹤
 
 ### 交易限流機制
-- **每日轉帳限制**：防止濫用的每日轉帳上限
+- **每日轉帳限制（可關閉）**：預設已關閉；如需啟用，設定環境變數 `TRANSFER_DAILY_LIMIT` 為正整數（例如 1000）
 - **冷卻時間**：頻繁操作後的短暫限制，確保系統穩定
 - **餘額保護**：防止餘額變為負數的保護機制
+
+### 轉帳事件池（Transfer Event Pool）
+- **異步轉帳處理**：啟用事件池模式後，轉帳請求將進入異步處理流程
+- **自動重試機制**：當檢查失敗時（餘額不足、冷卻中、每日上限），系統會自動重試（指數退避，最多 10 次）
+- **事件驅動架構**：透過 PostgreSQL NOTIFY/LISTEN 機制實現檢查與執行的解耦
+- **啟用方式**：設定環境變數 `TRANSFER_EVENT_POOL_ENABLED=true`（預設 false，向後相容）
+- 詳細架構說明請參考 [轉帳事件池文件](docs/transfer-event-pool.md)
 
 ### 數據庫架構
 - **PostgreSQL 後端**：使用可靠的 PostgreSQL 資料庫儲存所有經濟數據
@@ -51,12 +58,16 @@ uv sync
 ```
 
 ## 環境設定
-複製 `.env.example` 產生 `.env` 檔案，填入必要的 Discord 憑證與設定：
+複製 `.env.example` 產生 `.env` 檔案，填入必要的 Discord 憑證與設定（括號內為預設）：
 
 ```env
 DISCORD_TOKEN=你的Discord機器人令牌
 DATABASE_URL=postgresql://username:password@127.0.0.1:5432/dbname
 DISCORD_GUILD_ALLOWLIST=伺服器ID1,伺服器ID2  # 選填
+# 啟用轉帳事件池（建議 true，可避免互動逾時與長時操作）：
+TRANSFER_EVENT_POOL_ENABLED=true
+# （選填）每日轉帳上限，僅事件池檢查使用，預設 500
+# TRANSFER_DAILY_LIMIT=1000
 ```
 
 注意：請勿將 `.env` 提交到版本控制；若你的 token 不慎外洩，務必在 Discord 開發者平台旋轉（重設）它。
@@ -142,9 +153,9 @@ docker compose down -v     # 停止並刪除資料卷（會清空資料庫）
 Compose 預設內容：
 - PostgreSQL：使用者 `bot`、密碼 `bot`、資料庫 `economy`、埠對外 `5432`
 - Bot：容器啟動時會先執行 Alembic 遷移，再啟動機器人
-- Alembic 目標：預設升級至 `003_economy_adjustments`（避免官方 Postgres 因無 `pg_cron` 導致 004 失敗）
+- 遷移策略：啟動時先嘗試 `alembic upgrade head`，若失敗（常見於 004 需要 `pg_cron`）才回退到 `ALEMBIC_UPGRADE_TARGET`（預設 `003_economy_adjustments`）
 - 初次啟動會自動在資料庫建立 `pgcrypto` 擴充（見 `docker/init/001_extensions.sql`）
-- 若需 `pg_cron`，請改用支援該擴充的映像或自行安裝後，將環境變數 `ALEMBIC_UPGRADE_TARGET` 設為 `head`
+- 若需 `pg_cron` 或使用最新功能（如轉帳事件池），建議改用支援該擴充的映像或自行安裝後，將環境變數 `ALEMBIC_UPGRADE_TARGET` 設為 `head`
 
 依需要調整 Alembic 目標版本：
 ```bash
@@ -196,7 +207,7 @@ python -m src.bot.main
 ### 啟動前檢查清單
 - `.env` 已設定正確的 `DISCORD_TOKEN` 與 `DATABASE_URL`
 - PostgreSQL 正在執行，且 `pg_isready -h 127.0.0.1 -p 5432` 顯示 ready（或以 Unix Socket 連線）
-- 已執行 `uv run alembic upgrade head`（或至少升級到 `003_economy_adjustments`）
+- 已執行 `uv run alembic upgrade head`（或至少升級到 `003_economy_adjustments`；容器啟動亦會先嘗試升到 head）
 
 ## 治理（Council Governance，MVP）
 
@@ -223,6 +234,22 @@ python -m src.bot.main
 注意事項：
 - 需要於 Discord 開發者後台啟用「成員 Intent」以取得角色成員清單（本專案已於程式中啟用 `intents.members = True`）。
 - MVP 僅以 DM 進行互動與通知，沒有公開頻道摘要。
+
+## 國務院治理（State Council Governance）
+
+本功能提供「國務院」以部門為單位的治理系統，支援部門配置、點數發行與轉帳。
+
+- 設定國務院領袖：`/state_council config_leader <leader|leader_role>`（需管理員或管理伺服器權限）
+- 開啟國務院面板：`/state_council panel`（僅國務院領袖可用）
+  - 部門管理：設定各部門領導人身分組、稅率、發行上限
+  - 點數發行：向各部門發行點數
+  - 部門轉帳：各部門可向成員轉帳（透過政府帳戶）
+  - 匯出功能：匯出部門配置與發行記錄
+- `/adjust` 與 `/transfer` 支援以部門領導人身分組為目標（自動映射至對應政府帳戶）
+
+注意事項：
+- 需要於 Discord 開發者後台啟用「成員 Intent」以取得角色成員清單
+- 部門轉帳透過政府帳戶執行，不受冷卻時間與每日上限限制
 
 ## 使用 Git 更新專案
 
@@ -295,7 +322,7 @@ docker compose up -d
 管理員調整成員點數（正數加值，負數扣點）。
 
 **參數：**
-- `target`（必填）：要調整點數的成員
+- `target`（必填）：要調整點數的成員或部門領導人身分組
 - `amount`（必填）：可以為正數（加值）或負數（扣點）
 - `reason`（必填）：將寫入審計紀錄的原因
 
@@ -306,6 +333,20 @@ docker compose up -d
 ```
 /adjust @username 100 reason:活動獎勵         # 給成員加值 100 點
 /adjust @username -50 reason:違規懲罰         # 扣除成員 50 點
+/adjust @DepartmentLeaderRole 500 reason:部門預算  # 調整部門政府帳戶餘額
+```
+
+### `/help`
+顯示所有可用指令的說明，或查詢特定指令的詳細資訊。
+
+**參數：**
+- `command`（選填）：要查詢的指令名稱（例如：transfer、council panel）
+
+**範例：**
+```
+/help                    # 顯示所有可用指令列表
+/help transfer           # 查詢 /transfer 指令的詳細說明
+/help state_council      # 查詢國務院治理相關指令
 ```
 
 ## 權限系統說明
@@ -326,7 +367,9 @@ docker compose up -d
 ## 交易限流機制說明
 
 ### 每日轉帳限制
-- 每個伺服器設有每日轉帳上限（預設 500 點）
+- 預設「無上限」。自遷移 `025_unlimited_daily_limit_by_default` 起，若未設定
+  `TRANSFER_DAILY_LIMIT`（或設為 0、負數），系統視為無上限且此檢查一律通過。
+  若要開啟限制，將 `TRANSFER_DAILY_LIMIT` 設為正整數（例如 1000）。
 - 超過限制後將無法繼續轉帳，直到次日重置
 
 ### 冷卻時間

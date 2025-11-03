@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime
+from typing import Any
 
 import pytest
 
@@ -16,8 +17,8 @@ def _snowflake() -> int:
 
 @pytest.mark.asyncio
 async def test_transfer_history_adjust_flow(
-    db_pool,  # type: ignore[no-untyped-call]
-    db_connection,  # type: ignore[no-untyped-call]
+    db_pool: Any,
+    db_connection: Any,
 ) -> None:
     guild_id = _snowflake()
     initiator_id = _snowflake()
@@ -40,7 +41,7 @@ async def test_transfer_history_adjust_flow(
     adjustments = AdjustmentService(db_pool)
 
     # Step 1: transfer
-    tr: TransferResult = await transfers.transfer_currency(
+    transfer_result = await transfers.transfer_currency(
         guild_id=guild_id,
         initiator_id=initiator_id,
         target_id=target_id,
@@ -48,6 +49,8 @@ async def test_transfer_history_adjust_flow(
         reason="integration: prize",
         connection=db_connection,
     )
+    assert isinstance(transfer_result, TransferResult), "Expected TransferResult in sync mode"
+    tr = transfer_result
     assert tr.amount == 150
     assert tr.initiator_balance == 150
     assert tr.target_balance == 150

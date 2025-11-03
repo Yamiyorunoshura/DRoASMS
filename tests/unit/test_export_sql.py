@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 
@@ -10,16 +11,22 @@ from src.db.gateway.council_governance import CouncilGovernanceGateway
 class _CaptureConn:
     def __init__(self) -> None:
         self.sql: str | None = None
-        self.args: tuple | None = None
+        self.args: tuple[Any, ...] | None = None
 
-    async def fetch(self, sql: str, guild_id: int, start: datetime, end: datetime):  # type: ignore[override]
+    async def fetch(self, sql: str, guild_id: int, start: datetime, end: datetime) -> list[Any]:
+        # 捕捉傳入 SQL 與參數以驗證 Gateway 只呼叫資料庫函式
         self.sql = sql
         self.args = (guild_id, start, end)
         return []
 
 
 @pytest.mark.asyncio
-async def test_export_interval_uses_lateral_subqueries() -> None:
+async def test_export_interval_calls_db_function_only() -> None:
+    """新版實作將匯出邏輯下放至資料庫函式。
+
+    驗證 Gateway 僅呼叫 `governance.fn_export_interval($1,$2,$3)`，
+    不再於 Python 端組裝包含 JOIN LATERAL 的查詢。
+    """
     gw = CouncilGovernanceGateway()
     c = _CaptureConn()
     start = datetime.now(timezone.utc) - timedelta(days=1)
@@ -27,7 +34,5 @@ async def test_export_interval_uses_lateral_subqueries() -> None:
     rows = await gw.export_interval(c, guild_id=1, start=start, end=end)
     assert rows == []
     assert c.sql is not None
-    # 確認使用兩個 JOIN LATERAL（votes 與 snapshot 各一次）
-    assert c.sql.count("JOIN LATERAL") >= 2
-    assert "FROM governance.votes v" in c.sql
-    assert "FROM governance.proposal_snapshots ps" in c.sql
+    assert c.sql.strip() == "SELECT * FROM governance.fn_export_interval($1,$2,$3)"
+    assert c.args == (1, start, end)

@@ -35,4 +35,5 @@ def load_json_schema(name: str) -> dict[str, Any]:
     Raises FileNotFoundError if the schema does not exist.
     """
     with contract_path(name).open("r", encoding="utf-8") as f:
-        return json.load(f)
+        result = json.load(f)
+        return result  # type: ignore[no-any-return]

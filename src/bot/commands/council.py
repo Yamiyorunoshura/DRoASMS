@@ -11,6 +11,7 @@ import discord
 import structlog
 from discord import app_commands
 
+from src.bot.commands.help_data import HelpData
 from src.bot.services.balance_service import BalanceService
 from src.bot.services.council_service import (
     CouncilService,
@@ -22,6 +23,45 @@ from src.infra.events.council_events import CouncilEvent
 from src.infra.events.council_events import subscribe as subscribe_council_events
 
 LOGGER = structlog.get_logger(__name__)
+
+
+def get_help_data() -> dict[str, HelpData]:
+    """Return help information for council commands."""
+    return {
+        "council": {
+            "name": "council",
+            "description": "理事會治理指令群組",
+            "category": "governance",
+            "parameters": [],
+            "permissions": [],
+            "examples": [],
+            "tags": ["理事會", "治理"],
+        },
+        "council config_role": {
+            "name": "council config_role",
+            "description": "設定常任理事身分組（角色）。需要管理員或管理伺服器權限。",
+            "category": "governance",
+            "parameters": [
+                {
+                    "name": "role",
+                    "description": "Discord 角色，將作為理事名冊來源",
+                    "required": True,
+                },
+            ],
+            "permissions": ["administrator", "manage_guild"],
+            "examples": ["/council config_role @CouncilRole"],
+            "tags": ["設定", "配置"],
+        },
+        "council panel": {
+            "name": "council panel",
+            "description": "開啟理事會面板（建案/投票/撤案/匯出）。僅限理事使用。",
+            "category": "governance",
+            "parameters": [],
+            "permissions": [],
+            "examples": ["/council panel"],
+            "tags": ["面板", "操作"],
+        },
+    }
 
 
 def register(tree: app_commands.CommandTree) -> None:
@@ -333,7 +373,7 @@ def _install_background_scheduler(client: discord.Client, service: CouncilServic
     _scheduler_task = asyncio.create_task(_runner(), name="council-scheduler")
 
 
-__all__ = ["register"]
+__all__ = ["get_help_data", "register"]
 
 
 # --- Panel UI ---
@@ -373,6 +413,14 @@ class CouncilPanelView(discord.ui.View):
         )
         self._export_btn.callback = self._on_click_export  # type: ignore[method-assign]
         self.add_item(self._export_btn)
+
+        # 使用指引按鈕：顯示依理事會面板操作而設計之說明
+        self._help_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="使用指引",
+            style=discord.ButtonStyle.secondary,
+        )
+        self._help_btn.callback = self._on_click_help  # type: ignore[method-assign]
+        self.add_item(self._help_btn)
 
         self._select: discord.ui.Select[Any] = discord.ui.Select(
             placeholder="選擇進行中提案以投票/撤案",
@@ -435,6 +483,35 @@ class CouncilPanelView(discord.ui.View):
         embed.add_field(name="Council 摘要", value=summary, inline=False)
         embed.description = "在此可：建立提案、檢視進行中提案並投票、撤案與匯出。"
         return embed
+
+    def _build_help_embed(self) -> discord.Embed:
+        """建構理事會面板之使用指引。"""
+        lines = [
+            "• 開啟方式：於伺服器使用 /council panel（僅限理事）。",
+            "• 建立提案：點擊『建立轉帳提案』，輸入受款人、金額、用途與附件（選填）。",
+            "• 名冊快照：建案當下鎖定理事名單與投票門檻 T，用於後續投票與決議。",
+            "• 投票：於『進行中提案』下拉選擇提案後可進行『同意/反對/棄權』。",
+            "• 撤案限制：僅提案人且在『尚無任何投票』時可按『撤案（無票前）』。",
+            "• 匯出：管理員或具 manage_guild 可按『匯出資料』輸出 JSON/CSV（可選期間）。",
+            "• 即時更新：面板開啟期間會自動刷新清單與合計票數。",
+            "• 私密性：所有回覆皆為 ephemeral，僅對開啟者可見。",
+        ]
+        embed = discord.Embed(title="ℹ️ 使用指引｜常任理事會面板", color=0x95A5A6)
+        embed.description = "\n".join(lines)
+        return embed
+
+    async def _on_click_help(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("僅限面板開啟者操作。", ephemeral=True)
+            return
+        try:
+            await interaction.response.send_message(embed=self._build_help_embed(), ephemeral=True)
+        except Exception:
+            # 後援：若已回覆，改用 followup
+            try:
+                await interaction.followup.send(embed=self._build_help_embed(), ephemeral=True)
+            except Exception:
+                pass
 
     async def refresh_options(self) -> None:
         """以最近 N=10 筆進行中提案刷新選單。"""

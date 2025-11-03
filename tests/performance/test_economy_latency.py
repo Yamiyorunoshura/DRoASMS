@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import secrets
 import time
+from typing import Any
 
 import pytest
 
@@ -16,8 +17,8 @@ def _snowflake() -> int:
 @pytest.mark.performance
 @pytest.mark.asyncio
 async def test_transfer_confirmation_latency_under_5s(
-    db_pool,  # type: ignore[no-untyped-call]
-    db_connection,  # type: ignore[no-untyped-call]
+    db_pool: Any,
+    db_connection: Any,
 ) -> None:
     # Allow tuning via env; default to 500 operations to simulate daily volume
     total_ops = int(os.getenv("PERF_TX_COUNT", "500"))

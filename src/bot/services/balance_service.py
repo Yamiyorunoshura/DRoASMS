@@ -147,15 +147,7 @@ class BalanceService:
             if len(entries) == limit and entries:
                 last_created = entries[-1].created_at
                 has_more = await conn.fetchval(
-                    """
-                    SELECT EXISTS (
-                        SELECT 1
-                        FROM economy.currency_transactions
-                        WHERE guild_id = $1
-                          AND (initiator_id = $2 OR target_id = $2)
-                          AND created_at < $3
-                    )
-                    """,
+                    "SELECT economy.fn_has_more_history($1,$2,$3)",
                     guild_id,
                     target_id,
                     last_created,

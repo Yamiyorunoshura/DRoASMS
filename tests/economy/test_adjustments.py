@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime
+from typing import Any
 
 import pytest
 
@@ -19,8 +20,8 @@ def _snowflake() -> int:
 
 @pytest.mark.asyncio
 async def test_admin_grant_success(
-    db_pool,  # type: ignore[no-untyped-call]
-    db_connection,  # type: ignore[no-untyped-call]
+    db_pool: Any,
+    db_connection: Any,
 ) -> None:
     service = AdjustmentService(db_pool)
 
@@ -63,8 +64,8 @@ async def test_admin_grant_success(
 
 @pytest.mark.asyncio
 async def test_unauthorized_adjustment_rejected(
-    db_pool,  # type: ignore[no-untyped-call]
-    db_connection,  # type: ignore[no-untyped-call]
+    db_pool: Any,
+    db_connection: Any,
 ) -> None:
     service = AdjustmentService(db_pool)
 
@@ -96,8 +97,8 @@ async def test_unauthorized_adjustment_rejected(
 
 @pytest.mark.asyncio
 async def test_deduct_cannot_drop_below_zero(
-    db_pool,  # type: ignore[no-untyped-call]
-    db_connection,  # type: ignore[no-untyped-call]
+    db_pool: Any,
+    db_connection: Any,
 ) -> None:
     service = AdjustmentService(db_pool)
 
