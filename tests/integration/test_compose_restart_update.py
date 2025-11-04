@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -15,7 +16,33 @@ def _compose_cmd(*args: str) -> list[str]:
     return ["docker", "compose", "-f", str(REPO_ROOT / "compose.yaml"), *args]
 
 
-@pytest.mark.integration
+def _has_cmd(cmd: str) -> bool:
+    return (
+        subprocess.call(
+            ["bash", "-lc", f"command -v {shlex.quote(cmd)} >/dev/null"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        == 0
+    )
+
+
+# 在缺乏測試環境時（未顯式啟用或無 Docker）一律略過
+pytestmark = [
+    pytest.mark.skipif(
+        os.getenv("RUN_DISCORD_INTEGRATION_TESTS", "").lower() not in {"1", "true", "yes"},
+        reason="未啟用 RUN_DISCORD_INTEGRATION_TESTS，略過 Discord/Compose 整合測試",
+    ),
+    pytest.mark.skipif(
+        not (
+            (_has_cmd("docker") and _has_cmd("docker-compose"))
+            or (_has_cmd("docker") and os.environ.get("COMPOSE_DOCKER_CLI_BUILD") is not None)
+        ),
+        reason="Docker/Compose 不可用，略過整合測試",
+    ),
+]
+
+
 def test_compose_restart_update_cycle(tmp_path: Path) -> None:
     """Down → Up → observe a second bot.ready event.
 

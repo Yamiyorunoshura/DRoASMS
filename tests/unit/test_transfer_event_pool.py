@@ -3,20 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-import secrets
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
+from faker import Faker
 
 from src.bot.services.transfer_event_pool import TransferEventPoolCoordinator
 from src.db.gateway.economy_pending_transfers import PendingTransfer
 
 
-def _snowflake() -> int:
+def _snowflake(faker: Faker) -> int:
     """Generate a random Discord snowflake for isolated test runs."""
-    return secrets.randbits(63)
+    # Discord snowflakes are 63-bit integers (max 9223372036854775807)
+    return faker.random_int(min=1, max=9223372036854775807)
 
 
 def _create_mock_pending_transfer(
@@ -166,7 +167,7 @@ async def test_handle_check_result_some_failed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_handle_check_approved() -> None:
+async def test_handle_check_approved(faker: Faker) -> None:
     """Test handling check approved event."""
     mock_pending_gateway = AsyncMock()
     mock_transfer_gateway = AsyncMock()
@@ -180,9 +181,9 @@ async def test_handle_check_approved() -> None:
 
     try:
         transfer_id = uuid4()
-        guild_id = _snowflake()
-        initiator_id = _snowflake()
-        target_id = _snowflake()
+        guild_id = _snowflake(faker)
+        initiator_id = _snowflake(faker)
+        target_id = _snowflake(faker)
 
         # Mock pending transfer
         mock_pending = _create_mock_pending_transfer(
@@ -190,7 +191,7 @@ async def test_handle_check_approved() -> None:
             guild_id=guild_id,
             initiator_id=initiator_id,
             target_id=target_id,
-            amount=100,
+            amount=faker.random_int(min=1, max=10000),
             status="approved",
         )
         mock_pending_gateway.get_pending_transfer = AsyncMock(return_value=mock_pending)
@@ -211,7 +212,7 @@ async def test_handle_check_approved() -> None:
 
 
 @pytest.mark.asyncio
-async def test_retry_scheduling_logic() -> None:
+async def test_retry_scheduling_logic(faker: Faker) -> None:
     """Test retry scheduling logic without actual retry."""
     mock_pending_gateway = AsyncMock()
     coordinator = TransferEventPoolCoordinator(
@@ -223,9 +224,9 @@ async def test_retry_scheduling_logic() -> None:
 
     try:
         transfer_id = uuid4()
-        guild_id = _snowflake()
-        initiator_id = _snowflake()
-        target_id = _snowflake()
+        guild_id = _snowflake(faker)
+        initiator_id = _snowflake(faker)
+        target_id = _snowflake(faker)
 
         # Mock pending transfer with retry count
         mock_pending = _create_mock_pending_transfer(
@@ -233,9 +234,9 @@ async def test_retry_scheduling_logic() -> None:
             guild_id=guild_id,
             initiator_id=initiator_id,
             target_id=target_id,
-            amount=100,
+            amount=faker.random_int(min=1, max=10000),
             status="checking",
-            retry_count=2,
+            retry_count=faker.random_int(min=0, max=5),
         )
         mock_pending_gateway.get_pending_transfer = AsyncMock(return_value=mock_pending)
 
@@ -266,7 +267,7 @@ async def test_retry_scheduling_logic() -> None:
 
 
 @pytest.mark.asyncio
-async def test_retry_max_count() -> None:
+async def test_retry_max_count(faker: Faker) -> None:
     """Test that retry stops after max count."""
     mock_pending_gateway = AsyncMock()
     mock_pool = MagicMock()
@@ -288,9 +289,9 @@ async def test_retry_max_count() -> None:
 
     try:
         transfer_id = uuid4()
-        guild_id = _snowflake()
-        initiator_id = _snowflake()
-        target_id = _snowflake()
+        guild_id = _snowflake(faker)
+        initiator_id = _snowflake(faker)
+        target_id = _snowflake(faker)
 
         # Mock pending transfer with max retry count
         mock_pending = _create_mock_pending_transfer(
@@ -298,7 +299,7 @@ async def test_retry_max_count() -> None:
             guild_id=guild_id,
             initiator_id=initiator_id,
             target_id=target_id,
-            amount=100,
+            amount=faker.random_int(min=1, max=10000),
             status="checking",
             retry_count=10,  # Max retry count
         )

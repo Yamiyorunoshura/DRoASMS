@@ -5,16 +5,26 @@ from collections.abc import AsyncIterator
 import asyncpg
 import pytest
 import pytest_asyncio
+from dotenv import load_dotenv
+from faker import Faker
 
-from src.db.pool import PoolConfig, close_pool, init_pool
+from src.config.db_settings import PoolConfig
+from src.db.pool import close_pool, init_pool
+
+
+@pytest.fixture
+def faker() -> Faker:
+    """Provide a Faker instance with Chinese and English locales for test data generation."""
+    return Faker(["zh_TW", "en_US"])
 
 
 @pytest_asyncio.fixture
 async def db_pool() -> AsyncIterator[asyncpg.Pool]:
     """Initialise the shared asyncpg pool for database-centric tests."""
     try:
-        config = PoolConfig.from_env()
-    except RuntimeError as exc:
+        load_dotenv(override=False)
+        config = PoolConfig.model_validate({})  # Load from environment variables
+    except (ValueError, RuntimeError) as exc:
         pytest.skip(f"Skipping database tests: {exc}")
 
     pool = await init_pool(config)

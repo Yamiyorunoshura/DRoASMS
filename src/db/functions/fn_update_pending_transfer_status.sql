@@ -18,4 +18,3 @@ BEGIN
     WHERE transfer_id = p_transfer_id;
 END;
 $$;
-

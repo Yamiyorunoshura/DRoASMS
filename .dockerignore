@@ -1,7 +1,7 @@
  # VCS
  .git/
  .gitignore
- 
+
  # Python build/test artifacts
  __pycache__/
  *.pyc
@@ -13,24 +13,23 @@
  *.egg-info/
  htmlcov/
  coverage/
- 
+
  # Env & secrets
  .env
  .env.*
- 
+
  # Editors/OS
  .DS_Store
  .vscode/
  .idea/
- 
+
  # Node (if present)
  node_modules/
- 
+
  # Project docs/tests not needed in image
  tests/
  specs/
- 
+
  # Docker files themselves
  Dockerfile*
  .dockerignore
- 

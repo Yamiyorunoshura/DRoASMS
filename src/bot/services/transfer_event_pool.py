@@ -7,6 +7,7 @@ from uuid import UUID
 
 import asyncpg
 import structlog
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.db import pool as db_pool
 from src.db.gateway.economy_pending_transfers import (
@@ -45,9 +46,10 @@ class TransferEventPoolCoordinator:
         if self._pool is None:
             try:
                 self._pool = await db_pool.init_pool()
-            except RuntimeError:
+            except (RuntimeError, ValueError):
                 # In unit tests, pool may not be available
-                # Skip initialization if DATABASE_URL is not set
+                # Skip initialization if DATABASE_URL is not set or invalid
+                # ValueError is raised by Pydantic when DATABASE_URL is missing/invalid
                 pass
 
         self._running = True
@@ -253,7 +255,8 @@ class TransferEventPoolCoordinator:
                         )
                     return
 
-                # Calculate retry delay: 2^retry_count seconds, max 300 seconds
+                # Calculate retry delay using exponential backoff: 2^retry_count seconds,
+                # max 300 seconds. This matches Tenacity's exponential backoff pattern
                 delay_seconds = min(2**pending.retry_count, 300)
 
                 # Increment retry count
@@ -286,8 +289,14 @@ class TransferEventPoolCoordinator:
         except Exception:
             LOGGER.exception("transfer_event_pool.retry.error", transfer_id=transfer_id)
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((asyncpg.PostgresError, asyncio.TimeoutError)),
+        reraise=True,
+    )
     async def _retry_checks(self, transfer_id: UUID) -> None:
-        """Retry all checks for a transfer."""
+        """Retry all checks for a transfer with automatic retry on database errors."""
         if self._pool is None:
             return
 
@@ -310,6 +319,7 @@ class TransferEventPoolCoordinator:
                 LOGGER.debug("transfer_event_pool.retry.checks_triggered", transfer_id=transfer_id)
         except Exception:
             LOGGER.exception("transfer_event_pool.retry.checks_error", transfer_id=transfer_id)
+            raise
         finally:
             # Remove retry task
             if transfer_id in self._retry_tasks:

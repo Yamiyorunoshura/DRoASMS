@@ -58,7 +58,8 @@ CREATE OR REPLACE FUNCTION governance.fn_create_proposal(
     p_description text,
     p_attachment_url text,
     p_snapshot_member_ids bigint[],
-    p_deadline_hours integer DEFAULT 72
+    p_deadline_hours integer DEFAULT 72,
+    p_target_department_id text DEFAULT NULL
 )
 RETURNS TABLE (
     proposal_id uuid,
@@ -74,7 +75,8 @@ RETURNS TABLE (
     status text,
     reminder_sent boolean,
     created_at timestamptz,
-    updated_at timestamptz
+    updated_at timestamptz,
+    target_department_id text
 ) LANGUAGE plpgsql AS $$
 DECLARE
     v_now timestamptz := timezone('utc', now());
@@ -83,9 +85,10 @@ DECLARE
     v_t int;
     v_deadline timestamptz;
 BEGIN
+    -- 資料行一律加上表別名，避免與 RETURNS TABLE 的 OUT 參數（guild_id、status）同名而產生模糊
     SELECT COUNT(*) INTO v_active_count
-    FROM governance.proposals
-    WHERE guild_id = p_guild_id AND status = '進行中';
+    FROM governance.proposals AS p
+    WHERE p.guild_id = p_guild_id AND p.status = '進行中';
     IF v_active_count >= 5 THEN
         RAISE EXCEPTION 'active proposal limit reached for guild %', p_guild_id USING ERRCODE = 'P0001';
     END IF;
@@ -96,17 +99,17 @@ BEGIN
 
     INSERT INTO governance.proposals AS p (
         guild_id, proposer_id, target_id, amount, description, attachment_url,
-        snapshot_n, threshold_t, deadline_at, status
+        snapshot_n, threshold_t, deadline_at, status, target_department_id
     ) VALUES (
         p_guild_id, p_proposer_id, p_target_id, p_amount, p_description, p_attachment_url,
-        v_n, v_t, v_deadline, '進行中'
+        v_n, v_t, v_deadline, '進行中', p_target_department_id
     )
     RETURNING p.proposal_id, p.guild_id, p.proposer_id, p.target_id, p.amount, p.description,
               p.attachment_url, p.snapshot_n, p.threshold_t, p.deadline_at, p.status,
-              p.reminder_sent, p.created_at, p.updated_at
+              p.reminder_sent, p.created_at, p.updated_at, p.target_department_id
     INTO proposal_id, guild_id, proposer_id, target_id, amount, description,
          attachment_url, snapshot_n, threshold_t, deadline_at, status,
-         reminder_sent, created_at, updated_at;
+         reminder_sent, created_at, updated_at, target_department_id;
 
     IF v_n > 0 THEN
         INSERT INTO governance.proposal_snapshots (proposal_id, member_id)
@@ -134,14 +137,15 @@ RETURNS TABLE (
     status text,
     reminder_sent boolean,
     created_at timestamptz,
-    updated_at timestamptz
+    updated_at timestamptz,
+    target_department_id text
 ) LANGUAGE plpgsql AS $$
 BEGIN
     -- Qualify columns to avoid ambiguity with OUT params in RETURNS TABLE
     RETURN QUERY
     SELECT p.proposal_id, p.guild_id, p.proposer_id, p.target_id, p.amount, p.description,
            p.attachment_url, p.snapshot_n, p.threshold_t, p.deadline_at, p.status,
-           p.reminder_sent, p.created_at, p.updated_at
+           p.reminder_sent, p.created_at, p.updated_at, p.target_department_id
     FROM governance.proposals AS p
     WHERE p.proposal_id = p_proposal_id;
 END;
@@ -160,8 +164,9 @@ $$;
 CREATE OR REPLACE FUNCTION governance.fn_count_active_proposals(p_guild_id bigint)
 RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE v_count int; BEGIN
-    SELECT COUNT(*) INTO v_count FROM governance.proposals
-    WHERE guild_id = p_guild_id AND status = '進行中';
+    -- 加別名以維持一致性與可讀性
+    SELECT COUNT(*) INTO v_count FROM governance.proposals AS p
+    WHERE p.guild_id = p_guild_id AND p.status = '進行中';
     RETURN COALESCE(v_count, 0);
 END; $$;
 
@@ -213,7 +218,7 @@ BEGIN
         COALESCE(MAX(CASE WHEN choice = 'approve' THEN c END), 0) AS approve,
         COALESCE(MAX(CASE WHEN choice = 'reject' THEN c END), 0) AS reject,
         COALESCE(MAX(CASE WHEN choice = 'abstain' THEN c END), 0) AS abstain,
-        COALESCE(SUM(c), 0) AS total_voted
+        COALESCE(SUM(c)::int, 0) AS total_voted
     FROM counts;
 END; $$;
 
@@ -262,14 +267,15 @@ RETURNS TABLE (
     status text,
     reminder_sent boolean,
     created_at timestamptz,
-    updated_at timestamptz
+    updated_at timestamptz,
+    target_department_id text
 ) LANGUAGE plpgsql AS $$
 BEGIN
     -- Qualify columns to avoid ambiguity with OUT params in RETURNS TABLE
     RETURN QUERY
     SELECT p.proposal_id, p.guild_id, p.proposer_id, p.target_id, p.amount, p.description,
            p.attachment_url, p.snapshot_n, p.threshold_t, p.deadline_at, p.status,
-           p.reminder_sent, p.created_at, p.updated_at
+           p.reminder_sent, p.created_at, p.updated_at, p.target_department_id
     FROM governance.proposals AS p
     WHERE p.status = '進行中' AND p.deadline_at <= timezone('utc', now());
 END; $$;
@@ -290,14 +296,15 @@ RETURNS TABLE (
     status text,
     reminder_sent boolean,
     created_at timestamptz,
-    updated_at timestamptz
+    updated_at timestamptz,
+    target_department_id text
 ) LANGUAGE plpgsql AS $$
 BEGIN
     -- Qualify columns to avoid ambiguity with OUT params in RETURNS TABLE
     RETURN QUERY
     SELECT p.proposal_id, p.guild_id, p.proposer_id, p.target_id, p.amount, p.description,
            p.attachment_url, p.snapshot_n, p.threshold_t, p.deadline_at, p.status,
-           p.reminder_sent, p.created_at, p.updated_at
+           p.reminder_sent, p.created_at, p.updated_at, p.target_department_id
     FROM governance.proposals AS p
     WHERE p.status = '進行中'
       AND p.reminder_sent = false
@@ -320,14 +327,15 @@ RETURNS TABLE (
     status text,
     reminder_sent boolean,
     created_at timestamptz,
-    updated_at timestamptz
+    updated_at timestamptz,
+    target_department_id text
 ) LANGUAGE plpgsql AS $$
 BEGIN
     -- Qualify columns to avoid ambiguity with OUT params in RETURNS TABLE
     RETURN QUERY
     SELECT p.proposal_id, p.guild_id, p.proposer_id, p.target_id, p.amount, p.description,
            p.attachment_url, p.snapshot_n, p.threshold_t, p.deadline_at, p.status,
-           p.reminder_sent, p.created_at, p.updated_at
+           p.reminder_sent, p.created_at, p.updated_at, p.target_department_id
     FROM governance.proposals AS p
     WHERE p.status = '進行中'
     ORDER BY p.created_at;
@@ -366,7 +374,8 @@ RETURNS TABLE (
     created_at timestamptz,
     updated_at timestamptz,
     votes json,
-    snapshot json
+    snapshot json,
+    target_department_id text
 ) LANGUAGE plpgsql AS $$
 BEGIN
     RETURN QUERY
@@ -374,7 +383,8 @@ BEGIN
            p.attachment_url, p.snapshot_n, p.threshold_t, p.deadline_at, p.status,
            p.execution_tx_id, p.execution_error, p.created_at, p.updated_at,
            COALESCE(v.votes, '[]'::json) AS votes,
-           COALESCE(s.snapshot, '[]'::json) AS snapshot
+           COALESCE(s.snapshot, '[]'::json) AS snapshot,
+           p.target_department_id
     FROM governance.proposals p
     LEFT JOIN LATERAL (
         SELECT json_agg(

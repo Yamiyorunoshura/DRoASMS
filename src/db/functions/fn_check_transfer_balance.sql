@@ -70,4 +70,3 @@ BEGIN
     PERFORM economy._check_and_approve_transfer(p_transfer_id);
 END;
 $$;
-

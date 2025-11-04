@@ -35,6 +35,7 @@ class Proposal:
     reminder_sent: bool
     created_at: datetime
     updated_at: datetime
+    target_department_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,11 +100,12 @@ class CouncilGovernanceGateway:
         attachment_url: str | None,
         snapshot_member_ids: Sequence[int],
         deadline_hours: int = 72,
+        target_department_id: str | None = None,
     ) -> Proposal:
         # 票數門檻與截止時間由資料庫端函式計算並回傳，這裡不重複計算。
 
         async with connection.transaction():
-            sql = f"SELECT * FROM {self._schema}.fn_create_proposal($1,$2,$3,$4,$5,$6,$7,$8)"
+            sql = f"SELECT * FROM {self._schema}.fn_create_proposal($1,$2,$3,$4,$5,$6,$7,$8,$9)"
             row = await connection.fetchrow(
                 sql,
                 guild_id,
@@ -114,6 +116,7 @@ class CouncilGovernanceGateway:
                 attachment_url,
                 list(dict.fromkeys(int(x) for x in snapshot_member_ids)),
                 deadline_hours,
+                target_department_id,
             )
             assert row is not None
 
@@ -132,6 +135,7 @@ class CouncilGovernanceGateway:
             reminder_sent=row["reminder_sent"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            target_department_id=row.get("target_department_id"),
         )
 
     async def fetch_proposal(
@@ -159,6 +163,7 @@ class CouncilGovernanceGateway:
             reminder_sent=row["reminder_sent"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            target_department_id=row.get("target_department_id"),
         )
 
     async def fetch_snapshot(

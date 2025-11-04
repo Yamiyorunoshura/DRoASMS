@@ -25,4 +25,3 @@ CREATE TRIGGER trigger_pending_transfer_check
     AFTER INSERT ON economy.pending_transfers
     FOR EACH ROW
     EXECUTE FUNCTION economy.trigger_pending_transfer_check();
-

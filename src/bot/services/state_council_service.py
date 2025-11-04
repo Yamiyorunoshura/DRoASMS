@@ -363,12 +363,7 @@ class StateCouncilService:
         `CouncilService.derive_council_account_id` 使用 9e15 區段的分區思路，
         以 9.5e15 起始作為國務院部門帳戶區段，避免彼此碰撞。
 
-        部門代碼：
-        - 內政部: +1
-        - 財政部: +2
-        - 國土安全部: +3
-        - 中央銀行: +4
-        未知部門: +0
+        部門代碼：使用部門註冊表取得，若未找到則回退為 0。
         基底固定為 9_500_000_000_000_000。
 
         相容性：若資料庫已存在部門帳戶，`set_config` 與
@@ -376,8 +371,17 @@ class StateCouncilService:
         時才使用此導出法，因此不會變更既有部署的鍵值。
         """
         base = 9_500_000_000_000_000
-        codes = {"內政部": 1, "財政部": 2, "國土安全部": 3, "中央銀行": 4}
-        code = codes.get(department, 0)
+        # Use department registry if available, fallback to hardcoded mapping
+        try:
+            from src.bot.services.department_registry import get_registry
+
+            registry = get_registry()
+            dept = registry.get_by_name(department)
+            code = dept.code if dept else 0
+        except Exception:
+            # Fallback to hardcoded mapping for backward compatibility
+            codes = {"內政部": 1, "財政部": 2, "國土安全部": 3, "中央銀行": 4}
+            code = codes.get(department, 0)
         # 重要：避免乘以 10 造成 int64 溢位
         return int(base + int(guild_id) + code)
 

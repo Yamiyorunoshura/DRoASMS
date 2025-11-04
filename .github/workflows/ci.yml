@@ -18,6 +18,8 @@ jobs:
   lint:
     name: Lint (ruff)
     runs-on: ubuntu-latest
+    container:
+      image: python:3.13-slim
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,11 +28,6 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           version: ${{ env.UV_VERSION }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: uv sync --group dev
@@ -41,6 +38,8 @@ jobs:
   type-check:
     name: Type Check (mypy)
     runs-on: ubuntu-latest
+    container:
+      image: python:3.13-slim
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -49,11 +48,6 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           version: ${{ env.UV_VERSION }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: uv sync --group dev
@@ -64,6 +58,8 @@ jobs:
   format-check:
     name: Format Check (black)
     runs-on: ubuntu-latest
+    container:
+      image: python:3.13-slim
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -72,11 +68,6 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           version: ${{ env.UV_VERSION }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: uv sync --group dev
@@ -84,9 +75,31 @@ jobs:
       - name: Check formatting with black
         run: uv run black --check src/ tests/
 
+  pre-commit-check:
+    name: Pre-commit Check
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.13-slim
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run pre-commit on all files
+        run: uv run pre-commit run --all-files
+
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
+    container:
+      image: python:3.13-slim
     services:
       postgres:
         image: postgres:16
@@ -102,7 +115,7 @@ jobs:
         ports:
           - 5432:5432
     env:
-      DATABASE_URL: postgresql://bot:bot@localhost:5432/economy
+      DATABASE_URL: postgresql://bot:bot@postgres:5432/economy
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -112,28 +125,37 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install PostgreSQL client
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends postgresql-client
 
       - name: Install dependencies
         run: uv sync --group dev
 
       - name: Setup database extensions
         run: |
-          PGPASSWORD=bot psql -h localhost -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          PGPASSWORD=bot psql -h postgres -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
         continue-on-error: true
 
       - name: Run database migrations
         run: uv run alembic upgrade head
 
-      - name: Run unit tests
-        run: uv run pytest tests/unit/ -v
+      - name: Run unit tests with coverage
+        run: uv run pytest tests/unit/ -v -n auto
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-tests-coverage
+          path: htmlcov/
+          retention-days: 30
 
   contract-tests:
     name: Contract Tests
     runs-on: ubuntu-latest
+    container:
+      image: python:3.13-slim
     services:
       postgres:
         image: postgres:16
@@ -149,7 +171,7 @@ jobs:
         ports:
           - 5432:5432
     env:
-      DATABASE_URL: postgresql://bot:bot@localhost:5432/economy
+      DATABASE_URL: postgresql://bot:bot@postgres:5432/economy
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -159,17 +181,16 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install PostgreSQL client
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends postgresql-client
 
       - name: Install dependencies
         run: uv sync --group dev
 
       - name: Setup database extensions
         run: |
-          PGPASSWORD=bot psql -h localhost -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          PGPASSWORD=bot psql -h postgres -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
         continue-on-error: true
 
       - name: Run database migrations
@@ -188,12 +209,22 @@ jobs:
           fi
           # If no secrets provided, default placeholder from global env will be used
 
-      - name: Run contract tests
-        run: uv run pytest tests/contracts/ -v
+      - name: Run contract tests with coverage
+        run: uv run pytest tests/contracts/ -v -n auto
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: contract-tests-coverage
+          path: htmlcov/
+          retention-days: 30
 
   economy-tests:
     name: Economy Tests
     runs-on: ubuntu-latest
+    container:
+      image: python:3.13-slim
     services:
       postgres:
         image: postgres:16
@@ -209,7 +240,7 @@ jobs:
         ports:
           - 5432:5432
     env:
-      DATABASE_URL: postgresql://bot:bot@localhost:5432/economy
+      DATABASE_URL: postgresql://bot:bot@postgres:5432/economy
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -219,30 +250,48 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install PostgreSQL client
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends postgresql-client
 
       - name: Install dependencies
         run: uv sync --group dev
 
       - name: Setup database extensions
         run: |
-          PGPASSWORD=bot psql -h localhost -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          PGPASSWORD=bot psql -h postgres -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
         continue-on-error: true
 
       - name: Run database migrations
         run: uv run alembic upgrade head
 
-      - name: Run economy tests
-        run: uv run pytest tests/economy/ -v
+      - name: Run economy tests with coverage
+        run: uv run pytest tests/economy/ -v -n auto
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: economy-tests-coverage
+          path: htmlcov/
+          retention-days: 30
 
   integration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
+    container:
+      image: python:3.13-slim
+    services:
+      docker:
+        image: docker:27-dind
+        options: >-
+          --privileged
+        env:
+          DOCKER_TLS_CERTDIR: ""
     env:
       COMPOSE_DOCKER_CLI_BUILD: "1"
+      DOCKER_HOST: tcp://docker:2375
+      DOCKER_TLS_CERTDIR: ""
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -252,26 +301,19 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
       - name: Install dependencies
         run: uv sync --group dev
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Install Docker Compose
+      - name: Install Docker CLI and Compose plugin
         run: |
-          sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-          sudo chmod +x /usr/local/bin/docker-compose
+          apt-get update && apt-get install -y --no-install-recommends \
+            ca-certificates curl gnupg lsb-release \
+            docker.io docker-compose-plugin
 
       - name: Override with real token if available (optional)
         run: |
           # Override default placeholder if real token is provided via secrets
-          # Tests that require real token (like test_compose_ready, test_db_not_ready_retry) 
+          # Tests that require real token (like test_compose_ready, test_db_not_ready_retry)
           # will run if real token is provided, otherwise they will skip automatically
           if [ -n "${{ secrets.TEST_DISCORD_TOKEN }}" ]; then
             echo "TEST_DISCORD_TOKEN=${{ secrets.TEST_DISCORD_TOKEN }}" >> $GITHUB_ENV
@@ -282,13 +324,23 @@ jobs:
           fi
           # If no secrets provided, default placeholder from global env will be used
 
-      - name: Run integration tests
-        run: uv run pytest tests/integration/ -v
+      - name: Run integration tests with coverage
+        run: uv run pytest tests/integration/ -v -n auto
         continue-on-error: false
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-tests-coverage
+          path: htmlcov/
+          retention-days: 30
 
   performance-tests:
     name: Performance Tests
     runs-on: ubuntu-latest
+    container:
+      image: python:3.13-slim
     services:
       postgres:
         image: postgres:16
@@ -304,7 +356,7 @@ jobs:
         ports:
           - 5432:5432
     env:
-      DATABASE_URL: postgresql://bot:bot@localhost:5432/economy
+      DATABASE_URL: postgresql://bot:bot@postgres:5432/economy
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -314,28 +366,29 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install PostgreSQL client
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends postgresql-client
 
       - name: Install dependencies
         run: uv sync --group dev
 
       - name: Setup database extensions
         run: |
-          PGPASSWORD=bot psql -h localhost -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          PGPASSWORD=bot psql -h postgres -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
         continue-on-error: true
 
       - name: Run database migrations
         run: uv run alembic upgrade head
 
       - name: Run performance tests
-        run: uv run pytest tests/performance/ -v -m performance
+        run: uv run pytest tests/performance/ -v -m performance -n auto
 
   db-function-tests:
     name: Database Function Tests
     runs-on: ubuntu-latest
+    container:
+      image: python:3.13-slim
     services:
       postgres:
         image: postgres:16
@@ -351,7 +404,7 @@ jobs:
         ports:
           - 5432:5432
     env:
-      DATABASE_URL: postgresql://bot:bot@localhost:5432/economy
+      DATABASE_URL: postgresql://bot:bot@postgres:5432/economy
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -361,28 +414,37 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install PostgreSQL client
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends postgresql-client
 
       - name: Install dependencies
         run: uv sync --group dev
 
       - name: Setup database extensions
         run: |
-          PGPASSWORD=bot psql -h localhost -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          PGPASSWORD=bot psql -h postgres -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
         continue-on-error: true
 
       - name: Run database migrations
         run: uv run alembic upgrade head
 
-      - name: Run database function tests
-        run: uv run pytest tests/db/ -v
+      - name: Run database function tests with coverage
+        run: uv run pytest tests/db/ -v -n auto
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: db-function-tests-coverage
+          path: htmlcov/
+          retention-days: 30
 
   council-tests:
     name: Council Tests
     runs-on: ubuntu-latest
+    container:
+      image: python:3.13-slim
     services:
       postgres:
         image: postgres:16
@@ -398,7 +460,7 @@ jobs:
         ports:
           - 5432:5432
     env:
-      DATABASE_URL: postgresql://bot:bot@localhost:5432/economy
+      DATABASE_URL: postgresql://bot:bot@postgres:5432/economy
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -408,21 +470,28 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install PostgreSQL client
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends postgresql-client
 
       - name: Install dependencies
         run: uv sync --group dev
 
       - name: Setup database extensions
         run: |
-          PGPASSWORD=bot psql -h localhost -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          PGPASSWORD=bot psql -h postgres -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
         continue-on-error: true
 
       - name: Run database migrations
         run: uv run alembic upgrade head
 
-      - name: Run council tests
-        run: uv run pytest tests/council/ -v
+      - name: Run council tests with coverage
+        run: uv run pytest tests/council/ -v -n auto
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: council-tests-coverage
+          path: htmlcov/
+          retention-days: 30

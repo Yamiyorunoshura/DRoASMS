@@ -5,11 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2025-11-04
 
-### Planned
-- 進一步的監控與可觀測性（metrics/log tracing）
-- 更多治理功能與工作流程命令
+### Added
+- **開發工具堆疊**：引入業界標準工具提升開發效率與程式碼品質
+  - **Pydantic v2**：重構設定管理為 Pydantic 模型，提供型別安全與自動驗證
+    - `BotSettings`：Discord bot 設定（`src/config/settings.py`）
+    - `PoolConfig`：資料庫連線池設定（`src/config/db_settings.py`）
+    - 自動驗證環境變數格式與型別，提供友善的錯誤訊息
+  - **pytest-cov**：新增測試覆蓋率報告，整合至 CI 與開發流程
+    - HTML 與終端報告輸出
+    - CI 中自動上傳覆蓋率報告作為 artifact
+  - **Faker**：在測試中引入 Faker 自動生成假資料（中文/英文）
+    - 減少手寫測試資料，提升測試效率
+    - 在 `tests/conftest.py` 提供 `faker` fixture
+  - **Tenacity**：重構重試邏輯使用 Tenacity 裝飾器
+    - 簡化重試實作，支援指數退避與抖動策略
+    - 應用於轉帳事件池的重試機制（`src/bot/services/transfer_event_pool.py`）
+    - 建立共通重試策略模組（`src/infra/retry.py`）
+  - **pytest-xdist**：支援並行執行測試，縮短測試時間
+    - 預設使用 `-n auto` 自動偵測 CPU 核心數
+    - CI 中所有測試套件使用並行執行
+  - **pre-commit**：新增 Git hooks 自動執行格式化、lint、型別檢查
+    - 設定檔案：`.pre-commit-config.yaml`
+    - 包含 black、ruff、mypy 檢查
+  - **Hypothesis**：引入屬性測試框架（選用）
+    - 可用於複雜邏輯的邊界案例測試
+    - 版本要求調整為 `>=6.0.0`（與可用版本相容）
+  - **Typer + Rich**：為 CLI 工具預留架構（選用）
+  - **watchfiles**：開發時自動重載支援（選用）
+
+### Changed
+- 設定載入：從手動 `os.getenv()` 遷移至 Pydantic 模型
+  - `src/bot/main.py`：使用新的 `BotSettings` Pydantic 模型
+  - `src/db/pool.py`：使用新的 `PoolConfig` Pydantic 模型
+  - `tests/conftest.py`：更新測試 fixture 使用新的設定模型
+- 重試邏輯：重構轉帳事件池重試機制使用 Tenacity
+  - `_retry_checks` 方法使用 `@retry` 裝飾器自動重試資料庫錯誤
+- CI 工作流程：整合覆蓋率報告與並行測試執行
+  - 所有測試任務使用 `-n auto` 並行執行
+  - 自動上傳覆蓋率報告作為 artifact
+- 依賴修正：新增 `pydantic-settings>=2.0.0` 作為獨立依賴（Pydantic v2 中 BaseSettings 已分離）
+- 測試修正：更新 `transfer_event_pool.py` 的異常處理，支援 Pydantic 驗證錯誤（ValueError）
 
 ## [0.4.0] - 2025-11-03
 

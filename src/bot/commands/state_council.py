@@ -334,14 +334,14 @@ def build_state_council_group(service: StateCouncilService) -> app_commands.Grou
     # 這裡在執行期為實例動態補上相容屬性：
     try:
         # 直接回傳 commands（直接子指令清單）
-        state_council.children = state_council.commands  # type: ignore[attr-defined]
+        state_council.children = state_council.commands
     except Exception:
         pass
     try:
         # 標示為 subcommand_group 以通過結構檢查
         from discord import AppCommandOptionType
 
-        state_council.type = AppCommandOptionType.subcommand_group  # type: ignore[attr-defined]
+        state_council.type = AppCommandOptionType.subcommand_group
     except Exception:
         pass
 
@@ -511,7 +511,7 @@ class StateCouncilPanelView(discord.ui.View):
             embed = await self.build_summary_embed()
             await _edit_message_compat(interaction, embed=embed, view=self)
 
-        nav.callback = _on_nav_select  # type: ignore[method-assign]
+        nav.callback = _on_nav_select
         self.add_item(nav)
 
         # Page-specific actions
@@ -537,7 +537,7 @@ class StateCouncilPanelView(discord.ui.View):
             embed = self._build_help_embed()
             await _send_message_compat(interaction, embed=embed, ephemeral=True)
 
-        help_btn.callback = _on_help  # type: ignore[method-assign]
+        help_btn.callback = _on_help
         self.add_item(help_btn)
 
     def _make_dept_callback(self, department: str) -> Any:
@@ -576,7 +576,7 @@ class StateCouncilPanelView(discord.ui.View):
             custom_id="transfer_dept",
             row=1,
         )
-        transfer_btn.callback = self._transfer_callback  # type: ignore[method-assign]
+        transfer_btn.callback = self._transfer_callback
         self.add_item(transfer_btn)
 
         # 新增：部門 → 使用者 轉帳按鈕（所有部門頁皆顯示）
@@ -586,7 +586,7 @@ class StateCouncilPanelView(discord.ui.View):
             custom_id="transfer_user",
             row=1,
         )
-        transfer_user_btn.callback = self._transfer_to_user_callback  # type: ignore[method-assign]
+        transfer_user_btn.callback = self._transfer_to_user_callback
         self.add_item(transfer_user_btn)
 
         # Export data button - only available to leaders
@@ -600,7 +600,7 @@ class StateCouncilPanelView(discord.ui.View):
                 custom_id="export_data",
                 row=1,
             )
-            export_btn.callback = self._export_callback  # type: ignore[method-assign]
+            export_btn.callback = self._export_callback
             self.add_item(export_btn)
 
             # 領導人專屬：設定各部門領導身分組
@@ -631,7 +631,7 @@ class StateCouncilPanelView(discord.ui.View):
                 # 僅更新元件（避免洗掉已選值）
                 await _edit_message_compat(interaction, view=self)
 
-            dept_select.callback = _on_dept_select  # type: ignore[method-assign]
+            dept_select.callback = _on_dept_select
             self.add_item(dept_select)
 
             # 角色挑選（僅在選擇了部門之後使用 callback 保存）
@@ -692,7 +692,7 @@ class StateCouncilPanelView(discord.ui.View):
                     ephemeral=True,
                 )
 
-            role_picker.callback = _on_role_pick  # type: ignore[method-assign]
+            role_picker.callback = _on_role_pick
             self.add_item(role_picker)
 
     async def _add_department_actions(self) -> None:
@@ -705,7 +705,7 @@ class StateCouncilPanelView(discord.ui.View):
             custom_id="transfer_dept",
             row=1,
         )
-        transfer_btn.callback = self._transfer_callback  # type: ignore[method-assign]
+        transfer_btn.callback = self._transfer_callback
         self.add_item(transfer_btn)
 
         # 部門 → 使用者 轉帳按鈕（所有部門頁皆顯示）
@@ -715,7 +715,7 @@ class StateCouncilPanelView(discord.ui.View):
             custom_id="transfer_user",
             row=1,
         )
-        transfer_user_btn.callback = self._transfer_to_user_callback  # type: ignore[method-assign]
+        transfer_user_btn.callback = self._transfer_to_user_callback
         self.add_item(transfer_user_btn)
 
         if department == "內政部":
@@ -726,7 +726,7 @@ class StateCouncilPanelView(discord.ui.View):
                 custom_id="welfare_disburse",
                 row=1,
             )
-            welfare_btn.callback = self._welfare_callback  # type: ignore[method-assign]
+            welfare_btn.callback = self._welfare_callback
             self.add_item(welfare_btn)
 
             # Welfare settings
@@ -736,7 +736,7 @@ class StateCouncilPanelView(discord.ui.View):
                 custom_id="welfare_settings",
                 row=1,
             )
-            settings_btn.callback = self._welfare_settings_callback  # type: ignore[method-assign]
+            settings_btn.callback = self._welfare_settings_callback
             self.add_item(settings_btn)
 
         elif department == "財政部":
@@ -747,7 +747,7 @@ class StateCouncilPanelView(discord.ui.View):
                 custom_id="tax_collect",
                 row=1,
             )
-            tax_btn.callback = self._tax_callback  # type: ignore[method-assign]
+            tax_btn.callback = self._tax_callback
             self.add_item(tax_btn)
 
             # Tax settings
@@ -757,7 +757,7 @@ class StateCouncilPanelView(discord.ui.View):
                 custom_id="tax_settings",
                 row=1,
             )
-            tax_settings_btn.callback = self._tax_settings_callback  # type: ignore[method-assign]
+            tax_settings_btn.callback = self._tax_settings_callback
             self.add_item(tax_settings_btn)
 
         elif department == "國土安全部":
@@ -768,7 +768,7 @@ class StateCouncilPanelView(discord.ui.View):
                 custom_id="identity_manage",
                 row=1,
             )
-            identity_btn.callback = self._identity_callback  # type: ignore[method-assign]
+            identity_btn.callback = self._identity_callback
             self.add_item(identity_btn)
 
         elif department == "中央銀行":
@@ -779,7 +779,7 @@ class StateCouncilPanelView(discord.ui.View):
                 custom_id="currency_issue",
                 row=1,
             )
-            currency_btn.callback = self._currency_callback  # type: ignore[method-assign]
+            currency_btn.callback = self._currency_callback
             self.add_item(currency_btn)
 
             # Issuance settings
@@ -789,7 +789,7 @@ class StateCouncilPanelView(discord.ui.View):
                 custom_id="currency_settings",
                 row=1,
             )
-            currency_settings_btn.callback = self._currency_settings_callback  # type: ignore[method-assign]
+            currency_settings_btn.callback = self._currency_settings_callback
             self.add_item(currency_settings_btn)
 
     def _build_help_embed(self) -> discord.Embed:
@@ -1154,12 +1154,12 @@ class InterdepartmentTransferModal(discord.ui.Modal, title="部門轉帳"):
             if self.preset_from_department:
                 from_dept = self.preset_from_department
             else:
-                from_dept = self.children[idx].value  # type: ignore[attr-defined]
+                from_dept = self.children[idx].value
                 idx += 1
 
-            to_dept = self.children[idx].value  # type: ignore[attr-defined]
-            amount = int(self.children[idx + 1].value)  # type: ignore[attr-defined]
-            reason = self.children[idx + 2].value  # type: ignore[attr-defined]
+            to_dept = self.children[idx].value
+            amount = int(self.children[idx + 1].value)
+            reason = self.children[idx + 2].value
 
             # 簡單正規化：移除空白
             from_dept = from_dept.strip()
@@ -1333,7 +1333,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
                     self.to_department = None
                 await self.apply_ui_update(interaction)
 
-            from_select.callback = _on_from  # type: ignore[method-assign]
+            from_select.callback = _on_from
             self.add_item(from_select)
 
         # 目標部門下拉（排除來源部門）
@@ -1359,7 +1359,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
             self.to_department = to_select.values[0] if to_select.values else None
             await self.apply_ui_update(interaction)
 
-        to_select.callback = _on_to  # type: ignore[method-assign]
+        to_select.callback = _on_to
         self.add_item(to_select)
 
         # 填寫金額與理由（Modal）
@@ -1387,7 +1387,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
                 return
             await _send_modal_compat(interaction, TransferAmountReasonModal(self))
 
-        fill_btn.callback = _on_fill  # type: ignore[method-assign]
+        fill_btn.callback = _on_fill
         self.add_item(fill_btn)
 
         # 送出轉帳
@@ -1439,7 +1439,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
                     interaction, content="❌ 轉帳失敗，請稍後再試。", ephemeral=True
                 )
 
-        submit_btn.callback = _on_submit  # type: ignore[method-assign]
+        submit_btn.callback = _on_submit
         self.add_item(submit_btn)
 
         # 取消/關閉
@@ -1465,7 +1465,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
                 # 無法透過互動編輯時，嘗試直接停用 view
                 self.stop()
 
-        cancel_btn.callback = _on_cancel  # type: ignore[method-assign]
+        cancel_btn.callback = _on_cancel
         self.add_item(cancel_btn)
 
     async def apply_ui_update(self, interaction: discord.Interaction) -> None:
@@ -1609,7 +1609,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
                 self.source_department = from_select.values[0] if from_select.values else None
                 await self.apply_ui_update(interaction)
 
-            from_select.callback = _on_from  # type: ignore[method-assign]
+            from_select.callback = _on_from
             self.add_item(from_select)
 
         # 受款人設定（Modal）
@@ -1632,7 +1632,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
                 return
             await _send_modal_compat(interaction, RecipientInputModal(self))
 
-        set_recipient_btn.callback = _on_set_recipient  # type: ignore[method-assign]
+        set_recipient_btn.callback = _on_set_recipient
         self.add_item(set_recipient_btn)
 
         # 金額與理由（沿用既有 Modal）
@@ -1658,7 +1658,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
                 return
             await _send_modal_compat(interaction, TransferAmountReasonModal(self))
 
-        fill_btn.callback = _on_fill  # type: ignore[method-assign]
+        fill_btn.callback = _on_fill
         self.add_item(fill_btn)
 
         # 送出
@@ -1707,7 +1707,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
                     interaction, content="❌ 轉帳失敗，請稍後再試。", ephemeral=True
                 )
 
-        submit_btn.callback = _on_submit  # type: ignore[method-assign]
+        submit_btn.callback = _on_submit
         self.add_item(submit_btn)
 
         # 取消/關閉
@@ -1731,7 +1731,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
             except Exception:
                 self.stop()
 
-        cancel_btn.callback = _on_cancel  # type: ignore[method-assign]
+        cancel_btn.callback = _on_cancel
         self.add_item(cancel_btn)
 
     async def apply_ui_update(self, interaction: discord.Interaction) -> None:
@@ -1792,10 +1792,10 @@ class WelfareDisbursementModal(discord.ui.Modal, title="福利發放"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            recipient_input = self.children[0].value  # type: ignore[attr-defined]
-            amount = int(self.children[1].value)  # type: ignore[attr-defined]
-            disbursement_type = self.children[2].value  # type: ignore[attr-defined]
-            reference_id = self.children[3].value or None  # type: ignore[attr-defined]
+            recipient_input = self.children[0].value
+            amount = int(self.children[1].value)
+            disbursement_type = self.children[2].value
+            reference_id = self.children[3].value or None
 
             # Parse recipient ID
             if recipient_input.startswith("<@") and recipient_input.endswith(">"):
@@ -1862,8 +1862,8 @@ class WelfareSettingsModal(discord.ui.Modal, title="福利設定"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            welfare_amount = int(self.children[0].value)  # type: ignore[attr-defined]
-            welfare_interval_hours = int(self.children[1].value)  # type: ignore[attr-defined]
+            welfare_amount = int(self.children[0].value)
+            welfare_interval_hours = int(self.children[1].value)
 
             await self.service.update_department_config(
                 guild_id=self.guild_id,
@@ -1938,10 +1938,10 @@ class TaxCollectionModal(discord.ui.Modal, title="稅款徵收"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            taxpayer_input = self.children[0].value  # type: ignore[attr-defined]
-            taxable_amount = int(self.children[1].value)  # type: ignore[attr-defined]
-            tax_rate_percent = int(self.children[2].value)  # type: ignore[attr-defined]
-            assessment_period = self.children[3].value  # type: ignore[attr-defined]
+            taxpayer_input = self.children[0].value
+            taxable_amount = int(self.children[1].value)
+            tax_rate_percent = int(self.children[2].value)
+            assessment_period = self.children[3].value
 
             # Parse taxpayer ID
             if taxpayer_input.startswith("<@") and taxpayer_input.endswith(">"):
@@ -2010,8 +2010,8 @@ class TaxSettingsModal(discord.ui.Modal, title="稅率設定"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            tax_rate_basis = int(self.children[0].value)  # type: ignore[attr-defined]
-            tax_rate_percent = int(self.children[1].value)  # type: ignore[attr-defined]
+            tax_rate_basis = int(self.children[0].value)
+            tax_rate_percent = int(self.children[1].value)
 
             await self.service.update_department_config(
                 guild_id=self.guild_id,
@@ -2078,9 +2078,9 @@ class IdentityManagementModal(discord.ui.Modal, title="身分管理"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            target_input = self.children[0].value  # type: ignore[attr-defined]
-            action = self.children[1].value  # type: ignore[attr-defined]
-            reason = self.children[2].value or None  # type: ignore[attr-defined]
+            target_input = self.children[0].value
+            action = self.children[1].value
+            reason = self.children[2].value or None
 
             # Parse target ID
             if target_input.startswith("<@") and target_input.endswith(">"):
@@ -2155,9 +2155,9 @@ class CurrencyIssuanceModal(discord.ui.Modal, title="貨幣發行"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            amount = int(self.children[0].value)  # type: ignore[attr-defined]
-            reason = self.children[1].value  # type: ignore[attr-defined]
-            month_period = self.children[2].value  # type: ignore[attr-defined]
+            amount = int(self.children[0].value)
+            reason = self.children[1].value
+            month_period = self.children[2].value
 
             await self.service.issue_currency(
                 guild_id=self.guild_id,
@@ -2210,7 +2210,7 @@ class CurrencySettingsModal(discord.ui.Modal, title="貨幣發行設定"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            max_issuance_per_month = int(self.children[0].value)  # type: ignore[attr-defined]
+            max_issuance_per_month = int(self.children[0].value)
 
             await self.service.update_department_config(
                 guild_id=self.guild_id,
@@ -2279,10 +2279,10 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
             import io
             from datetime import datetime
 
-            format_type = self.children[0].value.upper()  # type: ignore[attr-defined]
-            export_type = self.children[1].value.lower()  # type: ignore[attr-defined]
-            start_date = self.children[2].value.strip() or None  # type: ignore[attr-defined]
-            end_date = self.children[3].value.strip() or None  # type: ignore[attr-defined]
+            format_type = self.children[0].value.upper()
+            export_type = self.children[1].value.lower()
+            start_date = self.children[2].value.strip() or None
+            end_date = self.children[3].value.strip() or None
 
             if format_type not in ["JSON", "CSV"]:
                 raise ValueError("格式必須是 JSON 或 CSV")

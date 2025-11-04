@@ -94,6 +94,7 @@ class CouncilService:
         description: str | None,
         attachment_url: str | None,
         snapshot_member_ids: Sequence[int],
+        target_department_id: str | None = None,
     ) -> Proposal:
         if amount <= 0:
             raise ValueError("Amount must be a positive integer.")
@@ -103,6 +104,9 @@ class CouncilService:
             raise PermissionDeniedError(
                 "No council members to snapshot. Configure role or members."
             )
+        # Validate that either target_id or target_department_id is provided
+        if target_department_id is None and target_id is None:
+            raise ValueError("Either target_id or target_department_id must be provided.")
 
         pool = get_pool()
         async with pool.acquire() as conn:
@@ -115,6 +119,7 @@ class CouncilService:
                 description=description,
                 attachment_url=attachment_url,
                 snapshot_member_ids=list(dict.fromkeys(int(x) for x in snapshot_member_ids)),
+                target_department_id=target_department_id,
             )
         await publish_council_event(
             CouncilEvent(
@@ -249,11 +254,33 @@ class CouncilService:
             )
             return
 
+        # Determine target account ID: use department account if target_department_id is set
+        target_account_id = proposal.target_id
+        if proposal.target_department_id is not None:
+            # Import here to avoid circular dependency
+            from src.bot.services.department_registry import get_registry
+            from src.bot.services.state_council_service import StateCouncilService
+
+            registry = get_registry()
+            dept = registry.get_by_id(proposal.target_department_id)
+            if dept is None:
+                await self._gateway.mark_status(
+                    connection,
+                    proposal_id=proposal.proposal_id,
+                    status="執行失敗",
+                    execution_error=f"Department ID {proposal.target_department_id} not found.",
+                )
+                return
+            # Use StateCouncilService to derive department account ID
+            target_account_id = StateCouncilService.derive_department_account_id(
+                proposal.guild_id, dept.name
+            )
+
         try:
             result = await self._transfer.transfer_currency(
                 guild_id=proposal.guild_id,
                 initiator_id=cfg.council_account_member_id,
-                target_id=proposal.target_id,
+                target_id=target_account_id,
                 amount=proposal.amount,
                 reason=proposal.description or "council_proposal",
                 connection=connection,

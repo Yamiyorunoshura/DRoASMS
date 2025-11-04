@@ -40,4 +40,3 @@ else
 fi
 
 echo "[ok] checks completed"
-

@@ -105,6 +105,7 @@ class _FakeGateway(CouncilGovernanceGateway):
         attachment_url: str | None,
         snapshot_member_ids: Sequence[int],
         deadline_hours: int = 72,
+        target_department_id: str | None = None,
     ) -> Proposal:
         p_id = uuid4()
         n = len(snapshot_member_ids)
@@ -125,6 +126,7 @@ class _FakeGateway(CouncilGovernanceGateway):
             reminder_sent=False,
             created_at=now,
             updated_at=now,
+            target_department_id=target_department_id,
         )
         self._proposals[p_id] = p
         self._snapshot[p_id] = list(dict.fromkeys(snapshot_member_ids))

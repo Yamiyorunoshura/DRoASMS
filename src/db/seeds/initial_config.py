@@ -3,11 +3,15 @@ from __future__ import annotations
 import os
 from typing import Iterable
 
-from src.db.pool import PoolConfig, close_pool, init_pool
+from dotenv import load_dotenv
+
+from src.config.db_settings import PoolConfig
+from src.db.pool import close_pool, init_pool
 
 
 async def seed_default_configs(guild_ids: Iterable[int]) -> None:
-    pool = await init_pool(PoolConfig.from_env())
+    load_dotenv(override=False)
+    pool = await init_pool(PoolConfig.model_validate({}))  # Load from environment variables
     async with pool.acquire() as conn:
         for gid in guild_ids:
             await conn.execute(

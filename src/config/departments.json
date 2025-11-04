@@ -1,0 +1,26 @@
+[
+  {
+    "id": "interior_affairs",
+    "name": "內政部",
+    "code": 1,
+    "emoji": "🏘️"
+  },
+  {
+    "id": "finance",
+    "name": "財政部",
+    "code": 2,
+    "emoji": "💰"
+  },
+  {
+    "id": "homeland_security",
+    "name": "國土安全部",
+    "code": 3,
+    "emoji": "🛡️"
+  },
+  {
+    "id": "central_bank",
+    "name": "中央銀行",
+    "code": 4,
+    "emoji": "🏦"
+  }
+]

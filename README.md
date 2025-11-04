@@ -460,19 +460,190 @@ A: 請確認：
   - 建議搭配 `jq`：`docker compose logs -f bot | jq -cr`
 
 ## 測試與品質維護
-```bash
-# 單元測試
-pytest
 
+### 執行測試
+```bash
+# 執行所有測試（並行執行，自動偵測 CPU 核心數）
+uv run pytest -n auto
+
+# 執行特定測試套件
+uv run pytest tests/unit/ -v
+uv run pytest tests/integration/ -v
+
+# 查看測試覆蓋率報告
+uv run pytest --cov=src --cov-report=html --cov-report=term
+# HTML 報告會產生在 htmlcov/ 目錄
+```
+
+### 程式碼品質工具
+```bash
 # 型別檢查
-mypy src/
+uv run mypy src/
 
 # 程式碼品質檢查
-ruff check .
+uv run ruff check .
 
 # 程式碼格式化
-black src/
+uv run black src/
 ```
+
+### Pre-commit Hooks
+專案已配置 pre-commit hooks，在提交前自動執行格式化與檢查：
+
+```bash
+# 安裝 pre-commit hooks
+uv run pre-commit install
+
+# 手動執行所有 hooks
+uv run pre-commit run --all-files
+```
+
+### 本地執行 CI/CD 檢查
+
+為避免推送後才發現 CI 檢查失敗，可以在本地提前執行所有 CI 檢查。
+
+#### 方法 1：使用 Makefile（推薦）
+
+專案提供了 `Makefile`，統一管理所有檢查命令：
+
+```bash
+# 查看所有可用命令
+make help
+
+# 安裝依賴
+make install
+
+# 安裝並啟用 pre-commit hooks
+make install-pre-commit
+
+# 執行格式化
+make format
+
+# 執行 lint 檢查
+make lint
+
+# lint 並自動修復
+make lint-fix
+
+# 執行型別檢查
+make type-check
+
+# 檢查格式化（不修改檔案）
+make format-check
+
+# 執行所有 CI 檢查（格式化、lint、型別檢查、pre-commit）
+make ci-local
+
+# 執行所有測試（不含整合測試）
+make ci-test
+
+# 執行完整的 CI 檢查（包含所有測試）
+make ci-full
+
+# 執行特定測試套件
+make test-unit
+make test-contract
+make test-economy
+make test-db
+make test-council
+```
+
+#### 方法 2：使用 Pre-commit（最簡單）
+
+Pre-commit hooks 會在 `git commit` 時自動執行，但也可以手動觸發：
+
+```bash
+# 安裝 pre-commit hooks（只需執行一次）
+uv run pre-commit install
+
+# 對所有檔案執行檢查（等同於 CI 中的 pre-commit-check）
+uv run pre-commit run --all-files
+```
+
+#### 方法 3：使用 act（運行 GitHub Actions）
+
+如果要完全模擬 GitHub Actions 的執行環境，可以使用 [act](https://github.com/nektos/act)：
+
+```bash
+# 安裝 act（macOS）
+brew install act
+
+# 或使用其他安裝方式見 https://github.com/nektos/act#installation
+
+# Linux 上安裝 act
+curl https://raw.githubusercontent.com/nektos/act/master/install.sh | sudo bash
+
+# 執行 CI workflow
+act push
+
+# 執行特定 job（例如只執行 lint）
+act -j lint
+```
+
+**注意**：act 需要 Docker，且執行整合測試時可能需要額外設定。
+
+#### 推薦工作流程
+
+1. **開發過程中**：啟用 pre-commit hooks 自動檢查
+   ```bash
+   make install-pre-commit
+   ```
+
+2. **提交前**：執行快速 CI 檢查
+   ```bash
+   make ci-local
+   ```
+
+3. **重要變更前**：執行完整測試
+   ```bash
+   make ci-full
+   ```
+
+### 開發工具說明
+
+#### Pydantic 設定管理
+- 使用 Pydantic v2 進行設定驗證與載入
+- `BotSettings`：Discord bot 設定（`src/config/settings.py`）
+- `PoolConfig`：資料庫連線池設定（`src/config/db_settings.py`）
+- 自動驗證環境變數格式與型別，提供友善的錯誤訊息
+
+#### Faker 測試資料生成
+- 在測試中使用 Faker 自動生成假資料（guild_id、user_id、金額等）
+- 支援中文與英文 locale
+- 使用方式：在測試中注入 `faker` fixture
+
+#### Hypothesis 屬性測試
+- 使用 Hypothesis 進行屬性測試，自動生成邊界案例
+- 適合測試複雜邏輯，如轉帳驗證、餘額計算等
+- 範例檔案：`tests/unit/test_balance_validation_property.py`
+- 使用方式：
+  ```python
+  from hypothesis import given, strategies as st
+
+  @given(
+      balance=st.integers(min_value=0, max_value=1_000_000_000),
+      amount=st.integers(min_value=1, max_value=1_000_000_000),
+  )
+  def test_balance_check(balance: int, amount: int) -> None:
+      # Hypothesis 會自動生成多組測試案例
+      check_result = 1 if balance >= amount else 0
+      assert check_result in (0, 1)
+  ```
+
+#### Tenacity 重試邏輯
+- 使用 Tenacity 簡化重試邏輯實作
+- 提供指數退避與抖動策略
+- 已應用於轉帳事件池的重試機制
+
+#### 測試覆蓋率
+- 使用 pytest-cov 產生覆蓋率報告
+- CI 中自動上傳 HTML 報告作為 artifact
+- 覆蓋率設定見 `pyproject.toml` 的 `[tool.coverage.*]` 區段
+
+#### 並行測試執行
+- 使用 pytest-xdist 加速測試執行
+- 預設使用 `-n auto` 自動偵測 CPU 核心數
+- 確保測試使用獨立資料庫連線池與交易隔離
 
 ## 生產環境實作要求
 

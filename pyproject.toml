@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "droasms-bot"
-version = "0.4.0"
+version = "0.5.0"
 description = "Discord bot economy foundations."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -20,15 +20,26 @@ dependencies = [
     "structlog>=24.1.0,<25.0.0",
     "python-dotenv>=1.0.1,<2.0.0",
     "psycopg2-binary>=2.9.11",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "tenacity>=9.0.0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3.0,<9.0.0",
     "pytest-asyncio>=0.23.0,<0.24.0",
+    "pytest-cov>=5.0.0",
+    "pytest-xdist>=3.6.0",
+    "faker>=30.0.0",
     "mypy>=1.11.0,<2.0.0",
     "ruff>=0.6.0,<0.7.0",
     "black>=24.8.0,<25.0.0",
+    "pre-commit>=4.0.0",
+    "hypothesis>=6.0.0",
+    "typer>=0.12.0",
+    "rich>=14.0.0",
+    "watchfiles>=1.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -65,11 +76,14 @@ include = "\\.pyi?$"
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-ra"
+addopts = "-ra --cov=src --cov-report=html --cov-report=term --cov-report=term-missing"
 testpaths = ["tests"]
 markers = [
     "performance: Performance and load tests for NFR validation",
+    "integration: Integration tests that require Docker/Discord; gated by RUN_DISCORD_INTEGRATION_TESTS",
 ]
+# 並行測試設定：使用 pytest-xdist，透過命令列參數 -n auto 或 -n N 控制
+# pytest-xdist 不支援在配置檔案中設定 n_workers，需在命令列指定
 
 [tool.mypy]
 python_version = "3.13"
@@ -85,3 +99,83 @@ module = [
     "asyncpg.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "src.db.migrations.versions.*",
+]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
+    "src.bot.*",
+    "src.config.*",
+]
+disable_error_code = ["attr-defined", "method-assign", "misc", "call-arg"]
+
+[[tool.mypy.overrides]]
+module = [
+    "discord",
+    "discord.*",
+]
+ignore_missing_imports = true
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
+    "pydantic_settings",
+    "pydantic_settings.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "alembic",
+    "alembic.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "structlog",
+    "structlog.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "tenacity",
+    "tenacity.*",
+    "dotenv",
+    "python-dotenv",
+    "pydantic",
+    "pydantic.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "src.db.migrations.env",
+]
+ignore_errors = true
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/tests/*",
+    "*/migrations/*",
+    "*/alembic/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

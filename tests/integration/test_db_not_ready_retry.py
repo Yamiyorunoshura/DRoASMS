@@ -27,13 +27,19 @@ def _docker_compose(cmd: str) -> None:
     subprocess.run(["bash", "-lc", f"{cmd}"], cwd=str(REPO_ROOT), check=True)
 
 
-pytestmark = pytest.mark.skipif(
-    not (
-        (_has_cmd("docker") and _has_cmd("docker-compose"))
-        or (_has_cmd("docker") and os.environ.get("COMPOSE_DOCKER_CLI_BUILD") is not None)
+pytestmark = [
+    pytest.mark.skipif(
+        os.getenv("RUN_DISCORD_INTEGRATION_TESTS", "").lower() not in {"1", "true", "yes"},
+        reason="未啟用 RUN_DISCORD_INTEGRATION_TESTS，略過 Discord/Compose 整合測試",
     ),
-    reason="Docker/Compose 不可用，略過依賴延遲測試",
-)
+    pytest.mark.skipif(
+        not (
+            (_has_cmd("docker") and _has_cmd("docker-compose"))
+            or (_has_cmd("docker") and os.environ.get("COMPOSE_DOCKER_CLI_BUILD") is not None)
+        ),
+        reason="Docker/Compose 不可用，略過依賴延遲測試",
+    ),
+]
 
 
 @pytest.mark.timeout(300)

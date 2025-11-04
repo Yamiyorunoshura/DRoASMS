@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-from dataclasses import dataclass
 from importlib import import_module
 from pkgutil import iter_modules
 from typing import Iterable, Sequence
@@ -13,6 +12,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 from src.bot.services.transfer_event_pool import TransferEventPoolCoordinator
+from src.config.settings import BotSettings
 from src.db import pool as db_pool
 from src.infra.logging.config import configure_logging
 from src.infra.telemetry.listener import TelemetryListener
@@ -20,30 +20,6 @@ from src.infra.telemetry.listener import TelemetryListener
 # Configure logging as soon as this module is imported
 configure_logging()
 LOGGER = structlog.get_logger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class BotSettings:
-    """Configuration values required to bootstrap the Discord bot."""
-
-    token: str
-    guild_allowlist: Sequence[int]
-
-    @classmethod
-    def from_env(cls) -> "BotSettings":
-        """Load bot settings from the environment."""
-        load_dotenv(override=False)
-
-        token = os.getenv("DISCORD_TOKEN")
-        if not token:
-            raise RuntimeError("Missing DISCORD_TOKEN environment variable.")
-
-        allowlist_raw = os.getenv("DISCORD_GUILD_ALLOWLIST", "")
-        parsed_ids = [int(value.strip()) for value in allowlist_raw.split(",") if value.strip()]
-        # 以保序去重，避免同一 guild 被重複同步造成潛在副作用或額外延遲
-        guild_allowlist = tuple(dict.fromkeys(parsed_ids))
-
-        return cls(token=token, guild_allowlist=guild_allowlist)
 
 
 class EconomyBot(discord.Client):
@@ -177,7 +153,9 @@ def _iter_command_modules() -> Iterable[str]:
 
 def main() -> None:
     """Entry point invoked via `python -m src.bot.main`."""
-    settings = BotSettings.from_env()
+    # Load .env file manually for compatibility with existing code
+    load_dotenv(override=False)
+    settings = BotSettings.model_validate({})  # Load from environment variables
     bot = EconomyBot(settings)
 
     try:

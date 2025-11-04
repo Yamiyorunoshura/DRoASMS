@@ -51,3 +51,6 @@ specs/
 
 # openspec
 openspec/
+
+# hypothesis
+.hypothesis/

@@ -18,6 +18,7 @@ from src.bot.services.council_service import (
     GovernanceNotConfiguredError,
     PermissionDeniedError,
 )
+from src.bot.services.department_registry import get_registry
 from src.db.pool import get_pool
 from src.infra.events.council_events import CouncilEvent
 from src.infra.events.council_events import subscribe as subscribe_council_events
@@ -259,7 +260,14 @@ async def _dm_council_for_voting(
 
     embed = discord.Embed(title="理事會轉帳提案（請投票）", color=0x3498DB)
     embed.add_field(name="提案編號", value=str(proposal.proposal_id), inline=False)
-    embed.add_field(name="受款人", value=f"<@{proposal.target_id}>")
+    # Show department name if target_department_id exists, otherwise show user mention
+    registry = get_registry()
+    if hasattr(proposal, "target_department_id") and proposal.target_department_id:
+        dept = registry.get_by_id(proposal.target_department_id)
+        target_str = dept.name if dept else proposal.target_department_id
+    else:
+        target_str = f"<@{proposal.target_id}>"
+    embed.add_field(name="受款人", value=target_str)
     embed.add_field(name="金額", value=str(proposal.amount))
     if proposal.description:
         embed.add_field(name="用途", value=proposal.description, inline=False)
@@ -404,14 +412,14 @@ class CouncilPanelView(discord.ui.View):
             label="建立轉帳提案",
             style=discord.ButtonStyle.primary,
         )
-        self._propose_btn.callback = self._on_click_propose  # type: ignore[method-assign]
+        self._propose_btn.callback = self._on_click_propose
         self.add_item(self._propose_btn)
 
         self._export_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="匯出資料",
             style=discord.ButtonStyle.secondary,
         )
-        self._export_btn.callback = self._on_click_export  # type: ignore[method-assign]
+        self._export_btn.callback = self._on_click_export
         self.add_item(self._export_btn)
 
         # 使用指引按鈕：顯示依理事會面板操作而設計之說明
@@ -419,7 +427,7 @@ class CouncilPanelView(discord.ui.View):
             label="使用指引",
             style=discord.ButtonStyle.secondary,
         )
-        self._help_btn.callback = self._on_click_help  # type: ignore[method-assign]
+        self._help_btn.callback = self._on_click_help
         self.add_item(self._help_btn)
 
         self._select: discord.ui.Select[Any] = discord.ui.Select(
@@ -428,7 +436,7 @@ class CouncilPanelView(discord.ui.View):
             max_values=1,
             options=[],
         )
-        self._select.callback = self._on_select_proposal  # type: ignore[method-assign]
+        self._select.callback = self._on_select_proposal
         self.add_item(self._select)
 
     async def bind_message(self, message: discord.Message) -> None:
@@ -488,7 +496,14 @@ class CouncilPanelView(discord.ui.View):
         """建構理事會面板之使用指引。"""
         lines = [
             "• 開啟方式：於伺服器使用 /council panel（僅限理事）。",
-            "• 建立提案：點擊『建立轉帳提案』，輸入受款人、金額、用途與附件（選填）。",
+            (
+                "• 建立提案：點擊『建立轉帳提案』，選擇轉帳類型（轉帳給使用者或政府部門），"
+                "然後選擇受款人、輸入金額、用途與附件（選填）。"
+            ),
+            (
+                "• 轉帳類型：可選擇轉帳給使用者（使用 Discord 使用者選擇器）"
+                "或轉帳給政府部門（從下拉選單選擇）。"
+            ),
             "• 名冊快照：建案當下鎖定理事名單與投票門檻 T，用於後續投票與決議。",
             "• 投票：於『進行中提案』下拉選擇提案後可進行『同意/反對/棄權』。",
             "• 撤案限制：僅提案人且在『尚無任何投票』時可按『撤案（無票前）』。",
@@ -562,9 +577,9 @@ class CouncilPanelView(discord.ui.View):
         ):
             await interaction.response.send_message("僅限理事可建立提案。", ephemeral=True)
             return
-        await interaction.response.send_modal(
-            ProposeTransferModal(service=self.service, guild=self.guild)
-        )
+        # Show transfer type selection view instead of modal
+        view = TransferTypeSelectionView(service=self.service, guild=self.guild)
+        await interaction.response.send_message("請選擇轉帳類型：", view=view, ephemeral=True)
 
     async def _on_click_export(self, interaction: discord.Interaction) -> None:
         # 僅限管理員/管理伺服器權限
@@ -677,6 +692,288 @@ class CouncilPanelView(discord.ui.View):
             except RuntimeError:
                 asyncio.run(self._cleanup_subscription())
         super().stop()
+
+
+# --- Transfer Proposal UI Components ---
+
+
+class TransferTypeSelectionView(discord.ui.View):
+    """View for selecting transfer type (user or department)."""
+
+    def __init__(self, *, service: CouncilService, guild: discord.Guild) -> None:
+        super().__init__(timeout=300)
+        self.service = service
+        self.guild = guild
+
+    @discord.ui.button(
+        label="轉帳給使用者",
+        style=discord.ButtonStyle.primary,
+        emoji="👤",
+    )
+    async def select_user(
+        self, interaction: discord.Interaction, button: discord.ui.Button[Any]
+    ) -> None:
+        # Show user select component
+        view = UserSelectView(service=self.service, guild=self.guild)
+        await interaction.response.send_message("請選擇受款使用者：", view=view, ephemeral=True)
+
+    @discord.ui.button(
+        label="轉帳給政府部門",
+        style=discord.ButtonStyle.primary,
+        emoji="🏛️",
+    )
+    async def select_department(
+        self, interaction: discord.Interaction, button: discord.ui.Button[Any]
+    ) -> None:
+        # Show department select view
+        view = DepartmentSelectView(service=self.service, guild=self.guild)
+        await interaction.response.send_message("請選擇受款部門：", view=view, ephemeral=True)
+
+
+class DepartmentSelectView(discord.ui.View):
+    """View for selecting a government department."""
+
+    def __init__(self, *, service: CouncilService, guild: discord.Guild) -> None:
+        super().__init__(timeout=300)
+        self.service = service
+        self.guild = guild
+        registry = get_registry()
+        departments = registry.list_all()
+
+        # Create select menu with departments
+        options: list[discord.SelectOption] = []
+        for dept in departments:
+            label = dept.name
+            if dept.emoji:
+                label = f"{dept.emoji} {label}"
+            options.append(
+                discord.SelectOption(
+                    label=label,
+                    value=dept.id,
+                    description=f"部門代碼: {dept.code}",
+                )
+            )
+
+        if options:
+            select: discord.ui.Select[Any] = discord.ui.Select(
+                placeholder="選擇政府部門",
+                options=options,
+                min_values=1,
+                max_values=1,
+            )
+            select.callback = self._on_select
+            self.add_item(select)
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        if not interaction.data:
+            await interaction.response.send_message("請選擇一個部門。", ephemeral=True)
+            return
+        values = interaction.data.get("values")
+        if not values or not isinstance(values, list) or len(values) == 0:
+            await interaction.response.send_message("請選擇一個部門。", ephemeral=True)
+            return
+        selected_id: str | None = values[0] if isinstance(values[0], str) else None
+        if not selected_id:
+            await interaction.response.send_message("請選擇一個部門。", ephemeral=True)
+            return
+
+        registry = get_registry()
+        dept = registry.get_by_id(selected_id)
+        if dept is None:
+            await interaction.response.send_message("部門不存在。", ephemeral=True)
+            return
+
+        # Show transfer proposal modal with department selected
+        modal = TransferProposalModal(
+            service=self.service,
+            guild=self.guild,
+            target_department_id=selected_id,
+            target_department_name=dept.name,
+        )
+        await interaction.response.send_modal(modal)
+
+
+class UserSelectView(discord.ui.View):
+    """View for selecting a user (using Discord User Select component)."""
+
+    def __init__(self, *, service: CouncilService, guild: discord.Guild) -> None:
+        super().__init__(timeout=300)
+        self.service = service
+        self.guild = guild
+
+        # Use Discord User Select component
+        user_select: discord.ui.UserSelect[Any] = discord.ui.UserSelect(
+            placeholder="選擇使用者",
+            min_values=1,
+            max_values=1,
+        )
+        user_select.callback = self._on_select
+        self.add_item(user_select)
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        # 直接從 interaction.data 取得被選取的使用者 ID
+        # （UserSelect 的 callback 只會傳入 interaction）
+        if not interaction.data:
+            await interaction.response.send_message("請選擇一個使用者。", ephemeral=True)
+            return
+        values = interaction.data.get("values")
+        if not values or not isinstance(values, list) or len(values) == 0:
+            await interaction.response.send_message("請選擇一個使用者。", ephemeral=True)
+            return
+        selected_id: str | None = values[0] if isinstance(values[0], str) else None
+        if not selected_id:
+            await interaction.response.send_message("請選擇一個使用者。", ephemeral=True)
+            return
+
+        # 嘗試從 guild 快取取得成員，以便展示名稱；若失敗則以 ID 代替
+        member = self.guild.get_member(int(selected_id)) if self.guild else None
+        display_name = member.display_name if member else str(selected_id)
+
+        # 顯示建立轉帳提案的 Modal，帶入被選取的使用者
+        modal = TransferProposalModal(
+            service=self.service,
+            guild=self.guild,
+            target_user_id=int(selected_id),
+            target_user_name=display_name,
+        )
+        await interaction.response.send_modal(modal)
+
+
+class TransferProposalModal(discord.ui.Modal, title="建立轉帳提案"):
+    """Modal for creating transfer proposal with amount, description, and attachment."""
+
+    def __init__(
+        self,
+        *,
+        service: CouncilService,
+        guild: discord.Guild,
+        target_user_id: int | None = None,
+        target_user_name: str | None = None,
+        target_department_id: str | None = None,
+        target_department_name: str | None = None,
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.guild = guild
+        self.target_user_id = target_user_id
+        self.target_user_name = target_user_name
+        self.target_department_id = target_department_id
+        self.target_department_name = target_department_name
+
+        # Show target info in a disabled text input
+        target_label = "受款人"
+        target_value = ""
+        if target_department_name:
+            target_value = f"部門：{target_department_name}"
+        elif target_user_name:
+            target_value = f"使用者：{target_user_name}"
+
+        self.target_info: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label=target_label,
+            placeholder=target_value,
+            default=target_value,
+            required=False,
+            style=discord.TextStyle.short,
+        )
+        self.amount: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="金額（正整數）",
+            placeholder="例如 100",
+            required=True,
+        )
+        self.description: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="用途描述",
+            style=discord.TextStyle.paragraph,
+            required=False,
+        )
+        self.attachment_url: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="附件連結（可選）",
+            required=False,
+        )
+        self.add_item(self.target_info)
+        self.add_item(self.amount)
+        self.add_item(self.description)
+        self.add_item(self.attachment_url)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:  # noqa: D401
+        # Validate that a target is selected
+        if not self.target_user_id and not self.target_department_id:
+            await interaction.response.send_message("錯誤：未選擇受款人。", ephemeral=True)
+            return
+
+        # Validate amount
+        try:
+            amt = int(str(self.amount.value).replace(",", "").strip())
+        except Exception:
+            await interaction.response.send_message("金額需為正整數。", ephemeral=True)
+            return
+        if amt <= 0:
+            await interaction.response.send_message("金額需 > 0。", ephemeral=True)
+            return
+
+        # Get snapshot
+        try:
+            cfg = await self.service.get_config(guild_id=self.guild.id)
+        except GovernanceNotConfiguredError:
+            await interaction.response.send_message("尚未完成治理設定。", ephemeral=True)
+            return
+        role = self.guild.get_role(cfg.council_role_id)
+        snapshot_ids = [m.id for m in role.members] if role is not None else []
+        if not snapshot_ids:
+            await interaction.response.send_message(
+                "理事名冊為空，請先確認角色有成員。",
+                ephemeral=True,
+            )
+            return
+
+        # Create proposal
+        # For department transfers, we still need a target_id (use department account ID)
+        # For user transfers, use the user ID
+        target_id = self.target_user_id
+        if self.target_department_id and not target_id:
+            # Derive department account ID for the target_id field
+            from src.bot.services.state_council_service import StateCouncilService
+
+            registry = get_registry()
+            dept = registry.get_by_id(self.target_department_id)
+            if dept:
+                target_id = StateCouncilService.derive_department_account_id(
+                    self.guild.id, dept.name
+                )
+
+        if not target_id:
+            await interaction.response.send_message("錯誤：無法確定受款帳戶。", ephemeral=True)
+            return
+
+        try:
+            proposal = await self.service.create_transfer_proposal(
+                guild_id=self.guild.id,
+                proposer_id=interaction.user.id,
+                target_id=target_id,
+                amount=amt,
+                description=str(self.description.value or "").strip() or None,
+                attachment_url=str(self.attachment_url.value or "").strip() or None,
+                snapshot_member_ids=snapshot_ids,
+                target_department_id=self.target_department_id,
+            )
+        except Exception as exc:
+            LOGGER.exception("council.panel.propose.error", error=str(exc))
+            await interaction.response.send_message("建案失敗：" + str(exc), ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            f"已建立提案 {proposal.proposal_id}，並將以 DM 通知理事。",
+            ephemeral=True,
+        )
+        try:
+            await _dm_council_for_voting(interaction.client, self.guild, proposal)
+        except Exception:
+            pass
+        LOGGER.info(
+            "council.panel.propose",
+            guild_id=self.guild.id,
+            user_id=interaction.user.id,
+            proposal_id=str(proposal.proposal_id),
+        )
 
 
 class ProposeTransferModal(discord.ui.Modal, title="建立轉帳提案"):
@@ -892,6 +1189,7 @@ class ExportModal(discord.ui.Modal, title="匯出治理資料"):
                     "guild_id",
                     "proposer_id",
                     "target_id",
+                    "target_department_id",
                     "amount",
                     "status",
                     "created_at",
@@ -908,6 +1206,7 @@ class ExportModal(discord.ui.Modal, title="匯出治理資料"):
                         row.get("guild_id"),
                         row.get("proposer_id"),
                         row.get("target_id"),
+                        row.get("target_department_id"),
                         row.get("amount"),
                         row.get("status"),
                         row.get("created_at"),
@@ -1034,7 +1333,14 @@ class ProposalActionView(discord.ui.View):
 
 def _format_proposal_title(p: Any) -> str:
     short = str(p.proposal_id)[:8]
-    return f"#{short} → <@{p.target_id}> {p.amount}"
+    # Show department name if target_department_id exists, otherwise show user mention
+    registry = get_registry()
+    if hasattr(p, "target_department_id") and p.target_department_id:
+        dept = registry.get_by_id(p.target_department_id)
+        target_str = dept.name if dept else p.target_department_id
+    else:
+        target_str = f"<@{p.target_id}>"
+    return f"#{short} → {target_str} {p.amount}"
 
 
 def _format_proposal_desc(p: Any) -> str:
@@ -1075,7 +1381,7 @@ async def _broadcast_result(
 
     # 確認提案人
     proposal = await service.get_proposal(proposal_id=proposal_id)
-    proposer_user: discord.abc.Messageable | None = None
+    proposer_user: discord.User | discord.Member | None = None
     if proposal is not None:
         proposer_user = guild.get_member(proposal.proposer_id) or await _safe_fetch_user(
             client, proposal.proposer_id
@@ -1083,7 +1389,7 @@ async def _broadcast_result(
 
     recipients: list[discord.abc.Messageable] = []
     recipients.extend(members)
-    if proposer_user is not None and proposer_user.id not in [m.id for m in members]:  # type: ignore[attr-defined]
+    if proposer_user is not None and proposer_user.id not in [m.id for m in members]:
         recipients.append(proposer_user)
     for m in recipients:
         try:

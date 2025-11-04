@@ -10,14 +10,10 @@ from src.db.pool import close_pool, init_pool
 async def _amain(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="reconcile_sc_balances",
-        description=(
-            "以治理層（國務院）餘額為準，將經濟帳本餘額同步對齊。"
-        ),
+        description=("以治理層（國務院）餘額為準，將經濟帳本餘額同步對齊。"),
     )
     parser.add_argument("--guild", type=int, required=True, help="Guild ID")
-    parser.add_argument(
-        "--admin", type=int, required=True, help="用於記錄調整的管理者 ID"
-    )
+    parser.add_argument("--admin", type=int, required=True, help="用於記錄調整的管理者 ID")
     parser.add_argument(
         "--strict",
         action="store_true",

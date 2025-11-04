@@ -56,4 +56,3 @@ BEGIN
     RETURN v_transfer_id;
 END;
 $$;
-

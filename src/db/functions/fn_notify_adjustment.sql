@@ -24,4 +24,3 @@ BEGIN
     RETURN NULL;
 END;
 $$;
-

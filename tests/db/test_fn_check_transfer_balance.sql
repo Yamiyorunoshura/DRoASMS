@@ -3,7 +3,7 @@ BEGIN;
 
 -- Setup: Create a pending transfer and set up balances
 INSERT INTO economy.guild_member_balances (guild_id, member_id, current_balance)
-VALUES 
+VALUES
     (123456789, 111111111, 500),  -- Sufficient balance
     (123456789, 222222222, 0);
 
@@ -37,7 +37,7 @@ BEGIN
 END $$;
 
 -- Verify check result
-SELECT 
+SELECT
     transfer_id,
     status,
     checks->>'balance' AS balance_check
@@ -75,11 +75,10 @@ BEGIN
 END $$;
 
 -- Verify insufficient balance check
-SELECT 
+SELECT
     transfer_id,
     checks->>'balance' AS balance_check
 FROM economy.pending_transfers
 WHERE initiator_id = 333333333;
 
 ROLLBACK;
-

@@ -12,7 +12,7 @@ SELECT economy.fn_create_pending_transfer(
 ) AS transfer_id_1;
 
 -- Verify the record was created
-SELECT 
+SELECT
     transfer_id,
     guild_id,
     initiator_id,
@@ -59,7 +59,7 @@ BEGIN
                 RAISE;
             END IF;
     END;
-    
+
     IF NOT v_error_occurred THEN
         RAISE EXCEPTION 'Expected error was not raised';
     END IF;
@@ -88,11 +88,10 @@ BEGIN
                 RAISE;
             END IF;
     END;
-    
+
     IF NOT v_error_occurred THEN
         RAISE EXCEPTION 'Expected error was not raised';
     END IF;
 END $$;
 
 ROLLBACK;
-

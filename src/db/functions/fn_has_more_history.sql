@@ -14,4 +14,3 @@ DECLARE v_exists boolean; BEGIN
     ) INTO v_exists;
     RETURN COALESCE(v_exists, false);
 END; $$;
-

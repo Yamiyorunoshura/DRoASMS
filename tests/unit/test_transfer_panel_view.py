@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
+from faker import Faker
 
 from src.bot.commands.state_council import (
     InterdepartmentTransferPanelView,
@@ -76,40 +77,47 @@ async def test_target_options_exclude_source() -> None:
 
 
 @pytest.mark.asyncio
-async def test_can_submit_validation() -> None:
+async def test_can_submit_validation(faker: Faker) -> None:
     service = _StubService()
+    guild_id = faker.random_int(min=1, max=1000000)
+    author_id = faker.random_int(min=1, max=1000000)
     view = InterdepartmentTransferPanelView(
         service=service,
-        guild_id=1,
-        author_id=10,
+        guild_id=guild_id,
+        author_id=author_id,
         user_roles=[],
         source_department="財政部",
         departments=["內政部", "財政部", "國土安全部", "中央銀行"],
     )
     view.to_department = "內政部"
-    view.amount = 100
-    view.reason = "調度"
+    view.amount = faker.random_int(min=1, max=10000)
+    view.reason = faker.text(max_nb_chars=100)
 
     # 私有方法：直接檢查提交條件
     assert view._can_submit() is True
 
 
 @pytest.mark.asyncio
-async def test_submit_triggers_service_call() -> None:
+async def test_submit_triggers_service_call(faker: Faker) -> None:
     service = _StubService()
-    author_id = 99
+    author_id = faker.random_int(min=1, max=1000000)
+    guild_id = faker.random_int(min=1, max=1000000)
+    user_roles = [faker.random_int(min=1, max=1000000) for _ in range(2)]
+    amount = faker.random_int(min=1, max=10000)
+    reason = faker.text(max_nb_chars=100)
+
     view = InterdepartmentTransferPanelView(
         service=service,
-        guild_id=777,
+        guild_id=guild_id,
         author_id=author_id,
-        user_roles=[1, 2],
+        user_roles=user_roles,
         source_department="內政部",
         departments=["內政部", "財政部", "國土安全部", "中央銀行"],
     )
     # 構造完成可提交狀態
     view.to_department = "財政部"
-    view.amount = 250
-    view.reason = "預算調整"
+    view.amount = amount
+    view.reason = reason
     view.refresh_controls()
 
     # 取得送出按鈕並執行 callback
@@ -127,9 +135,9 @@ async def test_submit_triggers_service_call() -> None:
 
     assert len(service.calls) == 1
     call = service.calls[0]
-    assert call["guild_id"] == 777
+    assert call["guild_id"] == guild_id
     assert call["user_id"] == author_id
     assert call["from_department"] == "內政部"
     assert call["to_department"] == "財政部"
-    assert call["amount"] == 250
-    assert call["reason"] == "預算調整"
+    assert call["amount"] == amount
+    assert call["reason"] == reason
