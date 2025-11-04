@@ -295,13 +295,42 @@ class TransferEventPoolCoordinator:
         retry=retry_if_exception_type((asyncpg.PostgresError, asyncio.TimeoutError)),
         reraise=True,
     )
-    async def _retry_checks(self, transfer_id: UUID) -> None:
+    async def _retry_checks(
+        self,
+        transfer_id: UUID,
+        *,
+        connection: asyncpg.Connection | None = None,
+    ) -> None:
         """Retry all checks for a transfer with automatic retry on database errors."""
-        if self._pool is None:
+        # 允許在測試中傳入既有的交易連線，避免不同連線看不到未提交變更
+        if connection is None and self._pool is None:
             return
 
         try:
-            async with self._pool.acquire() as conn:
+            if connection is None:
+                async with self._pool.acquire() as conn:  # type: ignore[union-attr]
+                    # Reset status to checking to allow checks to run
+                    await self._pending_gateway.update_status(
+                        conn, transfer_id=transfer_id, new_status="checking"
+                    )
+
+                    # Re-trigger all checks (each function returns void, so we use execute)
+                    await conn.execute("SELECT economy.fn_check_transfer_balance($1)", transfer_id)
+                    await conn.execute("SELECT economy.fn_check_transfer_cooldown($1)", transfer_id)
+                    await conn.execute(
+                        "SELECT economy.fn_check_transfer_daily_limit($1)", transfer_id
+                    )
+
+                    # Clear check state to allow fresh evaluation
+                    if transfer_id in self._check_states:
+                        del self._check_states[transfer_id]
+
+                    LOGGER.debug(
+                        "transfer_event_pool.retry.checks_triggered",
+                        transfer_id=transfer_id,
+                    )
+            else:
+                conn = connection
                 # Reset status to checking to allow checks to run
                 await self._pending_gateway.update_status(
                     conn, transfer_id=transfer_id, new_status="checking"
@@ -339,76 +368,80 @@ class TransferEventPoolCoordinator:
             except Exception:
                 LOGGER.exception("transfer_event_pool.cleanup.error")
 
-    async def _cleanup_expired(self) -> None:
+    async def _cleanup_expired(self, *, connection: asyncpg.Connection | None = None) -> None:
         """Clean up expired pending transfers."""
-        if self._pool is None:
+        if connection is None and self._pool is None:
             return
 
         try:
-            async with self._pool.acquire() as conn:
-                now = datetime.now(timezone.utc)
-                async with conn.transaction():
-                    # 先以固定的 now 值更新，確保後續可用 updated_at 精準挑出本次處理的列
-                    await conn.execute(
-                        """
-                        UPDATE economy.pending_transfers
-                        SET status = 'rejected',
-                            updated_at = $2
-                        WHERE expires_at IS NOT NULL
-                          AND expires_at < $1
-                          AND status IN ('pending', 'checking')
-                        """,
-                        now,
-                        now,
-                    )
+            if connection is None:
+                async with self._pool.acquire() as conn:  # type: ignore[union-attr]
+                    await self._cleanup_expired(connection=conn)
+                    return
 
-                    # 精準撈出剛才更新過的列以逐筆通知
-                    rows = await conn.fetch(
-                        """
-                        SELECT transfer_id, guild_id, initiator_id, target_id, amount
-                        FROM economy.pending_transfers
-                        WHERE expires_at IS NOT NULL
-                          AND expires_at < $1
-                          AND status = 'rejected'
-                          AND updated_at = $2
-                        """,
-                        now,
-                        now,
-                    )
+            conn = connection
+            now = datetime.now(timezone.utc)
+            async with conn.transaction():
+                # 先以固定的 now 值更新，確保後續可用 updated_at 精準挑出本次處理的列
+                await conn.execute(
+                    """
+                    UPDATE economy.pending_transfers
+                    SET status = 'rejected',
+                        updated_at = $2
+                    WHERE expires_at IS NOT NULL
+                      AND expires_at < $1
+                      AND status IN ('pending', 'checking')
+                    """,
+                    now,
+                    now,
+                )
 
-                    for r in rows:
-                        try:
-                            await conn.execute(
-                                """
-                                SELECT pg_notify(
-                                    'economy_events',
-                                    jsonb_build_object(
-                                        'event_type', 'transaction_denied',
-                                        'reason', 'transfer_checks_expired',
-                                        'transfer_id', $1::uuid,
-                                        'guild_id', $2::bigint,
-                                        'initiator_id', $3::bigint,
-                                        'target_id', $4::bigint,
-                                        'amount', $5::bigint
-                                    )::text
-                                )
-                                """,
-                                r["transfer_id"],
-                                r["guild_id"],
-                                r["initiator_id"],
-                                r["target_id"],
-                                r["amount"],
+                # 精準撈出剛才更新過的列以逐筆通知
+                rows = await conn.fetch(
+                    """
+                    SELECT transfer_id, guild_id, initiator_id, target_id, amount
+                    FROM economy.pending_transfers
+                    WHERE expires_at IS NOT NULL
+                      AND expires_at < $1
+                      AND status = 'rejected'
+                      AND updated_at = $2
+                    """,
+                    now,
+                    now,
+                )
+                for r in rows:
+                    try:
+                        await conn.execute(
+                            """
+                            SELECT pg_notify(
+                                'economy_events',
+                                jsonb_build_object(
+                                    'event_type', 'transaction_denied',
+                                    'reason', 'transfer_checks_expired',
+                                    'transfer_id', $1::uuid,
+                                    'guild_id', $2::bigint,
+                                    'initiator_id', $3::bigint,
+                                    'target_id', $4::bigint,
+                                    'amount', $5::bigint
+                                )::text
                             )
-                        except Exception:
-                            LOGGER.exception(
-                                "transfer_event_pool.cleanup.notify_denied_failed",
-                                transfer_id=r["transfer_id"],
-                            )
-
-                    if rows:
-                        LOGGER.info(
-                            "transfer_event_pool.cleanup.expired",
-                            count=len(rows),
+                            """,
+                            r["transfer_id"],
+                            r["guild_id"],
+                            r["initiator_id"],
+                            r["target_id"],
+                            r["amount"],
                         )
+                    except Exception:
+                        LOGGER.exception(
+                            "transfer_event_pool.cleanup.notify_denied_failed",
+                            transfer_id=r["transfer_id"],
+                        )
+
+                if rows:
+                    LOGGER.info(
+                        "transfer_event_pool.cleanup.expired",
+                        count=len(rows),
+                    )
         except Exception:
             LOGGER.exception("transfer_event_pool.cleanup.error")

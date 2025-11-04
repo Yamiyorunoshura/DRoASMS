@@ -65,6 +65,8 @@ services:
       # 掛載測試目錄以便開發時即時更新
       - ./tests:/app/tests:ro
       - ./src:/app/src:ro
+      # 供整合測試呼叫入口腳本（tests 會從 /app/docker/bin/entrypoint.sh 執行）
+      - ./docker/bin:/app/docker/bin:ro
       - ./specs:/app/specs:ro
       - ./.env.example:/app/.env.example:ro
       # 掛載覆蓋率報告目錄

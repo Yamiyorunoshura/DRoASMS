@@ -168,7 +168,8 @@ async def test_event_pool_retry_flow(
         )
 
         # Retry checks
-        await coordinator._retry_checks(transfer_id)
+        # 使用同一個測試連線觸發重試，避免跨連線看不到未提交的餘額更新
+        await coordinator._retry_checks(transfer_id, connection=db_connection)
 
         await asyncio.sleep(0.3)
 
@@ -262,7 +263,8 @@ async def test_expired_transfer_cleanup(
         )
 
         # Manually run cleanup
-        await coordinator._cleanup_expired()
+        # 在同一交易連線中清理，確保可見剛建立（未提交）的測試資料
+        await coordinator._cleanup_expired(connection=db_connection)
 
         # Verify expired transfer was marked as rejected
         pending = await gateway.get_pending_transfer(db_connection, transfer_id=transfer_id)

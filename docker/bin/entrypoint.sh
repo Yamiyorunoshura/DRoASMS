@@ -89,16 +89,15 @@ print(int(time.time()*1000))
 PY
 )
   elapsed=$((now_ms - start_ms))
-  if (( elapsed >= RETRY_MAX_TOTAL_MS )); then
-    json_log "ERROR" "db.unavailable" "database not reachable within timeout" "\"attempts\":${attempt},\"elapsed_ms\":${elapsed}"
-    exit 69
-  fi
-
-  # 已達最大嘗試次數，直接終止（避免多一次多餘嘗試導致 off-by-one）
+  # 先檢查最大嘗試次數，確保至少會做滿 RETRY_MAX_ATTEMPTS 次
+  #（避免單次連線就花光 total 而導致只嘗試一次，影響觀測/測試穩定性）
   if (( attempt >= RETRY_MAX_ATTEMPTS )); then
     json_log "ERROR" "db.unavailable" "database not reachable within timeout" "\"attempts\":${attempt},\"elapsed_ms\":${elapsed}"
     exit 69
   fi
+
+  # 提示：不因 elapsed 超過上限而在尚未達到最大嘗試次數時過早終止
+  # 這可確保可觀測到完整的重試次數與退避行為（由 RETRY_MAX_ATTEMPTS 主導）。
 
   # 指數退避 + 最小抖動（±20%）
   delay=$(( RETRY_BASE_DELAY_MS * (2 ** (attempt-1)) ))
@@ -110,6 +109,8 @@ PY
   if (( elapsed + sleep_ms > RETRY_MAX_TOTAL_MS )); then
     sleep_ms=$(( RETRY_MAX_TOTAL_MS - elapsed ))
   fi
+  # 保底避免負數（當 elapsed 已超過上限時）
+  if (( sleep_ms < 0 )); then sleep_ms=0; fi
   json_log "INFO" "db.connect.retry" "will retry after delay" "\"delay_ms\":${sleep_ms}"
   SLEEP_MS="$sleep_ms" python - <<'PY'
 import time, os
