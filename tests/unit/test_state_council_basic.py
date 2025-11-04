@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.bot.services.state_council_service import StateCouncilService
+from src.bot.services.department_registry import get_registry
 
 
 def _snowflake() -> int:
@@ -40,10 +41,11 @@ class TestStateCouncilBasic:
 
         # Verify expected pattern
         expected_base = 9_500_000_000_000_000
-        expected_internal = expected_base + int(guild_id) + 1
-        expected_finance = expected_base + int(guild_id) + 2
-        expected_security = expected_base + int(guild_id) + 3
-        expected_central = expected_base + int(guild_id) + 4
+        step = _department_step()
+        expected_internal = expected_base + int(guild_id) * step + 1
+        expected_finance = expected_base + int(guild_id) * step + 2
+        expected_security = expected_base + int(guild_id) * step + 3
+        expected_central = expected_base + int(guild_id) * step + 4
 
         assert internal_affairs_id == expected_internal
         assert finance_id == expected_finance
@@ -58,7 +60,7 @@ class TestStateCouncilBasic:
 
         unknown_id = service.derive_department_account_id(guild_id, "不存在的部門")
         expected_base = 9_500_000_000_000_000
-        expected_unknown = expected_base + int(guild_id) + 0  # Default to 0
+        expected_unknown = expected_base + int(guild_id) * _department_step() + 0
 
         assert unknown_id == expected_unknown
 
@@ -140,10 +142,11 @@ class TestStateCouncilBasic:
             "中央銀行": 4,
         }
 
+        step = _department_step()
         for department, expected_code in expected_codes.items():
             account_id = service.derive_department_account_id(guild_id, department)
             expected_base = 9_500_000_000_000_000
-            expected_id = expected_base + int(guild_id) + expected_code
+            expected_id = expected_base + int(guild_id) * step + expected_code
             assert account_id == expected_id
 
     def test_account_id_uniqueness_across_guilds(self) -> None:
@@ -181,17 +184,19 @@ class TestStateCouncilBasic:
 
         guild_id = 1
         base_id = 9_500_000_000_000_000
+        step = _department_step()
+        max_code = _max_department_code()
 
         # Test small guild ID
         for department in ["內政部", "財政部", "國土安全部", "中央銀行"]:
             account_id = service.derive_department_account_id(guild_id, department)
-            assert base_id < account_id < base_id + 100  # +code 1..4
+            assert base_id < account_id <= base_id + int(guild_id) * step + max_code
 
         # Test larger guild ID
         guild_id = 999999
         for department in ["內政部", "財政部", "國土安全部", "中央銀行"]:
             account_id = service.derive_department_account_id(guild_id, department)
-            assert base_id < account_id < base_id + guild_id + 10
+            assert base_id < account_id <= base_id + int(guild_id) * step + max_code
 
     def test_service_error_types(self) -> None:
         """Test service has proper error types."""
@@ -239,3 +244,26 @@ class TestStateCouncilBasic:
 
         assert summary.leader_id == 123
         assert summary.total_balance == 10000
+
+
+def _department_codes() -> list[int]:
+    registry = get_registry()
+    try:
+        codes = [dept.code for dept in registry.list_all() if dept.code >= 0]
+    except Exception:
+        codes = []
+    if 0 not in codes:
+        codes.append(0)
+    return codes
+
+
+def _department_step() -> int:
+    codes = _department_codes()
+    max_code = max(codes) if codes else 0
+    return max(max_code + 1, 5)
+
+
+def _max_department_code() -> int:
+    codes = _department_codes()
+    return max(codes) if codes else 0
+

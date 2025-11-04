@@ -7,6 +7,7 @@ from types import TracebackType
 from typing import Any, Sequence
 from unittest.mock import AsyncMock
 
+import hashlib
 import structlog
 
 from src.bot.services.adjustment_service import AdjustmentService
@@ -352,38 +353,70 @@ class StateCouncilService:
     def derive_department_account_id(guild_id: int, department: str) -> int:
         """導出部門帳戶的穩定 account_id。
 
-        安全範圍：PostgreSQL `BIGINT` (signed int64) 的最大值為
-        9_223_372_036_854_775_807。先前採用 `base + guild_id*10 + code` 的
-        寫法在 2024–2025 年期間常見的 Discord Guild 雪花 ID（約 1.3e18）
-        會溢位至 2e19，導致 asyncpg 在編碼參數時丟出
-        `OverflowError: value out of int64 range` 與 `DataError`。
+        設計目標：
+        - 與 `CouncilService.derive_council_account_id` 一樣使用 9e15 區段避免
+          與一般用戶碰撞。
+        - 在 63-bit 整數範圍內保證「不同伺服器 × 部門代碼」的唯一性，避免
+          2024 年修正 `base + guild_id + code` 後造成跨伺服器部門 ID 相撞的
+          生產事故。
+        - 對於尚未支援的極端 guild ID（理論值接近 int64 上限）則退回使用
+          具可重現性的雜湊編碼，確保仍落在 int64 範圍內。
 
-        修正：改為「不乘以 10」，使用 `base + guild_id + code` 保持單調且
-        跨伺服器唯一，同時避免超出 int64。並維持與理事會帳戶
-        `CouncilService.derive_council_account_id` 使用 9e15 區段的分區思路，
-        以 9.5e15 起始作為國務院部門帳戶區段，避免彼此碰撞。
-
-        部門代碼：使用部門註冊表取得，若未找到則回退為 0。
-        基底固定為 9_500_000_000_000_000。
-
-        相容性：若資料庫已存在部門帳戶，`set_config` 與
-        `ensure_government_accounts` 都會優先沿用既有 `account_id`，僅在缺失
-        時才使用此導出法，因此不會變更既有部署的鍵值。
+        實作重點：
+        1. 取得部門註冊表的代碼，若失敗則回退硬編碼映射，並確保 0 也被
+           納入計算（對未知部門保留獨立槽位）。
+        2. 根據部門代碼的最大值計算步進量 `step = max(max_code + 1, 5)`，讓
+           每個 guild 佔有至少 5 個連續槽位（預設四部門 + 未知）。
+        3. 在不溢位的前提下採用 `base + guild_id * step + code`；若乘積可能
+           超出 int64，則改以 Blake2b 雜湊產生穩定 offset（位於可用範圍頂端）。
         """
+
+        int64_max = (1 << 63) - 1
         base = 9_500_000_000_000_000
-        # Use department registry if available, fallback to hardcoded mapping
+
+        guild = abs(int(guild_id))
+
+        codes: list[int]
+        code = 0
         try:
             from src.bot.services.department_registry import get_registry
 
             registry = get_registry()
+            departments = list(registry.list_all())
+            codes = [dept.code for dept in departments if dept.code >= 0]
             dept = registry.get_by_name(department)
-            code = dept.code if dept else 0
+            if dept is not None:
+                code = dept.code
         except Exception:
             # Fallback to hardcoded mapping for backward compatibility
-            codes = {"內政部": 1, "財政部": 2, "國土安全部": 3, "中央銀行": 4}
-            code = codes.get(department, 0)
-        # 重要：避免乘以 10 造成 int64 溢位
-        return int(base + int(guild_id) + code)
+            fallback_codes = {"內政部": 1, "財政部": 2, "國土安全部": 3, "中央銀行": 4}
+            codes = list(fallback_codes.values())
+            code = fallback_codes.get(department, 0)
+
+        if code < 0:
+            code = 0
+        # 確保未知部門（code=0）也納入步長計算
+        if 0 not in codes:
+            codes.append(0)
+        if code not in codes:
+            codes.append(code)
+
+        max_code = max(codes) if codes else 0
+        step = max(max_code + 1, 5)
+
+        max_increment = int64_max - base
+        required = guild * step
+
+        if required <= max_increment and code <= max_increment - required:
+            offset = required + code
+        else:
+            # 極端情境下退回以 Blake2b 產生 deterministic offset，並放在可用範圍頂端
+            namespace = f"{guild}:{department}:{code}".encode("utf-8", "surrogatepass")
+            digest = hashlib.blake2b(namespace, digest_size=8).digest()
+            hashed = int.from_bytes(digest, "big") % (max_increment + 1)
+            offset = max_increment - hashed
+
+        return base + offset
 
     async def set_config(
         self,
