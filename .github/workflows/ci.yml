@@ -224,7 +224,7 @@ jobs:
     name: Economy Tests
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     services:
       postgres:
         image: postgres:16
@@ -280,7 +280,7 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     services:
       docker:
         image: docker:27-dind
@@ -340,7 +340,7 @@ jobs:
     name: Performance Tests
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     services:
       postgres:
         image: postgres:16
@@ -388,7 +388,7 @@ jobs:
     name: Database Function Tests
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     services:
       postgres:
         image: postgres:16
@@ -444,7 +444,7 @@ jobs:
     name: Council Tests
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     services:
       postgres:
         image: postgres:16
