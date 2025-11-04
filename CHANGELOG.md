@@ -77,7 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 新增完整測試覆蓋（單元、整合、契約測試）
 - **CI/CD 工作流程**：新增 GitHub Actions CI 配置
   - 自動執行測試、型別檢查、程式碼品質檢查
-  - 支援多 Python 版本測試（3.13）
+  - 支援多 Python 版本測試（3.12）
   - 支援 Docker Compose 整合測試
   - 自動測試轉帳事件池、國務院治理等新功能
 

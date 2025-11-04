@@ -35,7 +35,7 @@ DRoASMS 是以 Python 打造的 Discord 機器人原型，專注於社群的經�
 - **多伺服器支援**：每個 Discord 伺服器有獨立的經濟系統
 
 ## 系統需求
-- Python 3.13（專案使用 `uv python pin 3.13` 鎖定解譯器）
+- Python 3.12（專案使用 `uv python pin 3.12` 鎖定解譯器）
 - PostgreSQL 15 以上版本（儲存帳戶、交易與治理資料）
 - 必須啟用 PostgreSQL 擴充套件：`pgcrypto`（建議）與 `pg_cron`（僅供自動歸檔，無此擴充亦可先運行機器人）
 - 推薦使用 `uv` 作為套件管理工具

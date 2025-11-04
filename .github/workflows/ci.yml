@@ -7,7 +7,7 @@ on:
     branches: [main, develop]
 
 env:
-  PYTHON_VERSION: "3.13"
+  PYTHON_VERSION: "3.12"
   UV_VERSION: "0.5.0"
   # Default placeholder token - tests that require real Discord token will skip automatically
   # To run tests that need real token, set TEST_DISCORD_TOKEN or DISCORD_TOKEN in GitHub Secrets
@@ -19,7 +19,7 @@ jobs:
     name: Lint (ruff)
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -39,7 +39,7 @@ jobs:
     name: Type Check (mypy)
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -59,7 +59,7 @@ jobs:
     name: Format Check (black)
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -79,7 +79,7 @@ jobs:
     name: Pre-commit Check
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -99,7 +99,7 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     services:
       postgres:
         image: postgres:16
@@ -155,7 +155,7 @@ jobs:
     name: Contract Tests
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     services:
       postgres:
         image: postgres:16
@@ -224,7 +224,7 @@ jobs:
     name: Economy Tests
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     services:
       postgres:
         image: postgres:16
@@ -280,7 +280,7 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     services:
       docker:
         image: docker:27-dind
@@ -340,7 +340,7 @@ jobs:
     name: Performance Tests
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     services:
       postgres:
         image: postgres:16
@@ -388,7 +388,7 @@ jobs:
     name: Database Function Tests
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     services:
       postgres:
         image: postgres:16
@@ -444,7 +444,7 @@ jobs:
     name: Council Tests
     runs-on: ubuntu-latest
     container:
-      image: python:3.13-slim
+      image: python:3.12-slim
     services:
       postgres:
         image: postgres:16

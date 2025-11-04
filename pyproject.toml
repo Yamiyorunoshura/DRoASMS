@@ -7,7 +7,7 @@ name = "droasms-bot"
 version = "0.5.0"
 description = "Discord bot economy foundations."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 license = { file = "LICENSE" }
 authors = [
     { name = "DRoASMS Team" },
@@ -50,7 +50,7 @@ include = ["src", "tests", "README.md", "LICENSE"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py313"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [
@@ -71,7 +71,7 @@ select = [
 
 [tool.black]
 line-length = 100
-target-version = ["py313"]
+target-version = ["py312"]
 include = "\\.pyi?$"
 
 [tool.pytest.ini_options]
@@ -86,7 +86,7 @@ markers = [
 # pytest-xdist 不支援在配置檔案中設定 n_workers，需在命令列指定
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.12"
 namespace_packages = true
 files = ["src"]
 explicit_package_bases = true
