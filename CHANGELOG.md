@@ -31,6 +31,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 開發時即時更新：測試目錄掛載為唯讀，開發時可即時更新測試檔案
   - 更新 `README.md`：添加測試容器使用說明與各種執行模式說明
 
+## [0.5.1] - 2025-11-04
+
+### Fixed
+- **資料庫連線重試邏輯**：修復 `entrypoint.sh` 中的重試機制，確保至少嘗試 `RETRY_MAX_ATTEMPTS` 次
+  - 調整檢查順序，避免單次連線耗時過長導致過早終止
+  - 新增負數保護，避免計算錯誤導致 sleep 時間為負
+  - 改善可觀測性，確保完整的重試次數與退避行為可見
+
+### Changed
+- **轉帳事件池測試改進**：允許測試時傳入資料庫連線參數
+  - `TransferEventPoolCoordinator._retry_checks()` 與 `_cleanup_expired()` 現在支援可選的 `connection` 參數
+  - 允許測試在同一交易連線中執行，避免跨連線看不到未提交的變更
+  - 更新整合測試以使用新的連線注入功能
+- **測試容器配置**：在 `compose.yaml` 中新增 `docker/bin` 掛載點
+  - 供整合測試呼叫入口腳本（`/app/docker/bin/entrypoint.sh`）
+  - 改善測試環境的完整性與一致性
+
 ## [0.5.0] - 2025-11-04
 
 ### Added
