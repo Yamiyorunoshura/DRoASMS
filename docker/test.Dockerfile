@@ -24,7 +24,7 @@ RUN uv --version && uvx --version
 # 複製專案定義與鎖檔以便快取依賴層
 COPY pyproject.toml uv.lock alembic.ini ./
 # hatchling 需要 readme/license 檔案存在於專案根目錄
-COPY README.md LICENSE ./.env.example ./
+COPY README.md LICENSE .env.example ./
 COPY src ./src
 # 注意：tests/ 目錄在運行時透過 volume 掛載，不在建置時複製
 
