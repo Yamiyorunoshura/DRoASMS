@@ -66,6 +66,7 @@ services:
       - ./tests:/app/tests:ro
       - ./src:/app/src:ro
       - ./specs:/app/specs:ro
+      - ./.env.example:/app/.env.example:ro
       # 掛載覆蓋率報告目錄
       - ./htmlcov:/app/htmlcov
     working_dir: /app
