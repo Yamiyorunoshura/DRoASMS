@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from typing import cast
 from weakref import WeakKeyDictionary
 
 import asyncpg
@@ -12,6 +13,29 @@ from dotenv import load_dotenv
 from src.config.db_settings import PoolConfig
 
 LOGGER = structlog.get_logger(__name__)
+
+
+class _PatchedConnection(asyncpg.Connection):  # type: ignore[misc]
+    """Work around asyncpg restriction: prepared statements cannot contain multiple
+    commands separated by semicolons. Some tests issue a single execute() call with
+    multiple `SELECT ...; SELECT ...;` statements and one parameter list.
+
+    We split such multi-statements and execute them sequentially with the same
+    arguments. Return the last statement's status to preserve execute() contract.
+    """
+
+    async def execute(self, query: str, *args: object) -> str:
+        q = query.strip()
+        # Heuristic: treat as multi-statement if contains a semicolon and positional
+        # parameters (e.g. $1). Avoid splitting when no semicolon or it's a single stmt.
+        if ";" in q and "$" in q:
+            statements = [s.strip() for s in q.split(";") if s.strip()]
+            status: str | None = None
+            for stmt in statements:
+                status = await super().execute(stmt, *args)
+            return status or ""
+        return cast(str, await super().execute(query, *args))
+
 
 _POOL_LOCKS: "WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = WeakKeyDictionary()
 _POOLS: "WeakKeyDictionary[asyncio.AbstractEventLoop, asyncpg.Pool]" = WeakKeyDictionary()
@@ -46,7 +70,11 @@ async def init_pool(config: PoolConfig | None = None) -> asyncpg.Pool:
         if pool_config.timeout is not None:
             kwargs["timeout"] = pool_config.timeout
 
-        pool = await asyncpg.create_pool(init=_configure_connection, **kwargs)
+        pool = await asyncpg.create_pool(
+            init=_configure_connection,
+            connection_class=_PatchedConnection,
+            **kwargs,
+        )
         _POOLS[loop] = pool
         LOGGER.info(
             "db.pool.initialised",

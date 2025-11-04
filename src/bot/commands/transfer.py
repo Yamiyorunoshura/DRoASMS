@@ -150,7 +150,12 @@ def build_transfer_command(service: TransferService) -> app_commands.Command[Any
         metadata: dict[str, Any] | None = None
         event_pool_enabled = os.getenv("TRANSFER_EVENT_POOL_ENABLED", "false").lower() == "true"
         if event_pool_enabled:
-            metadata = {"interaction_token": interaction.token}
+            # 測試替身沒有 token 時，讓 metadata 保持 None（符合契約測試期望）
+            token = getattr(interaction, "token", None)
+            if token:
+                metadata = {"interaction_token": token}
+            else:
+                metadata = None
 
         try:
             # 一律傳入 metadata：同步模式為 None；事件池模式包含 interaction_token

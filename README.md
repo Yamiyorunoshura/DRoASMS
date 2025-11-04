@@ -462,6 +462,9 @@ A: 請確認：
 ## 測試與品質維護
 
 ### 執行測試
+
+#### 方法 1：本機執行（需要本地環境）
+
 ```bash
 # 執行所有測試（並行執行，自動偵測 CPU 核心數）
 uv run pytest -n auto
@@ -474,6 +477,47 @@ uv run pytest tests/integration/ -v
 uv run pytest --cov=src --cov-report=html --cov-report=term
 # HTML 報告會產生在 htmlcov/ 目錄
 ```
+
+#### 方法 2：使用測試容器（推薦，環境一致）
+
+測試容器提供一致的測試環境，無需手動配置本地環境，可在本地運行完整的 CI 測試流程。
+
+**建置測試容器**
+```bash
+# 建置測試容器映像檔
+make test-container-build
+```
+
+**執行測試**
+```bash
+# 執行所有測試（不含整合測試）
+make test-container
+# 或指定測試類型
+make test-container-unit       # 單元測試
+make test-container-contract   # 合約測試
+make test-container-integration # 整合測試（需要 Discord Token）
+make test-container-performance # 效能測試
+make test-container-db         # 資料庫測試
+make test-container-economy    # 經濟相關測試
+make test-container-council    # 議會相關測試
+make test-container-all        # 所有測試（不含整合測試）
+make test-container-ci         # 完整 CI 流程（格式化、lint、型別檢查、所有測試）
+```
+
+**查看覆蓋率報告**
+測試容器會將覆蓋率報告輸出到 `htmlcov/` 目錄，可在本地查看：
+```bash
+# 執行測試後，查看 HTML 報告
+open htmlcov/index.html  # macOS
+xdg-open htmlcov/index.html  # Linux
+```
+
+**測試容器特性**
+- 基於 Python 3.13，包含所有測試依賴（dev dependencies）
+- 自動連接到 Compose 中的 PostgreSQL 服務進行資料庫測試
+- 支援環境變數傳遞（透過 `.env` 檔案）
+- 測試目錄掛載為唯讀，開發時可即時更新測試檔案
+- 覆蓋率報告自動掛載到本地 `htmlcov/` 目錄
 
 ### 程式碼品質工具
 ```bash
@@ -546,6 +590,13 @@ make test-contract
 make test-economy
 make test-db
 make test-council
+
+# 或使用測試容器執行（環境一致，推薦）
+make test-container-unit
+make test-container-contract
+make test-container-economy
+make test-container-db
+make test-container-council
 ```
 
 #### 方法 2：使用 Pre-commit（最簡單）

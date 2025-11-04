@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **測試容器基礎設施**：新增獨立的測試容器，提供一致的測試執行環境
+  - 建立 `docker/test.Dockerfile`：基於 Python 3.13，包含所有測試依賴（dev dependencies）
+  - 建立 `docker/bin/test.sh`：統一的測試執行腳本，支援不同測試類型（unit, contract, integration, performance, db, economy, council, ci）
+  - 在 `compose.yaml` 中新增 `test` 服務：自動連接到 PostgreSQL，支援環境變數傳遞
+  - 在 `Makefile` 中新增測試容器相關命令：
+    - `test-container-build`：建置測試容器映像檔
+    - `test-container`：執行所有測試（不含整合測試）
+    - `test-container-unit`：執行單元測試
+    - `test-container-contract`：執行合約測試
+    - `test-container-integration`：執行整合測試
+    - `test-container-performance`：執行效能測試
+    - `test-container-db`：執行資料庫測試
+    - `test-container-economy`：執行經濟相關測試
+    - `test-container-council`：執行議會相關測試
+    - `test-container-all`：執行所有測試（不含整合測試）
+    - `test-container-ci`：執行完整 CI 流程（格式化、lint、型別檢查、所有測試）
+  - 測試容器特性：
+    - 環境隔離：測試容器與應用容器分離，確保測試環境不影響應用運行
+    - 資料庫測試支援：測試容器能夠連接到 Compose 中的 PostgreSQL 服務
+    - 覆蓋率報告：自動掛載到本地 `htmlcov/` 目錄
+    - 開發時即時更新：測試目錄掛載為唯讀，開發時可即時更新測試檔案
+  - 更新 `README.md`：添加測試容器使用說明與各種執行模式說明
+
 ## [0.5.0] - 2025-11-04
 
 ### Added

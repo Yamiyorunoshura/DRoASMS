@@ -50,6 +50,26 @@ services:
     volumes:
       - pgadmin:/var/lib/pgadmin
 
+  test:
+    build:
+      context: .
+      dockerfile: docker/test.Dockerfile
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://bot:bot@postgres:5432/economy}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # 掛載測試目錄以便開發時即時更新
+      - ./tests:/app/tests:ro
+      - ./src:/app/src:ro
+      - ./specs:/app/specs:ro
+      # 掛載覆蓋率報告目錄
+      - ./htmlcov:/app/htmlcov
+    working_dir: /app
+
 volumes:
   pgdata: {}
   pgadmin: {}
