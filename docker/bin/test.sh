@@ -52,24 +52,35 @@ run_integration() {
     pytest tests/integration/ -v -n auto -o cache_dir="$PYTEST_CACHE_DIR"
 }
 
+_run_optional_pytest() {
+    # 對於空目錄（無測試）時，pytest 會以退出碼 5 結束；此處將其視為成功略過
+    local rc=0
+    pytest "$@" || rc=$?
+    if [ $rc -eq 5 ]; then
+        echo "（略過）此類別沒有測試"
+        return 0
+    fi
+    return $rc
+}
+
 run_performance() {
     echo "執行效能測試..."
-    pytest tests/performance/ -v -m performance -n auto -o cache_dir="$PYTEST_CACHE_DIR"
+    _run_optional_pytest tests/performance/ -v -m performance -n auto -o cache_dir="$PYTEST_CACHE_DIR"
 }
 
 run_db() {
     echo "執行資料庫函數測試..."
-    pytest tests/db/ -v -n auto -o cache_dir="$PYTEST_CACHE_DIR"
+    _run_optional_pytest tests/db/ -v -n auto -o cache_dir="$PYTEST_CACHE_DIR"
 }
 
 run_economy() {
     echo "執行經濟相關測試..."
-    pytest tests/economy/ -v -n auto -o cache_dir="$PYTEST_CACHE_DIR"
+    _run_optional_pytest tests/economy/ -v -n auto -o cache_dir="$PYTEST_CACHE_DIR"
 }
 
 run_council() {
     echo "執行議會相關測試..."
-    pytest tests/council/ -v -n auto -o cache_dir="$PYTEST_CACHE_DIR"
+    _run_optional_pytest tests/council/ -v -n auto -o cache_dir="$PYTEST_CACHE_DIR"
 }
 
 run_all() {
