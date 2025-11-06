@@ -43,6 +43,7 @@ pytestmark = [
 ]
 
 
+@pytest.mark.integration
 def test_compose_restart_update_cycle(tmp_path: Path) -> None:
     """Down → Up → observe a second bot.ready event.
 

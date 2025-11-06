@@ -43,6 +43,7 @@ pytestmark = [
 
 
 @pytest.mark.timeout(300)
+@pytest.mark.integration
 def test_db_not_ready_retry_eventually_succeeds(tmp_path: Path) -> None:
     """模擬 Postgres 延遲啟動，最終仍應成功並輸出 bot.ready。"""
 

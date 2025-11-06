@@ -35,6 +35,7 @@ def _snowflake() -> int:
     return secrets.randbits(63)
 
 
+@pytest.mark.integration
 class TestStateCouncilFlow:
     """Integration tests for State Council complete workflows."""
 

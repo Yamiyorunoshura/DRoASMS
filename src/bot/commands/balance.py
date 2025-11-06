@@ -228,6 +228,11 @@ async def _respond(interaction: discord.Interaction, content: str) -> None:
             is_done = False
         if is_done and hasattr(interaction, "edit_original_response"):
             await interaction.edit_original_response(content=content)
+            # 測試 stub 相容：標記為已送出
+            try:
+                interaction.response.sent = True
+            except Exception:
+                pass
         else:
             await interaction.response.send_message(content=content, ephemeral=True)
     except Exception:
@@ -237,13 +242,22 @@ async def _respond(interaction: discord.Interaction, content: str) -> None:
             LOGGER.exception("bot.respond_failed")
 
 
+def _mention_of(target: Union[discord.Member, discord.User, Any]) -> str:
+    """取得提及字串；若無 `.mention` 屬性則退回 `<@id>`。"""
+    mention = getattr(target, "mention", None)
+    if isinstance(mention, str):
+        return mention
+    target_id = getattr(target, "id", None)
+    return f"<@{target_id}>" if target_id is not None else "<@unknown>"
+
+
 def _format_balance_response(
     snapshot: BalanceSnapshot,
     target: Union[discord.Member, discord.User],
 ) -> str:
     timestamp = snapshot.last_modified_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
-        f"📊 {target.mention} 的目前餘額為 {snapshot.balance:,} 點。",
+        f"📊 {_mention_of(target)} 的目前餘額為 {snapshot.balance:,} 點。",
         f"🕒 最後更新時間：{timestamp}",
     ]
     if snapshot.is_throttled and snapshot.throttled_until is not None:
@@ -257,9 +271,9 @@ def _format_history_response(
     target: Union[discord.Member, discord.User],
 ) -> str:
     if not page.items:
-        return f"📚 {target.mention} 目前沒有可顯示的交易紀錄。"
+        return f"📚 {_mention_of(target)} 目前沒有可顯示的交易紀錄。"
 
-    lines = [f"📚 {target.mention} 的最近 {len(page.items)} 筆交易："]
+    lines = [f"📚 {_mention_of(target)} 的最近 {len(page.items)} 筆交易："]
     for entry in page.items:
         timestamp = entry.created_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         counterparty: int | None

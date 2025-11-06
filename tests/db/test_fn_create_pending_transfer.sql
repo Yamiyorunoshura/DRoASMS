@@ -1,97 +1,90 @@
--- Test fn_create_pending_transfer
+\set ON_ERROR_STOP 1
+
 BEGIN;
 
--- Test 1: Create a valid pending transfer
-SELECT economy.fn_create_pending_transfer(
-    123456789::bigint,  -- guild_id
-    111111111::bigint,  -- initiator_id
-    222222222::bigint,  -- target_id
-    100::bigint,        -- amount
-    '{"reason": "test"}'::jsonb,  -- metadata
-    NULL::timestamptz   -- expires_at
-) AS transfer_id_1;
+-- 使用 pgTAP 規劃並設定 search_path
+SELECT plan(6);
+SELECT set_config('search_path', 'pgtap, economy, public', false);
 
--- Verify the record was created
-SELECT
-    transfer_id,
-    guild_id,
-    initiator_id,
-    target_id,
-    amount,
-    status,
-    checks,
-    retry_count,
-    expires_at,
-    metadata->>'reason' AS reason
-FROM economy.pending_transfers
-WHERE initiator_id = 111111111;
+-- 基本存在性檢查
+SELECT has_schema('economy', 'economy schema exists');
+SELECT has_function(
+    'economy',
+    'fn_create_pending_transfer',
+    ARRAY['bigint','bigint','bigint','bigint','jsonb','timestamptz'],
+    'fn_create_pending_transfer exists with expected signature'
+);
 
--- Test 2: Create with expires_at
+-- Test 1: 建立有效的 pending transfer 並驗證欄位
 SELECT economy.fn_create_pending_transfer(
-    123456789::bigint,
-    333333333::bigint,
-    444444444::bigint,
+    7000000000000000000::bigint,  -- guild_id
+    7000000000000000001::bigint,  -- initiator_id
+    7000000000000000002::bigint,  -- target_id
+    100::bigint,                  -- amount
+    '{"reason": "test"}'::jsonb, -- metadata
+    NULL::timestamptz             -- expires_at
+);
+
+SELECT ok(
+    EXISTS (
+        SELECT 1
+        FROM economy.pending_transfers
+        WHERE guild_id = 7000000000000000000
+          AND initiator_id = 7000000000000000001
+          AND target_id = 7000000000000000002
+          AND amount = 100
+          AND retry_count = 0
+          AND (metadata->>'reason') = 'test'
+    ),
+    'valid pending transfer is inserted with expected fields'
+);
+
+-- Test 2: 指定 expires_at 會被寫入
+SELECT economy.fn_create_pending_transfer(
+    7000000000000000000::bigint,
+    7000000000000000010::bigint,
+    7000000000000000011::bigint,
     50::bigint,
     '{}'::jsonb,
     (timezone('utc', now()) + interval '1 hour')::timestamptz
-) AS transfer_id_2;
+);
 
--- Test 3: Invalid - same initiator and target (should raise error)
-DO $$
-DECLARE
-    v_error_occurred boolean := false;
-BEGIN
-    BEGIN
-        PERFORM economy.fn_create_pending_transfer(
-            123456789::bigint,
-            555555555::bigint,
-            555555555::bigint,  -- Same as initiator
-            100::bigint,
-            '{}'::jsonb,
-            NULL::timestamptz
-        );
-        RAISE EXCEPTION 'Expected error for same initiator and target, but function succeeded';
-    EXCEPTION
-        WHEN OTHERS THEN
-            IF SQLERRM LIKE '%Initiator and target must be distinct%' THEN
-                v_error_occurred := true;
-            ELSE
-                RAISE;
-            END IF;
-    END;
+SELECT ok(
+    EXISTS (
+        SELECT 1 FROM economy.pending_transfers
+        WHERE initiator_id = 7000000000000000010
+          AND expires_at IS NOT NULL
+    ),
+    'expires_at is stored when provided'
+);
 
-    IF NOT v_error_occurred THEN
-        RAISE EXCEPTION 'Expected error was not raised';
-    END IF;
-END $$;
+-- Test 3: 無效案例 - initiator 與 target 相同
+SELECT throws_like(
+    $$ SELECT economy.fn_create_pending_transfer(
+        7000000000000000000,
+        7000000000000000020,
+        7000000000000000020,  -- same as initiator
+        100,
+        '{}'::jsonb,
+        NULL::timestamptz
+    ) $$,
+    '%distinct%',
+    'reject same initiator and target'
+);
 
--- Test 4: Invalid - zero amount (should raise error)
-DO $$
-DECLARE
-    v_error_occurred boolean := false;
-BEGIN
-    BEGIN
-        PERFORM economy.fn_create_pending_transfer(
-            123456789::bigint,
-            666666666::bigint,
-            777777777::bigint,
-            0::bigint,  -- Invalid amount
-            '{}'::jsonb,
-            NULL::timestamptz
-        );
-        RAISE EXCEPTION 'Expected error for zero amount, but function succeeded';
-    EXCEPTION
-        WHEN OTHERS THEN
-            IF SQLERRM LIKE '%Transfer amount must be a positive whole number%' THEN
-                v_error_occurred := true;
-            ELSE
-                RAISE;
-            END IF;
-    END;
+-- Test 4: 無效案例 - 金額為 0
+SELECT throws_like(
+    $$ SELECT economy.fn_create_pending_transfer(
+        7000000000000000000,
+        7000000000000000030,
+        7000000000000000031,
+        0,
+        '{}'::jsonb,
+        NULL::timestamptz
+    ) $$,
+    '%positive whole number%',
+    'reject zero amount'
+);
 
-    IF NOT v_error_occurred THEN
-        RAISE EXCEPTION 'Expected error was not raised';
-    END IF;
-END $$;
-
+SELECT finish();
 ROLLBACK;

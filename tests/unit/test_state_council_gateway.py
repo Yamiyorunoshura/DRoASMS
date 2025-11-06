@@ -29,6 +29,7 @@ def _snowflake() -> int:
     return secrets.randbits(63)
 
 
+@pytest.mark.unit
 class TestStateCouncilGovernanceGateway:
     """Test cases for StateCouncilGovernanceGateway."""
 

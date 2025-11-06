@@ -22,6 +22,7 @@ def _snowflake() -> int:
     return secrets.randbits(63)
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_transfer_with_interaction_token_in_metadata(
     db_pool: Any,

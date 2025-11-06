@@ -15,6 +15,7 @@ def _snowflake() -> int:
     return secrets.randbits(63)
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_transfer_history_adjust_flow(
     db_pool: Any,

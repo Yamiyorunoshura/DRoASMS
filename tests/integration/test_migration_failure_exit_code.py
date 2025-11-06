@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
     not os.getenv("TEST_MIGRATION_DB_URL"),
     reason="需提供 TEST_MIGRATION_DB_URL（可用資料庫）以模擬遷移失敗",
 )
+@pytest.mark.integration
 def test_migration_failure_exit_code_70() -> None:
     """使用存在的資料庫，但指定不存在的 Alembic 版本，應以 70 結束。"""
 

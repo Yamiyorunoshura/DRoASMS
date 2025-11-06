@@ -17,6 +17,7 @@ class _FakeGatewayWithList(_FakeGateway):
         return [p for p in self._proposals.values() if p.status == "進行中"]
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_panel_contract_flow(monkeypatch: pytest.MonkeyPatch) -> None:
     """合約測試（服務層）：建案→面板列出→投票→撤案（條件）。"""

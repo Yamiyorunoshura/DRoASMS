@@ -56,6 +56,7 @@ class _StubInteraction:
         return None
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_target_options_exclude_source() -> None:
     service = _StubService()
@@ -76,6 +77,7 @@ async def test_target_options_exclude_source() -> None:
     assert "內政部" not in labels, "目標部門選項不應包含來源部門"
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_can_submit_validation(faker: Faker) -> None:
     service = _StubService()
@@ -97,6 +99,7 @@ async def test_can_submit_validation(faker: Faker) -> None:
     assert view._can_submit() is True
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_submit_triggers_service_call(faker: Faker) -> None:
     service = _StubService()

@@ -82,21 +82,33 @@ class StateCouncilReportGenerator:
         welfare_records = await self._gateway.fetch_welfare_disbursements(
             connection, guild_id=guild_id, limit=10000
         )
-        filtered_welfare = [r for r in welfare_records if start_date <= r.disbursed_at <= end_date]
+        filtered_welfare = [
+            r
+            for r in welfare_records
+            if isinstance(r.disbursed_at, datetime) and start_date <= r.disbursed_at <= end_date
+        ]
         total_welfare = sum(r.amount for r in filtered_welfare)
 
         # Get tax records
         tax_records = await self._gateway.fetch_tax_records(
             connection, guild_id=guild_id, limit=10000
         )
-        filtered_tax = [r for r in tax_records if start_date <= r.collected_at <= end_date]
+        filtered_tax = [
+            r
+            for r in tax_records
+            if isinstance(r.collected_at, datetime) and start_date <= r.collected_at <= end_date
+        ]
         total_tax = sum(r.tax_amount for r in filtered_tax)
 
         # Get currency issuances
         currency_records = await self._gateway.fetch_currency_issuances(
             connection, guild_id=guild_id, limit=10000
         )
-        filtered_currency = [r for r in currency_records if start_date <= r.issued_at <= end_date]
+        filtered_currency = [
+            r
+            for r in currency_records
+            if isinstance(r.issued_at, datetime) and start_date <= r.issued_at <= end_date
+        ]
         total_issuance = sum(r.amount for r in filtered_currency)
 
         # Calculate net flow (taxes + issuances - welfare)
@@ -160,7 +172,11 @@ class StateCouncilReportGenerator:
         records = await self._gateway.fetch_welfare_disbursements(
             connection, guild_id=guild_id, limit=10000
         )
-        filtered_records = [r for r in records if start_date <= r.disbursed_at <= end_date]
+        filtered_records = [
+            r
+            for r in records
+            if isinstance(r.disbursed_at, datetime) and start_date <= r.disbursed_at <= end_date
+        ]
 
         operations: list[tuple[str, int, datetime, int | None]] = [
             (
@@ -189,7 +205,11 @@ class StateCouncilReportGenerator:
     ) -> DepartmentMetrics:
         """Generate metrics for Finance department."""
         records = await self._gateway.fetch_tax_records(connection, guild_id=guild_id, limit=10000)
-        filtered_records = [r for r in records if start_date <= r.collected_at <= end_date]
+        filtered_records = [
+            r
+            for r in records
+            if isinstance(r.collected_at, datetime) and start_date <= r.collected_at <= end_date
+        ]
 
         operations: list[tuple[str, int, datetime, int | None]] = [
             (
@@ -220,7 +240,11 @@ class StateCouncilReportGenerator:
         records = await self._gateway.fetch_identity_records(
             connection, guild_id=guild_id, limit=10000
         )
-        filtered_records = [r for r in records if start_date <= r.performed_at <= end_date]
+        filtered_records = [
+            r
+            for r in records
+            if isinstance(r.performed_at, datetime) and start_date <= r.performed_at <= end_date
+        ]
 
         operations: list[tuple[str, int, datetime, int | None]] = [
             (r.action, 1, r.performed_at, r.performed_by) for r in filtered_records
@@ -245,7 +269,11 @@ class StateCouncilReportGenerator:
         records = await self._gateway.fetch_currency_issuances(
             connection, guild_id=guild_id, limit=10000
         )
-        filtered_records = [r for r in records if start_date <= r.issued_at <= end_date]
+        filtered_records = [
+            r
+            for r in records
+            if isinstance(r.issued_at, datetime) and start_date <= r.issued_at <= end_date
+        ]
 
         operations: list[tuple[str, int, datetime, int | None]] = [
             ("貨幣發行", r.amount, r.issued_at, r.performed_by) for r in filtered_records
@@ -316,7 +344,10 @@ class StateCouncilReportGenerator:
             connection, guild_id=guild_id, limit=10000
         )
         for welfare_record in welfare_records:
-            if start_date <= welfare_record.disbursed_at <= end_date:
+            if (
+                isinstance(welfare_record.disbursed_at, datetime)
+                and start_date <= welfare_record.disbursed_at <= end_date
+            ):
                 all_operations.append(
                     {
                         "type": "福利發放",
@@ -331,7 +362,10 @@ class StateCouncilReportGenerator:
             connection, guild_id=guild_id, limit=10000
         )
         for tax_record in tax_records:
-            if start_date <= tax_record.collected_at <= end_date:
+            if (
+                isinstance(tax_record.collected_at, datetime)
+                and start_date <= tax_record.collected_at <= end_date
+            ):
                 all_operations.append(
                     {
                         "type": "稅收徵收",
@@ -346,7 +380,10 @@ class StateCouncilReportGenerator:
             connection, guild_id=guild_id, limit=10000
         )
         for identity_record in identity_records:
-            if start_date <= identity_record.performed_at <= end_date:
+            if (
+                isinstance(identity_record.performed_at, datetime)
+                and start_date <= identity_record.performed_at <= end_date
+            ):
                 all_operations.append(
                     {
                         "type": "身分管理",
@@ -361,7 +398,10 @@ class StateCouncilReportGenerator:
             connection, guild_id=guild_id, limit=10000
         )
         for currency_record in currency_records:
-            if start_date <= currency_record.issued_at <= end_date:
+            if (
+                isinstance(currency_record.issued_at, datetime)
+                and start_date <= currency_record.issued_at <= end_date
+            ):
                 all_operations.append(
                     {
                         "type": "貨幣發行",

@@ -6,6 +6,7 @@ edge cases and boundary conditions that might be missed in manual tests.
 
 from __future__ import annotations
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -14,6 +15,7 @@ from hypothesis import strategies as st
     balance=st.integers(min_value=0, max_value=1_000_000_000),
     amount=st.integers(min_value=1, max_value=1_000_000_000),
 )
+@pytest.mark.unit
 def test_balance_sufficient_check_property(balance: int, amount: int) -> None:
     """Property: Balance check result should be consistent.
 
@@ -45,6 +47,7 @@ def test_balance_sufficient_check_property(balance: int, amount: int) -> None:
     balance=st.integers(min_value=0, max_value=1_000_000_000),
     amount=st.integers(min_value=0, max_value=1_000_000_000),
 )
+@pytest.mark.unit
 def test_balance_check_commutative_property(balance: int, amount: int) -> None:
     """Property: Balance check should be commutative for equal values.
 
@@ -61,6 +64,7 @@ def test_balance_check_commutative_property(balance: int, amount: int) -> None:
     amount1=st.integers(min_value=1, max_value=1_000_000_000),
     amount2=st.integers(min_value=1, max_value=1_000_000_000),
 )
+@pytest.mark.unit
 def test_balance_check_transitive_property(balance: int, amount1: int, amount2: int) -> None:
     """Property: Balance check should be transitive.
 
@@ -78,6 +82,7 @@ def test_balance_check_transitive_property(balance: int, amount1: int, amount2: 
     balance=st.integers(min_value=0, max_value=1_000_000_000),
     amount=st.integers(min_value=0, max_value=1_000_000_000),
 )
+@pytest.mark.unit
 def test_balance_check_boundary_conditions(balance: int, amount: int) -> None:
     """Property: Balance check handles boundary conditions correctly.
 
@@ -105,6 +110,7 @@ def test_balance_check_boundary_conditions(balance: int, amount: int) -> None:
     initial_balance=st.integers(min_value=0, max_value=1_000_000),
     transfer_amount=st.integers(min_value=1, max_value=1_000_000),
 )
+@pytest.mark.unit
 def test_balance_after_transfer_property(initial_balance: int, transfer_amount: int) -> None:
     """Property: Balance after transfer should be consistent.
 

@@ -45,6 +45,7 @@ class _StubMember(SimpleNamespace):
         return f"<@{self.id}>"
 
 
+@pytest.mark.contract
 @pytest.mark.asyncio
 async def test_adjust_command_contract() -> None:
     guild_id = _snowflake()

@@ -257,6 +257,7 @@ def dataclass_replace(obj: Any, **changes: Any) -> Any:
 # ---- Tests ----
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_vote_threshold_executes_success(monkeypatch: pytest.MonkeyPatch) -> None:
     gw = _FakeGateway()

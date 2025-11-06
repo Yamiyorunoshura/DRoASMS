@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import discord
+import pytest
 from discord import app_commands
 
 from src.bot.commands.help_collector import collect_help_data
@@ -20,6 +21,7 @@ def _create_mock_client() -> MagicMock:
     return client
 
 
+@pytest.mark.unit
 def test_collect_from_get_help_data_function() -> None:
     """Test that get_help_data() function takes priority over JSON files."""
     # This test verifies the structure works, but since we can't easily mock
@@ -38,6 +40,7 @@ def test_collect_from_get_help_data_function() -> None:
     assert result["test_cmd"].description == "Test command"
 
 
+@pytest.mark.unit
 def test_collect_from_command_metadata() -> None:
     """Test fallback to command metadata when no help data provided."""
     tree = app_commands.CommandTree(_create_mock_client())
@@ -54,6 +57,7 @@ def test_collect_from_command_metadata() -> None:
     assert result["simple_cmd"].category == "general"  # Default category
 
 
+@pytest.mark.unit
 def test_collect_group_hierarchy() -> None:
     """Test that group commands collect subcommands in hierarchy."""
     tree = app_commands.CommandTree(_create_mock_client())
@@ -82,6 +86,7 @@ def test_collect_group_hierarchy() -> None:
     assert group_data.subcommands[sub1_key].description == "Subcommand 1"
 
 
+@pytest.mark.unit
 def test_collect_parameters_from_command() -> None:
     """Test that command parameters are extracted and included."""
     tree = app_commands.CommandTree(_create_mock_client())
@@ -109,6 +114,7 @@ def test_collect_parameters_from_command() -> None:
     # Parameters list exists (may be empty if not extracted from metadata)
 
 
+@pytest.mark.unit
 def test_json_schema_validation() -> None:
     """Test that invalid help data raises appropriate errors."""
     # This will be implemented when we add JSON schema validation
@@ -116,6 +122,7 @@ def test_json_schema_validation() -> None:
     pass
 
 
+@pytest.mark.unit
 def test_empty_tree_returns_empty_dict() -> None:
     """Test that empty command tree returns empty collection."""
     tree = app_commands.CommandTree(_create_mock_client())
@@ -123,6 +130,7 @@ def test_empty_tree_returns_empty_dict() -> None:
     assert result == {}
 
 
+@pytest.mark.unit
 def test_multiple_commands_collected() -> None:
     """Test that multiple commands are all collected."""
     tree = app_commands.CommandTree(_create_mock_client())

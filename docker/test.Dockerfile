@@ -8,9 +8,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_NO_COLOR=1 \
     PIP_NO_CACHE_DIR=1
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates git \
-    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    export DEBIAN_FRONTEND=noninteractive; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates git curl gnupg; \
+    echo "deb http://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo $VERSION_CODENAME)-pgdg main" \
+      > /etc/apt/sources.list.d/pgdg.list; \
+    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+      | gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends pgtap; \
+    rm -rf /var/lib/apt/lists/*
 
 FROM base AS runtime
 

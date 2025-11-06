@@ -21,6 +21,7 @@ def _create_mock_client() -> MagicMock:
     return client
 
 
+@pytest.mark.contract
 @pytest.mark.asyncio
 async def test_help_no_args_returns_list() -> None:
     """Test that /help (no args) returns ephemeral message with grouped list."""

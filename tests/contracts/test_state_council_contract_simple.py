@@ -86,6 +86,7 @@ class _StubPermissions:
         self.manage_guild = manage_guild
 
 
+@pytest.mark.contract
 def test_state_council_command_group_structure() -> None:
     """Test State Council command group structure."""
     service = AsyncMock()

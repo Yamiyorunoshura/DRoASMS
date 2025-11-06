@@ -21,6 +21,7 @@ def _snowflake() -> int:
     return secrets.randbits(63)
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_event_pool_success_flow(
     db_pool: Any,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tests.contracts._utils import load_json_schema
 
 
@@ -18,6 +20,7 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     return data
 
 
+@pytest.mark.contract
 def test_env_example_contains_required_keys() -> None:
     schema = load_json_schema("compose.env.schema.json")
     required = set(schema.get("required", []))

@@ -20,6 +20,7 @@ class _FakeGatewayWithList(_FakeGateway):
         return [p for p in self._proposals.values() if p.status == "進行中"]
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_old_proposal_without_department_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """契約測試：舊提案（無 target_department_id）仍可正常顯示與操作"""

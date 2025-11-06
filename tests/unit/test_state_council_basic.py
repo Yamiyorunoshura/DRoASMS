@@ -15,6 +15,7 @@ def _snowflake() -> int:
     return secrets.randbits(63)
 
 
+@pytest.mark.unit
 class TestStateCouncilBasic:
     """Basic tests for State Council service."""
 

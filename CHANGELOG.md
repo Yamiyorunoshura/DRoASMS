@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2025-11-07
+
 ### Added
 - **測試容器基礎設施**：新增獨立的測試容器，提供一致的測試執行環境
   - 建立 `docker/test.Dockerfile`：基於 Python 3.13，包含所有測試依賴（dev dependencies）
@@ -30,6 +32,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 覆蓋率報告：自動掛載到本地 `htmlcov/` 目錄
     - 開發時即時更新：測試目錄掛載為唯讀，開發時可即時更新測試檔案
   - 更新 `README.md`：添加測試容器使用說明與各種執行模式說明
+- **測試覆蓋率大幅提升**：新增大量單元測試、整合測試與效能測試
+  - 新增單元測試：`test_adjust_command.py`、`test_balance_command.py`、`test_transfer_command.py`、`test_retry.py`、`test_logging_config.py`
+  - 新增整合測試：`test_multi_guild.py` 測試多伺服器支援
+  - 新增效能測試：`test_council_voting.py`、`test_state_council_operations.py`
+  - 新增合約測試：`test_council_panel_contract.py`、`test_state_council_panel_contract.py`
+  - 改進現有測試：更新多個測試檔案以提升覆蓋率與穩定性
+
+### Changed
+- **重試機制改進**：改進 `src/infra/retry.py` 的重試邏輯，提升錯誤處理與可觀測性
+- **國務院服務增強**：改進 `state_council_service.py` 與 `state_council_governance.py`，提升功能完整性
+- **命令改進**：改進 `balance.py`、`state_council.py`、`transfer.py` 等命令的實作
+- **服務層改進**：改進 `balance_service.py`、`transfer_service.py`、`state_council_reports.py` 等服務
+- **資料庫測試改進**：更新 `test_fn_check_transfer_balance.sql` 與 `test_fn_create_pending_transfer.sql`
 
 ## [0.5.1] - 2025-11-04
 

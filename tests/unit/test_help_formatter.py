@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.bot.commands.help_data import CollectedHelpData
 from src.bot.commands.help_formatter import (
     format_command_detail_embed,
@@ -9,6 +11,7 @@ from src.bot.commands.help_formatter import (
 )
 
 
+@pytest.mark.unit
 def test_format_grouped_list() -> None:
     """Test that commands are grouped by category."""
     commands = {
@@ -58,6 +61,7 @@ def test_format_grouped_list() -> None:
     )
 
 
+@pytest.mark.unit
 def test_format_command_detail() -> None:
     """Test detailed command information formatting."""
     command = CollectedHelpData(
@@ -86,6 +90,7 @@ def test_format_command_detail() -> None:
     )
 
 
+@pytest.mark.unit
 def test_format_with_permissions() -> None:
     """Test that permissions are displayed in detail view."""
     command = CollectedHelpData(
@@ -107,6 +112,7 @@ def test_format_with_permissions() -> None:
     )
 
 
+@pytest.mark.unit
 def test_format_group_with_subcommands() -> None:
     """Test formatting group commands with subcommands."""
     group = CollectedHelpData(
@@ -154,6 +160,7 @@ def test_format_group_with_subcommands() -> None:
     )
 
 
+@pytest.mark.unit
 def test_embed_field_length_limit() -> None:
     """Test that long descriptions are truncated to fit Discord limits."""
     # Discord embed field value limit is 1024 characters
@@ -181,6 +188,7 @@ def test_embed_field_length_limit() -> None:
         assert len(embed.description) <= 4096
 
 
+@pytest.mark.unit
 def test_empty_commands_list() -> None:
     """Test formatting empty command list."""
     embed = format_help_list_embed({})
@@ -191,6 +199,7 @@ def test_empty_commands_list() -> None:
     ) or len(embed.fields) == 0
 
 
+@pytest.mark.unit
 def test_command_not_found_message() -> None:
     """Test formatting for command not found case."""
     # This will be handled in the help command itself

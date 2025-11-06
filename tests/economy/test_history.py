@@ -13,6 +13,7 @@ def _snowflake() -> int:
     return secrets.randbits(63)
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_history_returns_paginated_entries(
     db_pool: Any,

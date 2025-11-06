@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
 import structlog
 
 from src.infra.logging.config import configure_logging
@@ -25,6 +26,7 @@ def _validate_against_schema(payload: dict[str, Any], schema: dict[str, Any]) ->
                 assert payload["event"] == props["const"]
 
 
+@pytest.mark.contract
 def test_log_ready_event_matches_schema(capsys: Any) -> None:
     schema = load_json_schema("log-events.schema.json")
     configure_logging()

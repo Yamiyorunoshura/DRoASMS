@@ -14,6 +14,7 @@ class _FakeGatewayWithList(_FakeGateway):
         return [p for p in self._proposals.values() if p.status == "進行中"]
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_list_active_proposals_returns_in_progress(
     monkeypatch: pytest.MonkeyPatch, faker: Faker

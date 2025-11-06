@@ -39,6 +39,7 @@ pytestmark = [
 
 
 @pytest.mark.timeout(180)
+@pytest.mark.integration
 def test_compose_ready_event_within_slo(tmp_path: Path) -> None:
     """以 docker compose 啟動並在 120s 內解析到 bot.ready。
 

@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
 import structlog
 
 from src.infra.logging.config import configure_logging
 
 
+@pytest.mark.contract
 def test_sensitive_values_are_masked_in_logs(capsys: Any) -> None:
     """Logger should not leak raw secrets for common sensitive keys.
 

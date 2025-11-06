@@ -2365,7 +2365,8 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
                     welfare_records = [
                         r
                         for r in welfare_records
-                        if (not start_dt or r.disbursed_at >= start_dt)
+                        if isinstance(r.disbursed_at, datetime)
+                        and (not start_dt or r.disbursed_at >= start_dt)
                         and (not end_dt or r.disbursed_at <= end_dt)
                     ]
                 data["records"].extend(
@@ -2377,7 +2378,11 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
                             "amount": r.amount,
                             "disbursement_type": r.disbursement_type,
                             "reference_id": r.reference_id,
-                            "disbursed_at": r.disbursed_at.isoformat(),
+                            "disbursed_at": (
+                                r.disbursed_at.isoformat()
+                                if isinstance(r.disbursed_at, datetime)
+                                else ""
+                            ),
                         }
                         for r in welfare_records
                     ]
@@ -2391,7 +2396,8 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
                     tax_records = [
                         r
                         for r in tax_records
-                        if (not start_dt or r.collected_at >= start_dt)
+                        if isinstance(r.collected_at, datetime)
+                        and (not start_dt or r.collected_at >= start_dt)
                         and (not end_dt or r.collected_at <= end_dt)
                     ]
                 data["records"].extend(
@@ -2405,7 +2411,11 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
                             "tax_amount": r.tax_amount,
                             "tax_type": r.tax_type,
                             "assessment_period": r.assessment_period,
-                            "collected_at": r.collected_at.isoformat(),
+                            "collected_at": (
+                                r.collected_at.isoformat()
+                                if isinstance(r.collected_at, datetime)
+                                else ""
+                            ),
                         }
                         for r in tax_records
                     ]
@@ -2419,7 +2429,8 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
                     identity_records = [
                         r
                         for r in identity_records
-                        if (not start_dt or r.performed_at >= start_dt)
+                        if isinstance(r.performed_at, datetime)
+                        and (not start_dt or r.performed_at >= start_dt)
                         and (not end_dt or r.performed_at <= end_dt)
                     ]
                 data["records"].extend(
@@ -2431,7 +2442,11 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
                             "action": r.action,
                             "reason": r.reason,
                             "performed_by": r.performed_by,
-                            "performed_at": r.performed_at.isoformat(),
+                            "performed_at": (
+                                r.performed_at.isoformat()
+                                if isinstance(r.performed_at, datetime)
+                                else ""
+                            ),
                         }
                         for r in identity_records
                     ]
@@ -2445,7 +2460,8 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
                     currency_records = [
                         r
                         for r in currency_records
-                        if (not start_dt or r.issued_at >= start_dt)
+                        if isinstance(r.issued_at, datetime)
+                        and (not start_dt or r.issued_at >= start_dt)
                         and (not end_dt or r.issued_at <= end_dt)
                     ]
                 data["records"].extend(
@@ -2457,7 +2473,9 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
                             "reason": r.reason,
                             "performed_by": r.performed_by,
                             "month_period": r.month_period,
-                            "issued_at": r.issued_at.isoformat(),
+                            "issued_at": (
+                                r.issued_at.isoformat() if isinstance(r.issued_at, datetime) else ""
+                            ),
                         }
                         for r in currency_records
                     ]
@@ -2471,7 +2489,8 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
                     transfer_records = [
                         r
                         for r in transfer_records
-                        if (not start_dt or r.transferred_at >= start_dt)
+                        if isinstance(r.transferred_at, datetime)
+                        and (not start_dt or r.transferred_at >= start_dt)
                         and (not end_dt or r.transferred_at <= end_dt)
                     ]
                 data["records"].extend(
@@ -2484,7 +2503,11 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
                             "amount": r.amount,
                             "reason": r.reason,
                             "performed_by": r.performed_by,
-                            "transferred_at": r.transferred_at.isoformat(),
+                            "transferred_at": (
+                                r.transferred_at.isoformat()
+                                if isinstance(r.transferred_at, datetime)
+                                else ""
+                            ),
                         }
                         for r in transfer_records
                     ]

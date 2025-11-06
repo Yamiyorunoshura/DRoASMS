@@ -76,6 +76,7 @@ pytestmark = [
 
 
 @pytest.mark.timeout(240)
+@pytest.mark.integration
 def test_compose_dependencies_postgres_healthy_before_bot_ready(tmp_path: Path) -> None:
     """驗證 postgres 先變為 healthy，之後才出現 bot.ready。"""
 

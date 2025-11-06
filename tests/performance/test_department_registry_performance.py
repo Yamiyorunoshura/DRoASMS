@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from src.bot.services.department_registry import get_registry
 
 
+@pytest.mark.performance
 def test_registry_load_performance() -> None:
     """性能測試：驗證部門載入速度（應在 100ms 內完成）"""
     start = time.perf_counter()
@@ -21,6 +24,7 @@ def test_registry_load_performance() -> None:
     assert dept is not None
 
 
+@pytest.mark.performance
 def test_registry_query_performance() -> None:
     """性能測試：驗證部門查詢速度（單次查詢應在 1ms 內完成）"""
     registry = get_registry()
@@ -44,6 +48,7 @@ def test_registry_query_performance() -> None:
     ), f"Average query time {avg_time_per_query:.4f}ms, expected < 0.1ms"
 
 
+@pytest.mark.performance
 def test_registry_list_all_performance() -> None:
     """性能測試：驗證列出所有部門的速度"""
     registry = get_registry()

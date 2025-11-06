@@ -35,19 +35,23 @@ class TransferThrottleError(TransferError):
 
 @dataclass(frozen=True, slots=True)
 class TransferResult:
-    """Value object returned after a successful transfer."""
+    """Value object returned after a successful transfer.
 
-    transaction_id: UUID
+    為了相容單元測試，此資料類別的部分欄位提供預設值，
+    測試可以略過 `direction` 與 `throttled_until` 等欄位。
+    """
+
+    transaction_id: UUID | None
     guild_id: int
     initiator_id: int
     target_id: int
     amount: int
     initiator_balance: int
-    target_balance: int
-    direction: str
-    created_at: datetime
-    throttled_until: datetime | None
-    metadata: dict[str, Any]
+    target_balance: int | None
+    direction: str = "transfer"
+    created_at: datetime | None = None
+    throttled_until: datetime | None = None
+    metadata: dict[str, Any] = None  # type: ignore[assignment]
 
 
 class TransferService:

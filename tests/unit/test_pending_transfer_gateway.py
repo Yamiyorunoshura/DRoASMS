@@ -61,6 +61,7 @@ def _create_mock_record(
     return mock_record
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_create_pending_transfer() -> None:
     """Test creating a pending transfer."""

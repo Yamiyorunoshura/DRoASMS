@@ -6,9 +6,12 @@ import json
 import pathlib
 import tempfile
 
+import pytest
+
 from src.bot.services.department_registry import Department, DepartmentRegistry, get_registry
 
 
+@pytest.mark.unit
 def test_registry_loads_default_departments() -> None:
     """Test that registry loads default departments when config file is missing."""
     registry = DepartmentRegistry(config_path="/nonexistent/path/departments.json")
@@ -19,6 +22,7 @@ def test_registry_loads_default_departments() -> None:
     assert dept.code == 1
 
 
+@pytest.mark.unit
 def test_registry_loads_from_json() -> None:
     """Test that registry loads departments from JSON file."""
     dept_data = [
@@ -40,6 +44,7 @@ def test_registry_loads_from_json() -> None:
         temp_path.unlink()
 
 
+@pytest.mark.unit
 def test_registry_query_methods() -> None:
     """Test all query methods of the registry."""
     registry = get_registry()
@@ -73,6 +78,7 @@ def test_registry_query_methods() -> None:
     assert dept_name == "國土安全部"
 
 
+@pytest.mark.unit
 def test_registry_handles_invalid_queries() -> None:
     """Test that registry handles invalid queries gracefully."""
     registry = get_registry()
@@ -93,6 +99,7 @@ def test_registry_handles_invalid_queries() -> None:
     assert registry.get_id_by_name("不存在的部門") is None
 
 
+@pytest.mark.unit
 def test_registry_singleton() -> None:
     """Test that get_registry returns singleton instance."""
     registry1 = get_registry()
@@ -100,6 +107,7 @@ def test_registry_singleton() -> None:
     assert registry1 is registry2
 
 
+@pytest.mark.unit
 def test_department_dataclass() -> None:
     """Test Department dataclass structure."""
     dept = Department(

@@ -48,6 +48,7 @@ def _create_mock_pending_transfer(
     )
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_handle_check_result_all_passed() -> None:
     """Test handling check results when all checks pass."""

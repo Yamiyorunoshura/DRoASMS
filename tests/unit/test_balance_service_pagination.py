@@ -76,6 +76,7 @@ def _mk_record(created_at: datetime) -> HistoryRecord:
     )
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_history_pagination_calls_db_has_more(monkeypatch: pytest.MonkeyPatch) -> None:
     # 準備剛好等於 limit 筆數 → 會觸發 has_more 查詢

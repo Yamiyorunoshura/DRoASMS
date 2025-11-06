@@ -20,6 +20,7 @@ class _CaptureConn:
         return []
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_export_interval_calls_db_function_only() -> None:
     """新版實作將匯出邏輯下放至資料庫函式。

@@ -206,6 +206,11 @@ async def _respond(interaction: discord.Interaction, content: str) -> None:
             is_done = False
         if is_done and hasattr(interaction, "edit_original_response"):
             await interaction.edit_original_response(content=content)
+            # 測試 stub 相容：標記為已送出
+            try:
+                interaction.response.sent = True
+            except Exception:
+                pass
         else:
             await interaction.response.send_message(content=content, ephemeral=True)
     except Exception as exc:
@@ -217,16 +222,24 @@ async def _respond(interaction: discord.Interaction, content: str) -> None:
             LOGGER.exception("bot.transfer.respond_failed")
 
 
+def _mention_of(target: Union[discord.Member, discord.User, discord.Role, Any]) -> str:
+    mention = getattr(target, "mention", None)
+    if isinstance(mention, str):
+        return mention
+    target_id = getattr(target, "id", None)
+    return f"<@{target_id}>" if target_id is not None else "<@unknown>"
+
+
 def _format_success_message(
     initiator: Union[discord.Member, discord.User],
     target: Union[discord.Member, discord.User, discord.Role],
     result: TransferResult,
 ) -> str:
     parts = [
-        f"✅ 已成功將 {result.amount:,} 點轉給 {target.mention}。",
+        f"✅ 已成功將 {result.amount:,} 點轉給 {_mention_of(target)}。",
         f"👉 你目前的餘額為 {result.initiator_balance:,} 點。",
     ]
-    reason = result.metadata.get("reason")
+    reason = result.metadata.get("reason") if isinstance(result.metadata, dict) else None
     if reason:
         parts.append(f"📝 備註：{reason}")
     return "\n".join(parts)

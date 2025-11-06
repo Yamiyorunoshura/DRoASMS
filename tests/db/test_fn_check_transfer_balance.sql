@@ -1,84 +1,81 @@
--- Test fn_check_transfer_balance
+\set ON_ERROR_STOP 1
+
 BEGIN;
 
--- Setup: Create a pending transfer and set up balances
+-- 使用 pgTAP 規劃並設定 search_path
+SELECT plan(4);
+SELECT set_config('search_path', 'pgtap, economy, public', false);
+
+-- 基本存在性檢查
+SELECT has_schema('economy', 'economy schema exists');
+SELECT has_function(
+    'economy',
+    'fn_check_transfer_balance',
+    ARRAY['uuid'],
+    'fn_check_transfer_balance exists with expected signature'
+);
+
+-- Test 1: 餘額足夠時寫入 checks.balance = 1
 INSERT INTO economy.guild_member_balances (guild_id, member_id, current_balance)
-VALUES
-    (123456789, 111111111, 500),  -- Sufficient balance
-    (123456789, 222222222, 0);
+VALUES (7100000000000000000, 7100000000000000001, 500)
+ON CONFLICT (guild_id, member_id) DO UPDATE SET current_balance = EXCLUDED.current_balance;
 
 SELECT economy.fn_create_pending_transfer(
-    123456789::bigint,
-    111111111::bigint,
-    222222222::bigint,
-    200::bigint,  -- Less than balance (500)
+    7100000000000000000::bigint,
+    7100000000000000001::bigint,
+    7100000000000000002::bigint,
+    200::bigint,
     '{}'::jsonb,
     NULL::timestamptz
-) AS transfer_id;
+);
 
--- Get the transfer_id (in real test, we'd capture this)
-DO $$
-DECLARE
-    v_transfer_id uuid;
-BEGIN
-    SELECT transfer_id INTO v_transfer_id
-    FROM economy.pending_transfers
-    WHERE initiator_id = 111111111
-    ORDER BY created_at DESC
-    LIMIT 1;
+SELECT economy.fn_check_transfer_balance(
+    (SELECT transfer_id FROM economy.pending_transfers
+     WHERE initiator_id = 7100000000000000001
+     ORDER BY created_at DESC LIMIT 1)
+);
 
-    -- Update status to checking manually (trigger would do this)
-    UPDATE economy.pending_transfers
-    SET status = 'checking'
-    WHERE transfer_id = v_transfer_id;
+SELECT is(
+    (
+        SELECT checks->>'balance'
+        FROM economy.pending_transfers
+        WHERE initiator_id = 7100000000000000001
+        ORDER BY created_at DESC LIMIT 1
+    ),
+    '1',
+    'balance check result is 1 when sufficient'
+);
 
-    -- Test balance check
-    PERFORM economy.fn_check_transfer_balance(v_transfer_id);
-END $$;
-
--- Verify check result
-SELECT
-    transfer_id,
-    status,
-    checks->>'balance' AS balance_check
-FROM economy.pending_transfers
-WHERE initiator_id = 111111111;
-
--- Test 2: Insufficient balance
+-- Test 2: 餘額不足時寫入 checks.balance = 0
 INSERT INTO economy.guild_member_balances (guild_id, member_id, current_balance)
-VALUES (123456789, 333333333, 50);
+VALUES (7100000000000000000, 7100000000000000010, 50)
+ON CONFLICT (guild_id, member_id) DO UPDATE SET current_balance = EXCLUDED.current_balance;
 
 SELECT economy.fn_create_pending_transfer(
-    123456789::bigint,
-    333333333::bigint,
-    444444444::bigint,
-    200::bigint,  -- More than balance (50)
+    7100000000000000000::bigint,
+    7100000000000000010::bigint,
+    7100000000000000011::bigint,
+    200::bigint,
     '{}'::jsonb,
     NULL::timestamptz
-) AS transfer_id_2;
+);
 
-DO $$
-DECLARE
-    v_transfer_id uuid;
-BEGIN
-    SELECT transfer_id INTO v_transfer_id
-    FROM economy.pending_transfers
-    WHERE initiator_id = 333333333
-    ORDER BY created_at DESC
-    LIMIT 1;
+SELECT economy.fn_check_transfer_balance(
+    (SELECT transfer_id FROM economy.pending_transfers
+     WHERE initiator_id = 7100000000000000010
+     ORDER BY created_at DESC LIMIT 1)
+);
 
-    UPDATE economy.pending_transfers
-    SET status = 'checking'
-    WHERE transfer_id = v_transfer_id;
+SELECT is(
+    (
+        SELECT checks->>'balance'
+        FROM economy.pending_transfers
+        WHERE initiator_id = 7100000000000000010
+        ORDER BY created_at DESC LIMIT 1
+    ),
+    '0',
+    'balance check result is 0 when insufficient'
+);
 
-    PERFORM economy.fn_check_transfer_balance(v_transfer_id);
-END $$;
-
--- Verify insufficient balance check
-SELECT
-    transfer_id,
-    checks->>'balance' AS balance_check
-FROM economy.pending_transfers
-WHERE initiator_id = 333333333;
-
+SELECT finish();
 ROLLBACK;

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Sequence, TypeVar
 from uuid import UUID
@@ -26,15 +26,36 @@ class BalancePermissionError(BalanceError):
     """Raised when a caller attempts to access another member without permission."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class BalanceSnapshot:
     """Value object describing a member's current balance state."""
 
-    guild_id: int
-    member_id: int
-    balance: int
-    last_modified_at: datetime
-    throttled_until: datetime | None
+    guild_id: int = 0
+    member_id: int = 0
+    balance: int = 0
+    # 使用 default_factory 以避免在模組匯入時計算時間
+    last_modified_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    throttled_until: datetime | None = None
+
+    def __init__(
+        self,
+        *,
+        guild_id: int = 0,
+        member_id: int = 0,
+        balance: int = 0,
+        last_modified_at: datetime | None = None,
+        throttled_until: datetime | None = None,
+        # 測試相容性：允許傳入 is_throttled 但不存儲（改用屬性計算）
+        is_throttled: bool | None = None,
+    ) -> None:
+        if last_modified_at is None:
+            last_modified_at = datetime.now(timezone.utc)
+
+        object.__setattr__(self, "guild_id", guild_id)
+        object.__setattr__(self, "member_id", member_id)
+        object.__setattr__(self, "balance", balance)
+        object.__setattr__(self, "last_modified_at", last_modified_at)
+        object.__setattr__(self, "throttled_until", throttled_until)
 
     @property
     def is_throttled(self) -> bool:

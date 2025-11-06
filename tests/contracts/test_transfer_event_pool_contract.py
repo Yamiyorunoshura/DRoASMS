@@ -18,6 +18,7 @@ def _snowflake() -> int:
     return secrets.randbits(63)
 
 
+@pytest.mark.contract
 @pytest.mark.asyncio
 async def test_transfer_check_result_event_format(
     db_pool: Any,

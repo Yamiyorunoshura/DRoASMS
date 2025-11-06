@@ -79,6 +79,7 @@ class _StubRole(SimpleNamespace):
         return f"<@&{self.id}>"
 
 
+@pytest.mark.contract
 @pytest.mark.asyncio
 async def test_state_council_config_leader_command_contract() -> None:
     """Test state council config leader command structure and behavior."""

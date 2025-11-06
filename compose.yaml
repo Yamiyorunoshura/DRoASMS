@@ -54,6 +54,9 @@ services:
     build:
       context: .
       dockerfile: docker/test.Dockerfile
+    # 以 root 身分執行測試容器，避免無法寫入掛載的 htmlcov 目錄導致 pytest-cov 在收斂覆蓋率時卡住
+    # 若需降低權限，可改為在本機將 htmlcov 設為可寫（例如 chmod 777 htmlcov），或在未掛載時改用 /tmp
+    user: "0:0"
     env_file:
       - .env
     environment:

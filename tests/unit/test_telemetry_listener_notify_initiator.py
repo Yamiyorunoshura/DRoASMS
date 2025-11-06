@@ -18,6 +18,7 @@ def _snowflake() -> int:
     return secrets.randbits(63)
 
 
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_notify_initiator_server_with_token(
     db_pool: Any,

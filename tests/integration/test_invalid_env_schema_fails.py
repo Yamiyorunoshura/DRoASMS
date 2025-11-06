@@ -4,9 +4,12 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+@pytest.mark.integration
 def test_invalid_database_url_schema_exit_78() -> None:
     """若 DATABASE_URL 非 postgresql:// 開頭，應以 78 結束並輸出 bot.config.invalid。"""
 
