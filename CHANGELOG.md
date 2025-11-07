@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2025-11-08
+
+### Added
+- **Transfer Command Enhancement**: Support mapping State Council leader role to main government account
+  - `/transfer` command now supports State Council leader role as target (automatically maps to main government account)
+  - Added `StateCouncilService.derive_main_account_id()` method for stable account ID derivation
+  - Comprehensive command-layer tests for council/leader/department role targets
+- **Development Tools**: Added Pyright configuration (`pyrightconfig.json`) for enhanced type checking
+  - Configured strict type checking mode aligned with mypy settings
+  - Pre-configured mypyc settings in `pyproject.toml` for future compilation optimization
+
+### Changed
+- **Documentation**: Updated README.md examples to reflect role targets (Council, State Council leader, Department leader)
+- **Code Quality**: Fixed type annotation in `retry.py` (`type: ignore[misc]` removed)
+
+### Fixed
+- Improved type safety in retry mechanism
+
 ## [0.9.0] - 2025-11-07
 
 ### Added
