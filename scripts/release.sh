@@ -288,11 +288,12 @@ fi
 # Generate changelog entry
 echo -e "${BLUE}Generating changelog entry...${NC}"
 TODAY=$(date +%Y-%m-%d)
-CHANGELOG_ENTRY="## [${NEW_VERSION}] - ${TODAY}
+CHANGELOG_ENTRY=$(cat <<CHANGELOG_EOF
+## [${NEW_VERSION}] - ${TODAY}
 
 ### Added
 - **Dependency Injection Infrastructure**: Introduced comprehensive DI container system
-  - New `DependencyContainer` with lifecycle management (singleton, transient, scoped)
+  - New DependencyContainer with lifecycle management (singleton, transient, scoped)
   - Automatic dependency resolution with type inference
   - Bootstrap utilities for container initialization
   - Thread-local scoped instances support
@@ -300,16 +301,17 @@ CHANGELOG_ENTRY="## [${NEW_VERSION}] - ${TODAY}
 
 ### Changed
 - **Command Registration**: Refactored command registration to support dependency injection
-  - Commands now accept optional `container` parameter for service resolution
+  - Commands now accept optional container parameter for service resolution
   - Backward compatible: falls back to direct instantiation if container not provided
-  - Updated all command modules: `adjust`, `balance`, `council`, `state_council`, `transfer`
+  - Updated all command modules: adjust, balance, council, state_council, transfer
 - **Bot Initialization**: Integrated DI container bootstrap in bot startup sequence
 - **Test Infrastructure**: Enhanced test fixtures with DI container support
 
 ### Fixed
 - Improved service lifecycle management and resource cleanup
 
-"
+CHANGELOG_EOF
+)
 
 # Prepend to CHANGELOG.md after [Unreleased] section
 if [[ -f "CHANGELOG.md" ]]; then
