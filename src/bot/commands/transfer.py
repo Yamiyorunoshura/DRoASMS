@@ -151,26 +151,34 @@ def build_transfer_command(
             if cfg and target.id == cfg.council_role_id:
                 target_id = CouncilService.derive_council_account_id(guild_id)
             else:
-                # 嘗試國務院部門身分組
+                # 嘗試國務院領袖身分組
                 sc_service = StateCouncilService()
                 try:
-                    department = await sc_service.find_department_by_role(
-                        guild_id=guild_id, role_id=target.id
-                    )
+                    sc_cfg = await sc_service.get_config(guild_id=guild_id)
                 except StateCouncilNotConfiguredError:
-                    department = None
-                if department is None:
-                    await interaction.response.send_message(
-                        content=(
-                            "僅支援提及常任理事會或已綁定之部門領導人身分組，"
-                            "或直接指定個別成員。"
-                        ),
-                        ephemeral=True,
+                    sc_cfg = None
+                if sc_cfg and sc_cfg.leader_role_id and target.id == sc_cfg.leader_role_id:
+                    target_id = StateCouncilService.derive_main_account_id(guild_id)
+                else:
+                    # 嘗試國務院部門身分組
+                    try:
+                        department = await sc_service.find_department_by_role(
+                            guild_id=guild_id, role_id=target.id
+                        )
+                    except StateCouncilNotConfiguredError:
+                        department = None
+                    if department is None:
+                        await interaction.response.send_message(
+                            content=(
+                                "僅支援提及常任理事會、國務院領袖，或已綁定之部門領導人身分組，"
+                                "或直接指定個別成員。"
+                            ),
+                            ephemeral=True,
+                        )
+                        return
+                    target_id = await sc_service.get_department_account_id(
+                        guild_id=guild_id, department=department
                     )
-                    return
-                target_id = await sc_service.get_department_account_id(
-                    guild_id=guild_id, department=department
-                )
         else:
             target_id = target.id
 

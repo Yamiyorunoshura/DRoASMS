@@ -450,6 +450,19 @@ class StateCouncilService:
         # 重要：避免乘以 10 造成 int64 溢位
         return int(base + int(guild_id) + code)
 
+    @staticmethod
+    def derive_main_account_id(guild_id: int) -> int:
+        """導出國務院主帳戶的穩定 account_id。
+
+        採用 9.1e15 區段作為國務院主帳戶基底，避免與理事會（9.0e15）
+        與各部門帳戶（9.5e15）發生碰撞；僅以 `guild_id` 做偏移，
+        保持跨伺服器唯一且不超出 int64 範圍。
+
+        公式：`9_100_000_000_000_000 + guild_id`
+        """
+        base = 9_100_000_000_000_000
+        return int(base + int(guild_id))
+
     async def set_config(
         self,
         *,

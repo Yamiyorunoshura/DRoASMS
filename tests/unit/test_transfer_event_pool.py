@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 from faker import Faker
 
+from src.bot.services.council_service import CouncilService
 from src.bot.services.transfer_event_pool import TransferEventPoolCoordinator
 from src.db.gateway.economy_pending_transfers import PendingTransfer
 
@@ -346,6 +348,127 @@ async def test_coordinator_start_stop() -> None:
 
     await coordinator.stop()
     assert not coordinator._running
+
+
+@pytest.mark.asyncio
+async def test_execute_transfer_with_role_target_id() -> None:
+    """核准事件執行時，能處理以身分組對應帳戶（如國務院主帳戶/理事會帳戶）為 target_id。"""
+    # 模擬資料庫連線與 pool
+    mock_pool = MagicMock()
+    mock_conn = AsyncMock()
+
+    # transaction() 需為 async context manager
+    mock_tx = MagicMock()
+    mock_tx.__aenter__ = AsyncMock(return_value=mock_tx)
+    mock_tx.__aexit__ = AsyncMock(return_value=None)
+    mock_conn.transaction = MagicMock(return_value=mock_tx)
+
+    # acquire() 需為 async context manager
+    mock_context = MagicMock()
+    mock_context.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_context.__aexit__ = AsyncMock(return_value=None)
+    mock_pool.acquire = MagicMock(return_value=mock_context)
+
+    # 建立一筆已核准的 pending transfer，target_id 使用理事會公共帳戶（9.0e15 + guild）
+    faker = Faker()
+    guild_id = _snowflake(faker)
+    council_target_id = CouncilService.derive_council_account_id(guild_id)
+    initiator_id = _snowflake(faker)
+    amount = faker.random_int(min=1, max=5000)
+    transfer_id = uuid4()
+
+    mock_row = {
+        "transfer_id": transfer_id,
+        "guild_id": guild_id,
+        "initiator_id": initiator_id,
+        "target_id": council_target_id,
+        "amount": amount,
+        "metadata": {},
+        "status": "approved",
+    }
+    mock_conn.fetchrow = AsyncMock(return_value=mock_row)
+
+    # Gateways
+    mock_pending_gateway = AsyncMock()
+    mock_pending_gateway.update_status = AsyncMock()
+    mock_transfer_gateway = AsyncMock()
+    mock_transfer_gateway.transfer_currency = AsyncMock(
+        return_value=SimpleNamespace(transaction_id=uuid4())
+    )
+
+    coordinator = TransferEventPoolCoordinator(
+        pool=mock_pool,
+        pending_gateway=mock_pending_gateway,
+        transfer_gateway=mock_transfer_gateway,
+    )
+
+    await coordinator.start()
+    try:
+        await coordinator.handle_check_approved(transfer_id=transfer_id)
+
+        # 驗證最終執行使用了我們的 target_id（身分組映射的帳戶 ID）
+        mock_transfer_gateway.transfer_currency.assert_awaited()
+        args, kwargs = mock_transfer_gateway.transfer_currency.await_args  # type: ignore[attr-defined]
+        assert kwargs.get("target_id") == council_target_id
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_execute_transfer_with_leader_main_account_target_id() -> None:
+    """核准事件執行時，能處理以國務院主帳戶（領袖身分組映射）為 target_id。"""
+    mock_pool = MagicMock()
+    mock_conn = AsyncMock()
+
+    mock_tx = MagicMock()
+    mock_tx.__aenter__ = AsyncMock(return_value=mock_tx)
+    mock_tx.__aexit__ = AsyncMock(return_value=None)
+    mock_conn.transaction = MagicMock(return_value=mock_tx)
+
+    mock_context = MagicMock()
+    mock_context.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_context.__aexit__ = AsyncMock(return_value=None)
+    mock_pool.acquire = MagicMock(return_value=mock_context)
+
+    faker = Faker()
+    guild_id = _snowflake(faker)
+    target_id = __import__("src.bot.services.state_council_service", fromlist=["StateCouncilService"]).StateCouncilService.derive_main_account_id(guild_id)  # type: ignore[attr-defined]
+    initiator_id = _snowflake(faker)
+    amount = faker.random_int(min=1, max=5000)
+    transfer_id = uuid4()
+
+    mock_row = {
+        "transfer_id": transfer_id,
+        "guild_id": guild_id,
+        "initiator_id": initiator_id,
+        "target_id": target_id,
+        "amount": amount,
+        "metadata": {},
+        "status": "approved",
+    }
+    mock_conn.fetchrow = AsyncMock(return_value=mock_row)
+
+    mock_pending_gateway = AsyncMock()
+    mock_pending_gateway.update_status = AsyncMock()
+    mock_transfer_gateway = AsyncMock()
+    mock_transfer_gateway.transfer_currency = AsyncMock(
+        return_value=SimpleNamespace(transaction_id=uuid4())
+    )
+
+    coordinator = TransferEventPoolCoordinator(
+        pool=mock_pool,
+        pending_gateway=mock_pending_gateway,
+        transfer_gateway=mock_transfer_gateway,
+    )
+
+    await coordinator.start()
+    try:
+        await coordinator.handle_check_approved(transfer_id=transfer_id)
+        mock_transfer_gateway.transfer_currency.assert_awaited()
+        args, kwargs = mock_transfer_gateway.transfer_currency.await_args  # type: ignore[attr-defined]
+        assert kwargs.get("target_id") == target_id
+    finally:
+        await coordinator.stop()
 
 
 @pytest.mark.asyncio

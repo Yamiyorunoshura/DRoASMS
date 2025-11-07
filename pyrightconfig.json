@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/pyright/main/packages/pyright/schema/pyrightconfig.schema.json",
+  "include": ["src"],
+  "exclude": [
+    "**/__pycache__/**",
+    "alembic/**",
+    "src/db/migrations/**",
+    "src/db/seeds/**",
+    "tests/**",
+    "htmlcov/**"
+  ],
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "strict",
+  "reportMissingImports": "none",
+  "reportUnnecessaryTypeIgnoreComment": "warning",
+  "venvPath": ".",
+  "venv": ".venv",
+  "executionEnvironments": [
+    { "root": "src" }
+  ]
+}

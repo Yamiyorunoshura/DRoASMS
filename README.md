@@ -245,7 +245,7 @@ python -m src.bot.main
   - 點數發行：向各部門發行點數
   - 部門轉帳：各部門可向成員轉帳（透過政府帳戶）
   - 匯出功能：匯出部門配置與發行記錄
-- `/adjust` 與 `/transfer` 支援以部門領導人身分組為目標（自動映射至對應政府帳戶）
+- `/adjust` 與 `/transfer` 支援以理事會身分組、國務院領袖身分組、以及部門領導人身分組為目標（自動映射至對應政府帳戶）
 
 注意事項：
 - 需要於 Discord 開發者後台啟用「成員 Intent」以取得角色成員清單
@@ -305,17 +305,20 @@ docker compose up -d
 ```
 
 ### `/transfer`
-將虛擬貨幣轉移給伺服器中的其他成員。
+將虛擬貨幣轉移給伺服器中的其他成員或政府相關身分組。
 
 **參數：**
-- `target`（必填）：要接收點數的成員
+- `target`（必填）：成員、理事會身分組、國務院領袖身分組，或部門領導人身分組
 - `amount`（必填）：要轉出的整數點數
 - `reason`（選填）：會記錄在交易歷史中的備註
 
 **範例：**
 ```
-/transfer @username 100                    # 轉移 100 點給指定成員
-/transfer @username 50 reason:午餐費用      # 轉移 50 點並添加備註
+/transfer @username 100                         # 轉移 100 點給指定成員
+/transfer @username 50 reason:午餐費用           # 轉移 50 點並添加備註
+/transfer @CouncilRole 1000 reason:理事會補助     # 對理事會公共帳戶轉帳（自動映射）
+/transfer @StateLeader 500 reason:國庫撥款        # 對國務院主帳戶轉帳（領袖身分組自動映射）
+/transfer @DeptLeader 300 reason:部門預算         # 對對應部門帳戶轉帳（部門領導人身分組自動映射）
 ```
 
 ### `/adjust`
