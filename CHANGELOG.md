@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2025-11-07
+
+### Added
+- **Dependency Injection Infrastructure**: Introduced comprehensive DI container system
+  - New DependencyContainer with lifecycle management (singleton, transient, scoped)
+  - Automatic dependency resolution with type inference
+  - Bootstrap utilities for container initialization
+  - Thread-local scoped instances support
+  - Comprehensive test coverage
+
+### Changed
+- **Command Registration**: Refactored command registration to support dependency injection
+  - Commands now accept optional container parameter for service resolution
+  - Backward compatible: falls back to direct instantiation if container not provided
+  - Updated all command modules: adjust, balance, council, state_council, transfer
+- **Bot Initialization**: Integrated DI container bootstrap in bot startup sequence
+- **Test Infrastructure**: Enhanced test fixtures with DI container support
+
+### Fixed
+- Improved service lifecycle management and resource cleanup
+
 ## [0.6.1] - 2025-01-27
 
 ### Added
