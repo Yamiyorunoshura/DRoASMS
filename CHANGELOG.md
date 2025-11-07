@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2025-11-07
+
+### Added
+- **Currency Configuration Command**: New `/currency_config` command for administrators to customize currency name and icon per server
+  - Supports setting currency name (1-20 characters) and icon (single emoji or Unicode character)
+  - Currency configuration is displayed in all economy-related commands (`/balance`, `/transfer`, `/adjust`, `/history`) and State Council panel
+  - Default currency name is "點" (point) with no icon if not configured
+- **Currency Configuration Service**: New `CurrencyConfigService` for managing currency settings
+- **Economy Configuration Gateway**: New `EconomyConfigurationGateway` for database operations related to currency configuration
+- **Database Migrations**:
+  - Migration 031: Add `currency_name` and `currency_icon` columns to `economy_configurations` table
+  - Migration 032: Relax governance constraints to allow English enum values alongside Chinese values
+  - Migration 033: Allow zero-amount currency issuances (change constraint from `amount > 0` to `amount >= 0`)
+  - Migration 034: Allow zero-amount interdepartment transfers (change constraint from `amount > 0` to `amount >= 0`)
+- **Comprehensive Test Coverage**: Added extensive SQL function test suite covering:
+  - Transfer validation functions (`fn_check_and_approve_transfer`, `fn_check_transfer_cooldown`, `fn_check_transfer_daily_limit`)
+  - Governance functions (council, state council, proposals, votes, tallies)
+  - Department and government account management functions
+  - Currency issuance and interdepartment transfer functions
+  - History and reporting functions
+- **Integration Tests**: New `test_currency_config_integration.py` for end-to-end currency configuration testing
+- **Unit Tests**: New test files for currency configuration command, service, and gateway
+
+### Changed
+- **Enhanced Commands**: Updated `/balance`, `/adjust`, `/transfer`, and `/state_council` commands to display custom currency name and icon
+- **State Council Reports**: Enhanced to use custom currency configuration in reports and exports
+- **SQL Functions**: Updated multiple SQL functions to support relaxed constraints and zero-amount operations
+  - Modified `fn_adjust_balance`, `fn_check_and_approve_transfer`, `fn_check_transfer_balance`, `fn_check_transfer_cooldown`, `fn_check_transfer_daily_limit`, `fn_create_pending_transfer`, `fn_get_balance`, `fn_transfer_currency`, `fn_update_pending_transfer_status`
+  - Updated governance functions `fn_council` and `fn_state_council` to support relaxed constraints
+- **Transfer Event Pool**: Minor updates to support enhanced currency display
+- **Dependency Injection**: Updated bootstrap to include currency configuration service registration
+- **Test Infrastructure**: Enhanced contract tests and unit tests to cover currency configuration scenarios
+
+### Fixed
+- Improved governance constraint flexibility by allowing both Chinese and English enum values
+- Enhanced validation for zero-amount operations in currency issuance and interdepartment transfers
+
 ## [0.8.0] - 2025-11-07
 
 ### Added
