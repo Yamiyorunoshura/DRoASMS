@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2025-11-08
+
+### Added
+- **Mypyc Compilation Support**: Enabled mypyc compilation for economy modules to improve performance
+  - Configured mypyc compilation targets for core economy services (`adjustment_service`, `transfer_service`, `balance_service`, `transfer_event_pool`, `currency_config_service`)
+  - Configured mypyc compilation targets for economy database gateways (`economy_adjustments`, `economy_transfers`, `economy_queries`, `economy_pending_transfers`, `economy_configuration`)
+  - Added compilation scripts (`scripts/mypyc_economy_setup.py`) and Makefile targets (`mypyc-economy`, `mypyc-economy-check`)
+  - Integrated mypyc compilation into Docker build process (both `Dockerfile` and `test.Dockerfile`)
+  - Added performance benchmarking script (`scripts/bench_economy.py`) with `bench-economy` Makefile target
+  - Added `setuptools>=68.0.0` and `wheel>=0.43.0` to dev dependencies for mypyc compilation support
+
+### Changed
+- **Build Process**: Updated Dockerfiles to include `build-essential` and compile economy modules during build
+  - Production Dockerfile now compiles economy modules to `build/mypyc_out` during image build
+  - Test Dockerfile includes compilation support for testing compiled modules
+  - Set `PYTHONPATH` to prioritize compiled modules over pure Python versions
+
+### Fixed
+- **Type Safety**: Removed unnecessary `type: ignore[misc]` annotation in `src/infra/retry.py`
+
 ## [0.10.0] - 2025-11-08
 
 ### Added

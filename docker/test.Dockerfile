@@ -11,7 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN set -eux; \
     export DEBIAN_FRONTEND=noninteractive; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates git curl gnupg; \
+    apt-get install -y --no-install-recommends ca-certificates git curl gnupg build-essential; \
     echo "deb http://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo $VERSION_CODENAME)-pgdg main" \
       > /etc/apt/sources.list.d/pgdg.list; \
     curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
@@ -34,14 +34,18 @@ COPY pyproject.toml uv.lock alembic.ini ./
 # hatchling 需要 readme/license 檔案存在於專案根目錄
 COPY README.md LICENSE ./
 COPY src ./src
+COPY scripts ./scripts
 # 注意：tests/ 目錄在運行時透過 volume 掛載，不在建置時複製
 
 # 以 uv 建置隔離環境並安裝開發依賴（包含測試工具）
 RUN uv venv .venv \
     && . ./.venv/bin/activate \
-    && uv sync --frozen --group dev
+    && uv sync --frozen --group dev \
+    && uv run python scripts/mypyc_economy_setup.py build_ext --build-lib build/mypyc_out
 
 ENV PATH="/app/.venv/bin:${PATH}"
+# 讓編譯後的擴充模組優先於原始純 Python 版本
+ENV PYTHONPATH="/app/build/mypyc_out:/app"
 
 # 入口腳本
 COPY docker/bin/test.sh /app/test.sh

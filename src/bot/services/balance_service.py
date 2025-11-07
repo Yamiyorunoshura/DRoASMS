@@ -8,6 +8,7 @@ from typing import Any, Awaitable, Callable, Sequence, TypeVar
 from uuid import UUID
 
 import asyncpg
+from mypy_extensions import mypyc_attr
 
 from src.db.gateway.economy_queries import (
     BalanceRecord,
@@ -18,10 +19,12 @@ from src.db.gateway.economy_queries import (
 T = TypeVar("T")
 
 
+@mypyc_attr(native_class=False)
 class BalanceError(RuntimeError):
     """Base error raised for balance-related failures."""
 
 
+@mypyc_attr(native_class=False)
 class BalancePermissionError(BalanceError):
     """Raised when a caller attempts to access another member without permission."""
 

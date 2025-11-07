@@ -9,7 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 FROM base AS runtime
@@ -27,13 +27,19 @@ COPY pyproject.toml uv.lock alembic.ini ./
 # hatchling 需要 readme/license 檔案存在於專案根目錄
 COPY README.md LICENSE ./
 COPY src ./src
+COPY scripts ./scripts
 
 # 以 uv 建置隔離環境並安裝相依
 RUN uv venv .venv \
     && . ./.venv/bin/activate \
-    && uv sync --frozen --no-dev
+    && uv sync --frozen --no-dev \
+    # 為 mypyc 編譯加入開發依賴，並於建置期完成經濟模塊編譯
+    && uv sync --group dev \
+    && uv run python scripts/mypyc_economy_setup.py build_ext --build-lib build/mypyc_out
 
 ENV PATH="/app/.venv/bin:${PATH}"
+# 讓編譯後的擴充模組優先於原始純 Python 版本
+ENV PYTHONPATH="/app/build/mypyc_out:/app"
 
 # 入口腳本
 COPY docker/bin/entrypoint.sh /app/entrypoint.sh

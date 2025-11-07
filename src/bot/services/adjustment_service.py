@@ -7,6 +7,7 @@ from uuid import UUID
 
 import asyncpg
 import structlog
+from mypy_extensions import mypyc_attr
 
 from src.db.gateway.economy_adjustments import (
     AdjustmentProcedureResult,
@@ -16,14 +17,17 @@ from src.db.gateway.economy_adjustments import (
 LOGGER = structlog.get_logger(__name__)
 
 
+@mypyc_attr(native_class=False)
 class AdjustmentError(RuntimeError):
     """Base error raised for adjustment-related failures."""
 
 
+@mypyc_attr(native_class=False)
 class UnauthorizedAdjustmentError(AdjustmentError):
     """Raised when a requester lacks permission to perform adjustments."""
 
 
+@mypyc_attr(native_class=False)
 class ValidationError(AdjustmentError):
     """Raised when validation fails before reaching the database."""
 

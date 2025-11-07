@@ -1,4 +1,4 @@
-.PHONY: help install install-pre-commit format lint type-check format-check pre-commit-all lint-fix ci-local ci ci-full clean test test-container test-container-build test-container-unit test-container-contract test-container-integration test-container-performance test-container-db test-container-economy test-container-council test-container-all test-container-ci
+.PHONY: help install install-pre-commit format lint type-check format-check pre-commit-all lint-fix ci-local ci ci-full clean test test-container test-container-build test-container-unit test-container-contract test-container-integration test-container-performance test-container-db test-container-economy test-container-council test-container-all test-container-ci mypyc-economy mypyc-economy-check
 
 # 與 README 對齊：提供 test-container-all 別名
 # （等同於 test-all，會包含整合測試與 SQL 函數測試）
@@ -87,3 +87,19 @@ test-council: ## 使用測試容器執行議會相關測試
 
 test-all: ## 使用測試容器執行所有測試類型（含整合測試與 SQL 函數測試）
 	docker compose run --rm test all && docker compose run --rm test integration
+
+# ---- mypyc：經濟模塊 ----
+mypyc-economy: ## 使用 mypyc 編譯經濟模塊（輸出至 build/mypyc_out）
+	uv sync --group dev
+	@mkdir -p build/mypyc_out
+	uv run python scripts/mypyc_economy_setup.py build_ext --build-lib build/mypyc_out
+
+mypyc-economy-check: ## 驗證編譯後的模塊可被導入（直接從 .so 載入）
+	uv run python -c "import importlib.util, pathlib; root=pathlib.Path('build/mypyc_out'); support=next(root.glob('*__mypyc.*.so')); modname=support.name.split('.',1)[0]; s_spec=importlib.util.spec_from_file_location(modname, str(support)); s_mod=importlib.util.module_from_spec(s_spec); s_spec.loader.exec_module(s_mod); p=root/'src/bot/services'; so=next(p.glob('balance_service.*.so')); spec=importlib.util.spec_from_file_location('src.bot.services.balance_service', str(so)); m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); print('✓ loaded compiled:', m.__name__, '->', m.__file__)"
+
+# ---- micro-bench：經濟模塊（5.4） ----
+bench-economy: ## 執行簡易 micro-bench（純 Python 與 mypyc 各一次）
+	@echo "[pure-python]" && \
+	PYTHONPATH=. uv run python scripts/bench_economy.py --loops 200000 --transfer 2000; \
+	echo "\n[compiled-mypyc]" && \
+	PYTHONPATH=build/mypyc_out:. uv run python scripts/bench_economy.py --loops 200000 --transfer 2000 || true

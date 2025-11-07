@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 
 import asyncpg
@@ -54,8 +55,13 @@ class CurrencyConfigService:
         *,
         guild_id: int,
     ) -> CurrencyConfigResult:
-        """Internal method to get configuration."""
-        config = await self._gateway.get_currency_config(connection, guild_id=guild_id)
+        """Internal method to get configuration.
+
+        Note: tests may inject a non-async mock for the gateway method.
+        To be robust, we accept both sync and async results.
+        """
+        rv = self._gateway.get_currency_config(connection, guild_id=guild_id)
+        config = await rv if inspect.isawaitable(rv) else rv
         if config is None:
             # Return defaults if no configuration exists
             return CurrencyConfigResult(
@@ -101,13 +107,17 @@ class CurrencyConfigService:
         currency_name: str | None = None,
         currency_icon: str | None = None,
     ) -> CurrencyConfigResult:
-        """Internal method to update configuration."""
-        config = await self._gateway.update_currency_config(
+        """Internal method to update configuration.
+
+        Accept both sync and async gateway implementations/mocks.
+        """
+        rv = self._gateway.update_currency_config(
             connection,
             guild_id=guild_id,
             currency_name=currency_name,
             currency_icon=currency_icon,
         )
+        config = await rv if inspect.isawaitable(rv) else rv
         return CurrencyConfigResult(
             currency_name=config.currency_name,
             currency_icon=config.currency_icon,

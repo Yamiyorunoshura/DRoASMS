@@ -721,6 +721,19 @@ act -j lint
 - 預設使用 `-n auto` 自動偵測 CPU 核心數
 - 確保測試使用獨立資料庫連線池與交易隔離
 
+#### Mypyc 編譯（經濟模塊）
+- 已為經濟模塊提供 mypyc 編譯管線，以獲得潛在效能提升：
+  - `src/bot/services/{adjustment_service,transfer_service,balance_service,transfer_event_pool,currency_config_service}.py`
+  - `src/db/gateway/{economy_adjustments,economy_transfers,economy_queries,economy_pending_transfers,economy_configuration}.py`
+- 編譯輸出至 `build/mypyc_out/`
+- 指令：
+  - 編譯：`make mypyc-economy`
+  - 驗證載入：`make mypyc-economy-check`
+- 注意事項：
+  - 專案使用 namespace packages（`src/` 無 `__init__.py`）。若已安裝本專案，匯入時可能優先讀取 site-packages 中的純 Python 模組；`mypyc-economy-check` 直接由 `.so` 驗證產物可用性。
+  - 例外類別（繼承內建 `RuntimeError` 等）已加上 `@mypyc_attr(native_class=False)` 以確保相容。
+  - Python 3.12+/3.13 需要 `setuptools` 提供 `_distutils`；已於開發依賴加入 `setuptools` 與 `wheel`。
+
 #### 依賴注入容器（Dependency Injection Container）
 
 專案使用自訂的依賴注入容器來管理服務依賴，取代模組層級的全域單例模式。這使得測試更容易（可替換依賴）並提供統一的依賴管理機制。

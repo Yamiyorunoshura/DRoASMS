@@ -7,6 +7,7 @@ from uuid import UUID
 
 import asyncpg
 import structlog
+from mypy_extensions import mypyc_attr
 
 from src.db.gateway.economy_pending_transfers import PendingTransferGateway
 from src.db.gateway.economy_transfers import (
@@ -17,18 +18,22 @@ from src.db.gateway.economy_transfers import (
 LOGGER = structlog.get_logger(__name__)
 
 
+@mypyc_attr(native_class=False)
 class TransferError(RuntimeError):
     """Base error raised for transfer-related failures."""
 
 
+@mypyc_attr(native_class=False)
 class TransferValidationError(TransferError):
     """Raised when validation fails before reaching the database."""
 
 
+@mypyc_attr(native_class=False)
 class InsufficientBalanceError(TransferError):
     """Raised when the initiator lacks sufficient balance."""
 
 
+@mypyc_attr(native_class=False)
 class TransferThrottleError(TransferError):
     """Raised when the initiator is throttled by daily limits."""
 
