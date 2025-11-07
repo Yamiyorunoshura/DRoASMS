@@ -12,7 +12,7 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     v_transfer_id uuid;
-    v_now timestamptz := timezone('utc', now());
+    v_now timestamptz := timezone('utc', clock_timestamp());
 BEGIN
     IF p_initiator_id = p_target_id THEN
         RAISE EXCEPTION 'Initiator and target must be distinct members for transfers.'

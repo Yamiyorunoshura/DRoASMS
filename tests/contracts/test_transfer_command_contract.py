@@ -12,6 +12,10 @@ import pytest
 from discord import AppCommandOptionType, Interaction
 
 from src.bot.commands.transfer import build_transfer_command
+from src.bot.services.currency_config_service import (
+    CurrencyConfigResult,
+    CurrencyConfigService,
+)
 from src.bot.services.transfer_service import TransferResult, TransferService
 
 
@@ -78,8 +82,15 @@ async def test_transfer_command_contract() -> None:
             )
         )
     )
+    currency_service = SimpleNamespace(
+        get_currency_config=AsyncMock(
+            return_value=CurrencyConfigResult(currency_name="點", currency_icon="")
+        )
+    )
 
-    command = build_transfer_command(cast(TransferService, service))
+    command = build_transfer_command(
+        cast(TransferService, service), cast(CurrencyConfigService, currency_service)
+    )
     assert command.name == "transfer"
     assert "currency" in command.description.lower()
     parameter_names = [param.name for param in command.parameters]

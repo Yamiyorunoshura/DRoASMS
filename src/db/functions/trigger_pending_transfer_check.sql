@@ -7,7 +7,7 @@ BEGIN
     -- Update status to checking
     UPDATE economy.pending_transfers
     SET status = 'checking',
-        updated_at = timezone('utc', now())
+        updated_at = timezone('utc', clock_timestamp())
     WHERE transfer_id = NEW.transfer_id;
 
     -- Trigger async checks

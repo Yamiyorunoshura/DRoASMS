@@ -13,6 +13,10 @@ from discord import AppCommandOptionType, Interaction
 
 from src.bot.commands.adjust import build_adjust_command
 from src.bot.services.adjustment_service import AdjustmentResult, AdjustmentService
+from src.bot.services.currency_config_service import (
+    CurrencyConfigResult,
+    CurrencyConfigService,
+)
 
 
 def _snowflake() -> int:
@@ -67,8 +71,17 @@ async def test_adjust_command_contract() -> None:
             )
         )
     )
+    currency_service = SimpleNamespace(
+        get_currency_config=AsyncMock(
+            return_value=CurrencyConfigResult(currency_name="點", currency_icon="")
+        )
+    )
 
-    command = build_adjust_command(cast(AdjustmentService, service), can_adjust=lambda i: True)
+    command = build_adjust_command(
+        cast(AdjustmentService, service),
+        cast(CurrencyConfigService, currency_service),
+        can_adjust=lambda i: True,
+    )
     assert command.name == "adjust"
     assert "currency" in command.description.lower() or "點數" in command.description
     names = [p.name for p in command.parameters]

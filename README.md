@@ -336,6 +336,28 @@ docker compose up -d
 /adjust @DepartmentLeaderRole 500 reason:部門預算  # 調整部門政府帳戶餘額
 ```
 
+### `/currency_config`
+設定該伺服器的貨幣名稱和圖示（僅限管理員）。
+
+**參數：**
+- `name`（選填）：貨幣名稱（1-20 字元）
+- `icon`（選填）：貨幣圖示（單一 emoji 或 Unicode 字元，最多 10 字元）
+
+**權限要求：**
+- 需要「管理伺服器」或「系統管理員」Discord 權限
+
+**範例：**
+```
+/currency_config name:金幣 icon:🪙          # 設定貨幣名稱為「金幣」，圖示為 🪙
+/currency_config name:點數                   # 僅更新貨幣名稱為「點數」
+/currency_config icon:💰                     # 僅更新貨幣圖示為 💰
+```
+
+**說明：**
+- 設定後，所有經濟相關指令（`/balance`、`/transfer`、`/adjust`、`/history`）和國務院面板都會使用新的貨幣名稱和圖示
+- 未設定時，預設使用「點」作為貨幣名稱，無圖示
+- 每個伺服器可以獨立設定自己的貨幣配置
+
 ### `/help`
 顯示所有可用指令的說明，或查詢特定指令的詳細資訊。
 
@@ -434,7 +456,7 @@ A: 交易記錄會保留 30 天，之後會自動歸檔以保持資料庫效能�
 
 
 ### Q: 如何修改伺服器的經濟設定？
-A: 目前需要直接修改資料庫中的 `economy_configurations` 表格，未來版本將提供管理命令。
+A: 可以使用 `/currency_config` 指令設定貨幣名稱和圖示。其他經濟設定（如每日轉帳限制）可透過環境變數 `TRANSFER_DAILY_LIMIT` 設定。
 
 ### Q: 為什麼機器人沒有回應我的命令？
 A: 請確認：

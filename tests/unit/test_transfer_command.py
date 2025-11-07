@@ -11,6 +11,10 @@ import pytest
 from discord import Interaction
 
 from src.bot.commands.transfer import build_transfer_command
+from src.bot.services.currency_config_service import (
+    CurrencyConfigResult,
+    CurrencyConfigService,
+)
 from src.bot.services.transfer_service import (
     InsufficientBalanceError,
     TransferResult,
@@ -66,7 +70,10 @@ class _StubMember(SimpleNamespace):
 async def test_transfer_command_requires_guild() -> None:
     """Test that transfer command requires guild context."""
     service = SimpleNamespace(transfer_currency=AsyncMock())
-    command = build_transfer_command(cast(TransferService, service))
+    currency_service = SimpleNamespace(get_currency_config=AsyncMock())
+    command = build_transfer_command(
+        cast(TransferService, service), cast(CurrencyConfigService, currency_service)
+    )
     interaction = _StubInteraction(guild_id=None, user_id=_snowflake())  # type: ignore
     target = _StubMember(id=_snowflake())
 
@@ -88,8 +95,11 @@ async def test_transfer_command_validates_insufficient_balance() -> None:
     service = SimpleNamespace(
         transfer_currency=AsyncMock(side_effect=InsufficientBalanceError("餘額不足"))
     )
+    currency_service = SimpleNamespace(get_currency_config=AsyncMock())
 
-    command = build_transfer_command(cast(TransferService, service))
+    command = build_transfer_command(
+        cast(TransferService, service), cast(CurrencyConfigService, currency_service)
+    )
     interaction = _StubInteraction(guild_id=guild_id, user_id=initiator_id)
     target = _StubMember(id=target_id)
 
@@ -111,8 +121,11 @@ async def test_transfer_command_validates_throttle() -> None:
     service = SimpleNamespace(
         transfer_currency=AsyncMock(side_effect=TransferThrottleError("冷卻中"))
     )
+    currency_service = SimpleNamespace(get_currency_config=AsyncMock())
 
-    command = build_transfer_command(cast(TransferService, service))
+    command = build_transfer_command(
+        cast(TransferService, service), cast(CurrencyConfigService, currency_service)
+    )
     interaction = _StubInteraction(guild_id=guild_id, user_id=initiator_id)
     target = _StubMember(id=target_id)
 
@@ -144,8 +157,12 @@ async def test_transfer_command_calls_service_with_correct_parameters() -> None:
     )
 
     service = SimpleNamespace(transfer_currency=AsyncMock(return_value=result))
+    currency_config = CurrencyConfigResult(currency_name="金幣", currency_icon="🪙")
+    currency_service = SimpleNamespace(get_currency_config=AsyncMock(return_value=currency_config))
 
-    command = build_transfer_command(cast(TransferService, service))
+    command = build_transfer_command(
+        cast(TransferService, service), cast(CurrencyConfigService, currency_service)
+    )
     interaction = _StubInteraction(guild_id=guild_id, user_id=initiator_id)
     target = _StubMember(id=target_id)
 
@@ -160,3 +177,48 @@ async def test_transfer_command_calls_service_with_correct_parameters() -> None:
         connection=None,
         metadata=None,
     )
+    currency_service.get_currency_config.assert_awaited_once_with(guild_id=guild_id)
+    assert interaction.response.sent is True
+    assert interaction.response.kwargs is not None
+    content = interaction.response.kwargs.get("content", "")
+    assert "金幣" in content or "🪙" in content
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_transfer_command_uses_currency_config() -> None:
+    """Test that transfer command uses configured currency name and icon."""
+    guild_id = _snowflake()
+    initiator_id = _snowflake()
+    target_id = _snowflake()
+
+    result = TransferResult(
+        transaction_id=None,
+        guild_id=guild_id,
+        initiator_id=initiator_id,
+        target_id=target_id,
+        amount=100,
+        initiator_balance=900,
+        target_balance=None,
+        created_at=None,
+        metadata={"reason": "Test"},
+    )
+
+    service = SimpleNamespace(transfer_currency=AsyncMock(return_value=result))
+    currency_config = CurrencyConfigResult(currency_name="點數", currency_icon="💰")
+    currency_service = SimpleNamespace(get_currency_config=AsyncMock(return_value=currency_config))
+
+    command = build_transfer_command(
+        cast(TransferService, service), cast(CurrencyConfigService, currency_service)
+    )
+    interaction = _StubInteraction(guild_id=guild_id, user_id=initiator_id)
+    target = _StubMember(id=target_id)
+
+    await command._callback(cast(Interaction[Any], interaction), target, 100, "Test")
+
+    assert interaction.response.sent is True
+    assert interaction.response.kwargs is not None
+    content = interaction.response.kwargs.get("content", "")
+    assert "點數" in content
+    assert "💰" in content
+    assert "100" in content

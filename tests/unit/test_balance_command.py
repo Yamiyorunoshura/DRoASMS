@@ -18,6 +18,10 @@ from src.bot.services.balance_service import (
     BalanceSnapshot,
     HistoryPage,
 )
+from src.bot.services.currency_config_service import (
+    CurrencyConfigResult,
+    CurrencyConfigService,
+)
 
 
 def _snowflake() -> int:
@@ -69,7 +73,10 @@ class _StubMember(SimpleNamespace):
 async def test_balance_command_requires_guild() -> None:
     """Test that balance command requires guild context."""
     service = SimpleNamespace(get_balance_snapshot=AsyncMock())
-    command = build_balance_command(cast(BalanceService, service))
+    currency_service = SimpleNamespace(get_currency_config=AsyncMock())
+    command = build_balance_command(
+        cast(BalanceService, service), cast(CurrencyConfigService, currency_service)
+    )
     interaction = _StubInteraction(guild_id=None, user_id=_snowflake())  # type: ignore
 
     await command._callback(cast(Interaction[Any], interaction), None)
@@ -90,8 +97,11 @@ async def test_balance_command_validates_permission() -> None:
     service = SimpleNamespace(
         get_balance_snapshot=AsyncMock(side_effect=BalancePermissionError("無權限查看他人餘額"))
     )
+    currency_service = SimpleNamespace(get_currency_config=AsyncMock())
 
-    command = build_balance_command(cast(BalanceService, service))
+    command = build_balance_command(
+        cast(BalanceService, service), cast(CurrencyConfigService, currency_service)
+    )
     interaction = _StubInteraction(guild_id=guild_id, user_id=requester_id, is_admin=False)
     target = _StubMember(id=target_id)
 
@@ -117,8 +127,12 @@ async def test_balance_command_calls_service_correctly() -> None:
     )
 
     service = SimpleNamespace(get_balance_snapshot=AsyncMock(return_value=snapshot))
+    currency_config = CurrencyConfigResult(currency_name="金幣", currency_icon="🪙")
+    currency_service = SimpleNamespace(get_currency_config=AsyncMock(return_value=currency_config))
 
-    command = build_balance_command(cast(BalanceService, service))
+    command = build_balance_command(
+        cast(BalanceService, service), cast(CurrencyConfigService, currency_service)
+    )
     interaction = _StubInteraction(guild_id=guild_id, user_id=user_id)
 
     await command._callback(cast(Interaction[Any], interaction), None)
@@ -130,6 +144,44 @@ async def test_balance_command_calls_service_correctly() -> None:
         can_view_others=False,
         connection=None,
     )
+    currency_service.get_currency_config.assert_awaited_once_with(guild_id=guild_id)
+    assert interaction.response.sent is True
+    assert interaction.response.kwargs is not None
+    content = interaction.response.kwargs.get("content", "")
+    assert "金幣" in content or "🪙" in content
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_balance_command_uses_currency_config() -> None:
+    """Test that balance command uses configured currency name and icon."""
+    guild_id = _snowflake()
+    user_id = _snowflake()
+
+    snapshot = BalanceSnapshot(
+        balance=1000,
+        last_modified_at=datetime.now(timezone.utc),
+        is_throttled=False,
+        throttled_until=None,
+    )
+
+    service = SimpleNamespace(get_balance_snapshot=AsyncMock(return_value=snapshot))
+    currency_config = CurrencyConfigResult(currency_name="點數", currency_icon="💰")
+    currency_service = SimpleNamespace(get_currency_config=AsyncMock(return_value=currency_config))
+
+    command = build_balance_command(
+        cast(BalanceService, service), cast(CurrencyConfigService, currency_service)
+    )
+    interaction = _StubInteraction(guild_id=guild_id, user_id=user_id)
+
+    await command._callback(cast(Interaction[Any], interaction), None)
+
+    assert interaction.response.sent is True
+    assert interaction.response.kwargs is not None
+    content = interaction.response.kwargs.get("content", "")
+    assert "點數" in content
+    assert "💰" in content
+    assert "1,000" in content
 
 
 @pytest.mark.unit
@@ -140,7 +192,10 @@ async def test_history_command_validates_before_parameter() -> None:
     user_id = _snowflake()
 
     service = SimpleNamespace(get_history=AsyncMock())
-    command = build_history_command(cast(BalanceService, service))
+    currency_service = SimpleNamespace(get_currency_config=AsyncMock())
+    command = build_history_command(
+        cast(BalanceService, service), cast(CurrencyConfigService, currency_service)
+    )
     interaction = _StubInteraction(guild_id=guild_id, user_id=user_id)
 
     await command._callback(cast(Interaction[Any], interaction), None, 10, "invalid-date")
@@ -163,8 +218,11 @@ async def test_history_command_calls_service_correctly() -> None:
     )
 
     service = SimpleNamespace(get_history=AsyncMock(return_value=page))
+    currency_service = SimpleNamespace(get_currency_config=AsyncMock())
 
-    command = build_history_command(cast(BalanceService, service))
+    command = build_history_command(
+        cast(BalanceService, service), cast(CurrencyConfigService, currency_service)
+    )
     interaction = _StubInteraction(guild_id=guild_id, user_id=user_id)
 
     await command._callback(cast(Interaction[Any], interaction), None, 20, None)

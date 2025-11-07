@@ -6,7 +6,7 @@ import secrets
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from discord import AppCommandOptionType, Interaction
@@ -205,7 +205,7 @@ async def test_state_council_config_leader_permission_denied() -> None:
 
 
 @pytest.mark.asyncio
-async def test_state_council_panel_command_contract() -> None:
+async def test_state_council_panel_command_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test state council panel command structure and behavior."""
     guild_id = _snowflake()
     _user_id = _snowflake()
@@ -227,6 +227,10 @@ async def test_state_council_panel_command_contract() -> None:
     service.get_config.return_value = expected_config
     service.check_leader_permission.return_value = True
     service.check_department_permission.return_value = True
+
+    # Mock database pool
+    mock_pool = MagicMock()
+    monkeypatch.setattr("src.db.pool.get_pool", lambda: mock_pool)
 
     command = build_state_council_group(service)
 
@@ -335,7 +339,7 @@ async def test_state_council_panel_permission_denied() -> None:
 
 
 @pytest.mark.asyncio
-async def test_state_council_panel_role_based_leadership() -> None:
+async def test_state_council_panel_role_based_leadership(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test panel command with role-based leadership."""
     guild_id = _snowflake()
     user_id = _snowflake()
@@ -356,6 +360,10 @@ async def test_state_council_panel_role_based_leadership() -> None:
     )
     service.get_config.return_value = expected_config
     service.check_leader_permission.return_value = True  # Should return True for role-based leader
+
+    # Mock database pool
+    mock_pool = MagicMock()
+    monkeypatch.setattr("src.db.pool.get_pool", lambda: mock_pool)
 
     command = build_state_council_group(service)
 
@@ -380,7 +388,7 @@ async def test_state_council_panel_role_based_leadership() -> None:
 
 
 @pytest.mark.asyncio
-async def test_state_council_panel_department_access() -> None:
+async def test_state_council_panel_department_access(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test panel command with department-based access."""
     guild_id = _snowflake()
     user_id = _snowflake()
@@ -402,6 +410,10 @@ async def test_state_council_panel_department_access() -> None:
     service.get_config.return_value = expected_config
     service.check_leader_permission.return_value = False  # Not a leader
     service.check_department_permission.return_value = True  # But has department access
+
+    # Mock database pool
+    mock_pool = MagicMock()
+    monkeypatch.setattr("src.db.pool.get_pool", lambda: mock_pool)
 
     command = build_state_council_group(service)
 

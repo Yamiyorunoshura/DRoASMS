@@ -14,6 +14,10 @@ from src.bot.services.adjustment_service import (
     ValidationError,
 )
 from src.bot.services.council_service import CouncilService, GovernanceNotConfiguredError
+from src.bot.services.currency_config_service import (
+    CurrencyConfigResult,
+    CurrencyConfigService,
+)
 from src.bot.services.state_council_service import (
     StateCouncilNotConfiguredError,
     StateCouncilService,
@@ -69,16 +73,19 @@ def register(
 
         pool = db_pool.get_pool()
         service = AdjustmentService(pool)
+        currency_service = CurrencyConfigService(pool)
     else:
         service = container.resolve(AdjustmentService)
+        currency_service = container.resolve(CurrencyConfigService)
 
-    command = build_adjust_command(service)
+    command = build_adjust_command(service, currency_service)
     tree.add_command(command)
     LOGGER.debug("bot.command.adjust.registered")
 
 
 def build_adjust_command(
     service: AdjustmentService,
+    currency_service: CurrencyConfigService,
     *,
     can_adjust: Callable[[discord.Interaction], bool] | None = None,
 ) -> app_commands.Command[Any, Any, Any]:
@@ -178,19 +185,29 @@ def build_adjust_command(
             )
             return
 
-        message = _format_success_message(target, result)
+        # Get currency config
+        currency_config = await currency_service.get_currency_config(guild_id=guild_id)
+
+        message = _format_success_message(target, result, currency_config)
         await interaction.response.send_message(content=message, ephemeral=True)
 
     return adjust
 
 
 def _format_success_message(
-    target: Union[discord.Member, discord.User, discord.Role], result: AdjustmentResult
+    target: Union[discord.Member, discord.User, discord.Role],
+    result: AdjustmentResult,
+    currency_config: CurrencyConfigResult,
 ) -> str:
     action = "加值" if result.direction == "adjustment_grant" else "扣點"
+    currency_display = (
+        f"{currency_config.currency_name} {currency_config.currency_icon}".strip()
+        if currency_config.currency_icon
+        else currency_config.currency_name
+    )
     parts = [
-        f"✅ 已對 {target.mention} 進行{action} {result.amount:,} 點。",
-        f"👉 目前餘額為 {result.target_balance_after:,} 點。",
+        f"✅ 已對 {target.mention} 進行{action} {result.amount:,} {currency_display}。",
+        f"👉 目前餘額為 {result.target_balance_after:,} {currency_display}。",
     ]
     reason = result.metadata.get("reason")
     if reason:

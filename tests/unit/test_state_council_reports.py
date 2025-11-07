@@ -504,7 +504,8 @@ class TestStateCouncilReportGenerator:
 
     # --- Report Formatting Tests ---
 
-    def test_format_report_as_markdown(self, generator: StateCouncilReportGenerator) -> None:
+    @pytest.mark.asyncio
+    async def test_format_report_as_markdown(self, generator: StateCouncilReportGenerator) -> None:
         """Test formatting report data as markdown."""
         report_data = {
             "period": "2024-01",
@@ -554,7 +555,8 @@ class TestStateCouncilReportGenerator:
             "generated_at": "2024-01-31T23:59:59Z",
         }
 
-        markdown = generator.format_report_as_markdown(report_data)
+        guild_id = _snowflake()
+        markdown = await generator.format_report_as_markdown(report_data, guild_id=guild_id)
 
         assert "國務院月報 - 2024-01" in markdown
         assert "財務摘要" in markdown
@@ -571,7 +573,8 @@ class TestStateCouncilReportGenerator:
         assert "各部門餘額" in markdown
         assert "報表生成時間" in markdown
 
-    def test_format_report_as_markdown_edge_cases(
+    @pytest.mark.asyncio
+    async def test_format_report_as_markdown_edge_cases(
         self, generator: StateCouncilReportGenerator
     ) -> None:
         """Test formatting report with edge cases."""
@@ -607,7 +610,8 @@ class TestStateCouncilReportGenerator:
             "generated_at": "2024-01-31T23:59:59Z",
         }
 
-        markdown = generator.format_report_as_markdown(report_data)
+        guild_id = _snowflake()
+        markdown = await generator.format_report_as_markdown(report_data, guild_id=guild_id)
 
         # Should handle zero values gracefully
         assert "福利發放總額：0 幣" in markdown

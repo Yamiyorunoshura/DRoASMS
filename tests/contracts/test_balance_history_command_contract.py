@@ -21,6 +21,10 @@ from src.bot.services.balance_service import (
     HistoryEntry,
     HistoryPage,
 )
+from src.bot.services.currency_config_service import (
+    CurrencyConfigResult,
+    CurrencyConfigService,
+)
 
 
 def _snowflake() -> int:
@@ -77,8 +81,15 @@ async def test_balance_command_contract() -> None:
             )
         )
     )
+    currency_service = SimpleNamespace(
+        get_currency_config=AsyncMock(
+            return_value=CurrencyConfigResult(currency_name="點", currency_icon="")
+        )
+    )
 
-    command = build_balance_command(cast(BalanceService, service))
+    command = build_balance_command(
+        cast(BalanceService, service), cast(CurrencyConfigService, currency_service)
+    )
     assert command.name == "balance"
     assert "餘額" in command.description
     parameter_names = [param.name for param in command.parameters]
@@ -131,8 +142,15 @@ async def test_history_command_contract() -> None:
             )
         )
     )
+    currency_service = SimpleNamespace(
+        get_currency_config=AsyncMock(
+            return_value=CurrencyConfigResult(currency_name="點", currency_icon="")
+        )
+    )
 
-    command = build_history_command(cast(BalanceService, service))
+    command = build_history_command(
+        cast(BalanceService, service), cast(CurrencyConfigService, currency_service)
+    )
     assert command.name == "history"
     assert "歷史" in command.description
 

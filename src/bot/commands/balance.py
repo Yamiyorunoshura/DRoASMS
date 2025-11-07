@@ -16,6 +16,10 @@ from src.bot.services.balance_service import (
     BalanceSnapshot,
     HistoryPage,
 )
+from src.bot.services.currency_config_service import (
+    CurrencyConfigResult,
+    CurrencyConfigService,
+)
 from src.infra.di.container import DependencyContainer
 
 LOGGER = structlog.get_logger(__name__)
@@ -81,16 +85,20 @@ def register(
 
         pool = db_pool.get_pool()
         service = BalanceService(pool)
+        currency_service = CurrencyConfigService(pool)
     else:
         service = container.resolve(BalanceService)
+        currency_service = container.resolve(CurrencyConfigService)
 
-    tree.add_command(build_balance_command(service))
-    tree.add_command(build_history_command(service))
+    tree.add_command(build_balance_command(service, currency_service))
+    tree.add_command(build_history_command(service, currency_service))
     LOGGER.debug("bot.command.balance.registered")
     LOGGER.debug("bot.command.history.registered")
 
 
-def build_balance_command(service: BalanceService) -> app_commands.Command[Any, Any, Any]:
+def build_balance_command(
+    service: BalanceService, currency_service: CurrencyConfigService
+) -> app_commands.Command[Any, Any, Any]:
     """Build the `/balance` slash command bound to the provided service."""
 
     @app_commands.command(
@@ -140,14 +148,19 @@ def build_balance_command(service: BalanceService) -> app_commands.Command[Any, 
             await _respond(interaction, "查詢餘額時發生未預期錯誤，請稍後再試。")
             return
 
+        # Get currency config
+        currency_config = await currency_service.get_currency_config(guild_id=interaction.guild_id)
+
         target_display = member if member is not None else interaction.user
-        message = _format_balance_response(snapshot, target_display)
+        message = _format_balance_response(snapshot, target_display, currency_config)
         await _respond(interaction, message)
 
     return balance
 
 
-def build_history_command(service: BalanceService) -> app_commands.Command[Any, Any, Any]:
+def build_history_command(
+    service: BalanceService, currency_service: CurrencyConfigService
+) -> app_commands.Command[Any, Any, Any]:
     """Build the `/history` slash command bound to the provided service."""
 
     @app_commands.command(
@@ -216,8 +229,11 @@ def build_history_command(service: BalanceService) -> app_commands.Command[Any, 
             await _respond(interaction, "查詢歷史時發生未預期錯誤，請稍後再試。")
             return
 
+        # Get currency config
+        currency_config = await currency_service.get_currency_config(guild_id=interaction.guild_id)
+
         target_display = member if member is not None else interaction.user
-        message = _format_history_response(page, target_display)
+        message = _format_history_response(page, target_display, currency_config)
         await _respond(interaction, message)
 
     return history
@@ -263,10 +279,16 @@ def _mention_of(target: Union[discord.Member, discord.User, Any]) -> str:
 def _format_balance_response(
     snapshot: BalanceSnapshot,
     target: Union[discord.Member, discord.User],
+    currency_config: "CurrencyConfigResult",
 ) -> str:
     timestamp = snapshot.last_modified_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    currency_display = (
+        f"{currency_config.currency_name} {currency_config.currency_icon}".strip()
+        if currency_config.currency_icon
+        else currency_config.currency_name
+    )
     lines = [
-        f"📊 {_mention_of(target)} 的目前餘額為 {snapshot.balance:,} 點。",
+        f"📊 {_mention_of(target)} 的目前餘額為 {snapshot.balance:,} {currency_display}。",
         f"🕒 最後更新時間：{timestamp}",
     ]
     if snapshot.is_throttled and snapshot.throttled_until is not None:
@@ -278,10 +300,16 @@ def _format_balance_response(
 def _format_history_response(
     page: HistoryPage,
     target: Union[discord.Member, discord.User],
+    currency_config: "CurrencyConfigResult",
 ) -> str:
     if not page.items:
         return f"📚 {_mention_of(target)} 目前沒有可顯示的交易紀錄。"
 
+    currency_display = (
+        f"{currency_config.currency_name} {currency_config.currency_icon}".strip()
+        if currency_config.currency_icon
+        else currency_config.currency_name
+    )
     lines = [f"📚 {_mention_of(target)} 的最近 {len(page.items)} 筆交易："]
     for entry in page.items:
         timestamp = entry.created_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -301,7 +329,7 @@ def _format_history_response(
 
         counterpart_display = f"<@{counterparty}>" if counterparty else "系統"
         summary = (
-            f"{timestamp} · {verb} {sign}{entry.amount:,} 點（{entry.direction}）"
+            f"{timestamp} · {verb} {sign}{entry.amount:,} {currency_display}（{entry.direction}）"
             f" → {counterpart_display}"
         )
         lines.append(summary)

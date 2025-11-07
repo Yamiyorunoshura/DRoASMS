@@ -17,6 +17,10 @@ from src.bot.services.adjustment_service import (
     UnauthorizedAdjustmentError,
     ValidationError,
 )
+from src.bot.services.currency_config_service import (
+    CurrencyConfigResult,
+    CurrencyConfigService,
+)
 
 
 def _snowflake() -> int:
@@ -68,8 +72,11 @@ async def test_adjust_command_validates_admin_permission() -> None:
     service = SimpleNamespace(
         adjust_balance=AsyncMock(side_effect=UnauthorizedAdjustmentError("權限不足"))
     )
+    currency_service = SimpleNamespace(get_currency_config=AsyncMock())
 
-    command = build_adjust_command(cast(AdjustmentService, service))
+    command = build_adjust_command(
+        cast(AdjustmentService, service), cast(CurrencyConfigService, currency_service)
+    )
     interaction = _StubInteraction(guild_id=guild_id, user_id=admin_id, is_admin=False)
     target = _StubMember(id=target_id)
 
@@ -91,8 +98,11 @@ async def test_adjust_command_validates_amount() -> None:
     target_id = _snowflake()
 
     service = SimpleNamespace(adjust_balance=AsyncMock(side_effect=ValidationError("金額無效")))
+    currency_service = SimpleNamespace(get_currency_config=AsyncMock())
 
-    command = build_adjust_command(cast(AdjustmentService, service))
+    command = build_adjust_command(
+        cast(AdjustmentService, service), cast(CurrencyConfigService, currency_service)
+    )
     interaction = _StubInteraction(guild_id=guild_id, user_id=admin_id, is_admin=True)
     target = _StubMember(id=target_id)
 
@@ -128,8 +138,12 @@ async def test_adjust_command_calls_service_with_correct_parameters() -> None:
             )
         )
     )
+    currency_config = CurrencyConfigResult(currency_name="金幣", currency_icon="🪙")
+    currency_service = SimpleNamespace(get_currency_config=AsyncMock(return_value=currency_config))
 
-    command = build_adjust_command(cast(AdjustmentService, service))
+    command = build_adjust_command(
+        cast(AdjustmentService, service), cast(CurrencyConfigService, currency_service)
+    )
     interaction = _StubInteraction(guild_id=guild_id, user_id=admin_id, is_admin=True)
     target = _StubMember(id=target_id)
 
@@ -146,4 +160,53 @@ async def test_adjust_command_calls_service_with_correct_parameters() -> None:
         can_adjust=True,
         connection=None,
     )
+    currency_service.get_currency_config.assert_awaited_once_with(guild_id=guild_id)
     assert interaction.response.sent is True
+    assert interaction.response.kwargs is not None
+    content = interaction.response.kwargs.get("content", "")
+    assert "金幣" in content or "🪙" in content
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_adjust_command_uses_currency_config() -> None:
+    """Test that adjust command uses configured currency name and icon."""
+    guild_id = _snowflake()
+    admin_id = _snowflake()
+    target_id = _snowflake()
+
+    service = SimpleNamespace(
+        adjust_balance=AsyncMock(
+            return_value=AdjustmentResult(
+                transaction_id=None,
+                guild_id=guild_id,
+                admin_id=admin_id,
+                target_id=target_id,
+                amount=150,
+                target_balance_after=350,
+                direction="adjustment_grant",
+                created_at=None,
+                metadata={"reason": "Bonus"},
+            )
+        )
+    )
+    currency_config = CurrencyConfigResult(currency_name="點數", currency_icon="💰")
+    currency_service = SimpleNamespace(get_currency_config=AsyncMock(return_value=currency_config))
+
+    command = build_adjust_command(
+        cast(AdjustmentService, service), cast(CurrencyConfigService, currency_service)
+    )
+    interaction = _StubInteraction(guild_id=guild_id, user_id=admin_id, is_admin=True)
+    target = _StubMember(id=target_id)
+
+    await command._callback(
+        cast(Interaction[Any], interaction), cast(Interaction[Any], target), 150, "Bonus"
+    )
+
+    assert interaction.response.sent is True
+    assert interaction.response.kwargs is not None
+    content = interaction.response.kwargs.get("content", "")
+    assert "點數" in content
+    assert "💰" in content
+    assert "150" in content
+    assert "350" in content

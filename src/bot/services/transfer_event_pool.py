@@ -265,7 +265,7 @@ class TransferEventPoolCoordinator:
                         """
                         UPDATE economy.pending_transfers
                         SET retry_count = retry_count + 1,
-                            updated_at = timezone('utc', now())
+                            updated_at = timezone('utc', clock_timestamp())
                         WHERE transfer_id = $1
                         """,
                         transfer_id,

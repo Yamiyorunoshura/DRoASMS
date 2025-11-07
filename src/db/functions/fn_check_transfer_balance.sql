@@ -21,7 +21,7 @@ BEGIN
 
     -- Ensure ledger row exists
     INSERT INTO economy.guild_member_balances (guild_id, member_id, current_balance, last_modified_at, created_at)
-    VALUES (v_guild_id, v_initiator_id, 0, timezone('utc', now()), timezone('utc', now()))
+    VALUES (v_guild_id, v_initiator_id, 0, timezone('utc', clock_timestamp()), timezone('utc', clock_timestamp()))
     ON CONFLICT (guild_id, member_id) DO NOTHING;
 
     -- Get current balance
@@ -40,7 +40,7 @@ BEGIN
         '{balance}',
         to_jsonb(v_check_result)
     ),
-    updated_at = timezone('utc', now())
+    updated_at = timezone('utc', clock_timestamp())
     WHERE transfer_id = p_transfer_id;
 
     -- Send NOTIFY event

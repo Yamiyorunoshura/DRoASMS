@@ -10,6 +10,10 @@ from discord import app_commands
 
 from src.bot.commands.help_data import HelpData
 from src.bot.services.council_service import CouncilService, GovernanceNotConfiguredError
+from src.bot.services.currency_config_service import (
+    CurrencyConfigResult,
+    CurrencyConfigService,
+)
 from src.bot.services.state_council_service import (
     StateCouncilNotConfiguredError,
     StateCouncilService,
@@ -78,15 +82,19 @@ def register(
         event_pool_enabled = os.getenv("TRANSFER_EVENT_POOL_ENABLED", "false").lower() == "true"
         pool = db_pool.get_pool()
         service = TransferService(pool, event_pool_enabled=event_pool_enabled)
+        currency_service = CurrencyConfigService(pool)
     else:
         service = container.resolve(TransferService)
+        currency_service = container.resolve(CurrencyConfigService)
 
-    command = build_transfer_command(service)
+    command = build_transfer_command(service, currency_service)
     tree.add_command(command)
     LOGGER.debug("bot.command.transfer.registered")
 
 
-def build_transfer_command(service: TransferService) -> app_commands.Command[Any, Any, Any]:
+def build_transfer_command(
+    service: TransferService, currency_service: CurrencyConfigService
+) -> app_commands.Command[Any, Any, Any]:
     """Build the `/transfer` slash command bound to the provided service."""
 
     @app_commands.command(
@@ -202,11 +210,14 @@ def build_transfer_command(service: TransferService) -> app_commands.Command[Any
             await _respond(interaction, "處理轉帳時發生未預期錯誤，請稍後再試。")
             return
 
+        # Get currency config
+        currency_config = await currency_service.get_currency_config(guild_id=guild_id)
+
         # Handle event pool mode (returns UUID) vs sync mode (returns TransferResult)
         if isinstance(result, UUID):
             message = _format_pending_message(interaction.user, target, result)
         else:
-            message = _format_success_message(interaction.user, target, result)
+            message = _format_success_message(interaction.user, target, result, currency_config)
         await _respond(interaction, message)
 
     return transfer
@@ -254,10 +265,16 @@ def _format_success_message(
     initiator: Union[discord.Member, discord.User],
     target: Union[discord.Member, discord.User, discord.Role],
     result: TransferResult,
+    currency_config: "CurrencyConfigResult",
 ) -> str:
+    currency_display = (
+        f"{currency_config.currency_name} {currency_config.currency_icon}".strip()
+        if currency_config.currency_icon
+        else currency_config.currency_name
+    )
     parts = [
-        f"✅ 已成功將 {result.amount:,} 點轉給 {_mention_of(target)}。",
-        f"👉 你目前的餘額為 {result.initiator_balance:,} 點。",
+        f"✅ 已成功將 {result.amount:,} {currency_display} 轉給 {_mention_of(target)}。",
+        f"👉 你目前的餘額為 {result.initiator_balance:,} {currency_display}。",
     ]
     reason = result.metadata.get("reason") if isinstance(result.metadata, dict) else None
     if reason:

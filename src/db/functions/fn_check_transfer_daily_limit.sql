@@ -12,7 +12,7 @@ DECLARE
     v_daily_limit_text text := current_setting('app.transfer_daily_limit', true);
     v_daily_limit bigint;
     v_check_result int;
-    v_now timestamptz := timezone('utc', now());
+    v_now timestamptz := timezone('utc', clock_timestamp());
     v_is_government boolean := false;
 BEGIN
     SELECT guild_id, initiator_id, amount
@@ -69,7 +69,7 @@ BEGIN
         '{daily_limit}',
         to_jsonb(v_check_result)
     ),
-    updated_at = timezone('utc', now())
+    updated_at = timezone('utc', clock_timestamp())
     WHERE transfer_id = p_transfer_id;
 
     -- Send NOTIFY event

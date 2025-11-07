@@ -13,7 +13,7 @@ BEGIN
     -- 若並行呼叫，僅會有 1 筆能成功更新（避免重複核准與重複通知）。
     UPDATE economy.pending_transfers pt
     SET status = 'approved',
-        updated_at = timezone('utc', now())
+        updated_at = timezone('utc', clock_timestamp())
     WHERE pt.transfer_id = p_transfer_id
       AND pt.status = 'checking'
       AND (pt.checks->>'balance') IS NOT NULL

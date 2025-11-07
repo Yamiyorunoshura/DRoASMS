@@ -8,7 +8,7 @@ RETURNS timestamptz
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_now timestamptz := timezone('utc', now());
+    v_now timestamptz := timezone('utc', clock_timestamp());
     v_until timestamptz := v_now + interval '300 seconds';
     v_metadata jsonb := coalesce(p_metadata, '{}'::jsonb);
     v_balance bigint;
@@ -97,7 +97,7 @@ RETURNS economy.transfer_result
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_now timestamptz := timezone('utc', now());
+    v_now timestamptz := timezone('utc', clock_timestamp());
     v_metadata jsonb := coalesce(p_metadata, '{}'::jsonb);
     v_initiator_balance bigint;
     v_target_balance bigint;

@@ -7,7 +7,7 @@ DECLARE
     v_guild_id bigint;
     v_initiator_id bigint;
     v_throttled_until timestamptz;
-    v_now timestamptz := timezone('utc', now());
+    v_now timestamptz := timezone('utc', clock_timestamp());
     v_check_result int;
     v_is_government boolean := false;
 BEGIN
@@ -53,7 +53,7 @@ BEGIN
         '{cooldown}',
         to_jsonb(v_check_result)
     ),
-    updated_at = timezone('utc', now())
+    updated_at = timezone('utc', clock_timestamp())
     WHERE transfer_id = p_transfer_id;
 
     -- Send NOTIFY event

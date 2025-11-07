@@ -13,7 +13,7 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_now timestamptz := timezone('utc', now());
+    v_now timestamptz := timezone('utc', clock_timestamp());
 BEGIN
     INSERT INTO economy.guild_member_balances (
         guild_id,

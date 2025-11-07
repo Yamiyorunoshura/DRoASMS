@@ -9,6 +9,10 @@ import structlog
 from discord import app_commands
 
 from src.bot.commands.help_data import HelpData
+from src.bot.services.currency_config_service import (
+    CurrencyConfigResult,
+    CurrencyConfigService,
+)
 from src.bot.services.state_council_service import (
     InsufficientFundsError,
     MonthlyIssuanceLimitExceededError,
@@ -25,6 +29,16 @@ from src.infra.events.state_council_events import (
 )
 
 LOGGER = structlog.get_logger(__name__)
+
+
+def _format_currency_display(currency_config: CurrencyConfigResult, amount: int) -> str:
+    """Format currency amount with configured name and icon."""
+    currency_display = (
+        f"{currency_config.currency_name} {currency_config.currency_icon}".strip()
+        if currency_config.currency_icon
+        else currency_config.currency_name
+    )
+    return f"{amount:,} {currency_display}"
 
 
 def get_help_data() -> dict[str, HelpData]:
@@ -149,15 +163,19 @@ def register(
     if container is None:
         # Fallback to old behavior for backward compatibility during migration
         service = StateCouncilService()
+        currency_service = None
     else:
         service = container.resolve(StateCouncilService)
+        currency_service = container.resolve(CurrencyConfigService)
 
-    tree.add_command(build_state_council_group(service))
+    tree.add_command(build_state_council_group(service, currency_service))
     _install_background_scheduler(tree.client, service)
     LOGGER.debug("bot.command.state_council.registered")
 
 
-def build_state_council_group(service: StateCouncilService) -> app_commands.Group:
+def build_state_council_group(
+    service: StateCouncilService, currency_service: CurrencyConfigService | None = None
+) -> app_commands.Group:
     state_council = app_commands.Group(name="state_council", description="國務院治理指令")
 
     @state_council.command(name="config_leader", description="設定國務院領袖")
@@ -306,8 +324,15 @@ def build_state_council_group(service: StateCouncilService) -> app_commands.Grou
                 exc_info=True,
             )
 
+        # Get currency service
+        from src.db import pool as db_pool
+
+        pool = db_pool.get_pool()
+        currency_service = CurrencyConfigService(pool)
+
         view = StateCouncilPanelView(
             service=service,
+            currency_service=currency_service,
             guild=interaction.guild,
             guild_id=interaction.guild_id,
             author_id=interaction.user.id,
@@ -365,6 +390,7 @@ class StateCouncilPanelView(discord.ui.View):
         self,
         *,
         service: StateCouncilService,
+        currency_service: CurrencyConfigService,
         guild: discord.Guild,
         guild_id: int,
         author_id: int,
@@ -374,6 +400,7 @@ class StateCouncilPanelView(discord.ui.View):
     ) -> None:
         super().__init__(timeout=None)
         self.service = service
+        self.currency_service = currency_service
         self.guild = guild
         self.guild_id = guild_id
         self.author_id = author_id
@@ -900,22 +927,25 @@ class StateCouncilPanelView(discord.ui.View):
 
         leader_text = "領袖：" + "、".join(leader_parts) if leader_parts else "領袖：未設定"
 
+        # Get currency config
+        currency_config = await self.currency_service.get_currency_config(guild_id=self.guild_id)
+
         embed = discord.Embed(
             title="🏛️ 國務院總覽",
-            description=f"{leader_text}\n總資產：{summary.total_balance:,} 幣",
+            description=f"{leader_text}\n總資產：{_format_currency_display(currency_config, summary.total_balance)}",
             color=discord.Color.blue(),
         )
 
         for dept, stats in summary.department_stats.items():
             embed.add_field(
                 name=f"{dept}",
-                value=f"餘額：{stats.balance:,} 幣",
+                value=f"餘額：{_format_currency_display(currency_config, stats.balance)}",
                 inline=True,
             )
 
         if summary.recent_transfers:
             transfer_list = "\n".join(
-                f"• {transfer.from_department} → {transfer.to_department}: {transfer.amount:,} 幣"
+                f"• {transfer.from_department} → {transfer.to_department}: {_format_currency_display(currency_config, transfer.amount)}"
                 for transfer in summary.recent_transfers[:3]
             )
             embed.add_field(name="最近轉帳", value=transfer_list, inline=False)
@@ -945,19 +975,30 @@ class StateCouncilPanelView(discord.ui.View):
             "中央銀行": "🏦",
         }
 
+        # Get currency config
+        currency_config = await self.currency_service.get_currency_config(guild_id=self.guild_id)
+
         embed = discord.Embed(
             title=f"{dept_emojis.get(department, '')} {department}",
             color=discord.Color.blue(),
         )
-        embed.add_field(name="帳戶餘額", value=f"{stats.balance:,} 幣", inline=False)
+        embed.add_field(
+            name="帳戶餘額",
+            value=_format_currency_display(currency_config, stats.balance),
+            inline=False,
+        )
 
         if department == "內政部":
             embed.add_field(
-                name="累計福利發放", value=f"{stats.total_welfare_disbursed:,} 幣", inline=False
+                name="累計福利發放",
+                value=_format_currency_display(currency_config, stats.total_welfare_disbursed),
+                inline=False,
             )
         elif department == "財政部":
             embed.add_field(
-                name="累計稅收", value=f"{stats.total_tax_collected:,} 幣", inline=False
+                name="累計稅收",
+                value=_format_currency_display(currency_config, stats.total_tax_collected),
+                inline=False,
             )
         elif department == "國土安全部":
             embed.add_field(
@@ -965,7 +1006,9 @@ class StateCouncilPanelView(discord.ui.View):
             )
         elif department == "中央銀行":
             embed.add_field(
-                name="本月貨幣發行", value=f"{stats.currency_issued:,} 幣", inline=False
+                name="本月貨幣發行",
+                value=_format_currency_display(currency_config, stats.currency_issued),
+                inline=False,
             )
 
         return embed
@@ -1077,7 +1120,9 @@ class StateCouncilPanelView(discord.ui.View):
             await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
-        modal = CurrencyIssuanceModal(self.service, self.guild_id, self.author_id, self.user_roles)
+        modal = CurrencyIssuanceModal(
+            self.service, self.currency_service, self.guild_id, self.author_id, self.user_roles
+        )
         await _send_modal_compat(interaction, modal)
 
     async def _currency_settings_callback(self, interaction: discord.Interaction) -> None:
@@ -2129,10 +2174,16 @@ class IdentityManagementModal(discord.ui.Modal, title="身分管理"):
 
 class CurrencyIssuanceModal(discord.ui.Modal, title="貨幣發行"):
     def __init__(
-        self, service: StateCouncilService, guild_id: int, author_id: int, user_roles: list[int]
+        self,
+        service: StateCouncilService,
+        currency_service: CurrencyConfigService,
+        guild_id: int,
+        author_id: int,
+        user_roles: list[int],
     ) -> None:
         super().__init__()
         self.service = service
+        self.currency_service = currency_service
         self.guild_id = guild_id
         self.author_id = author_id
         self.user_roles = user_roles
@@ -2178,11 +2229,16 @@ class CurrencyIssuanceModal(discord.ui.Modal, title="貨幣發行"):
                 month_period=month_period,
             )
 
+            # Get currency config
+            currency_config = await self.currency_service.get_currency_config(
+                guild_id=self.guild_id
+            )
+
             await _send_message_compat(
                 interaction,
                 content=(
                     f"✅ 貨幣發行成功！\n"
-                    f"發行金額：{amount:,} 幣\n"
+                    f"發行金額：{_format_currency_display(currency_config, amount)}\n"
                     f"理由：{reason}\n"
                     f"評估月份：{month_period}"
                 ),

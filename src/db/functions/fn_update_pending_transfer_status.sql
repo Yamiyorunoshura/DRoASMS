@@ -14,7 +14,7 @@ BEGIN
 
     UPDATE economy.pending_transfers
     SET status = p_new_status,
-        updated_at = timezone('utc', now())
+        updated_at = timezone('utc', clock_timestamp())
     WHERE transfer_id = p_transfer_id;
 END;
 $$;

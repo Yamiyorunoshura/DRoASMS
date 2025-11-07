@@ -24,7 +24,7 @@ BEGIN
     ON CONFLICT ON CONSTRAINT council_config_pkey
     DO UPDATE SET council_role_id = EXCLUDED.council_role_id,
                   council_account_member_id = EXCLUDED.council_account_member_id,
-                  updated_at = timezone('utc', now())
+                  updated_at = timezone('utc', clock_timestamp())
     RETURNING cc.guild_id, cc.council_role_id, cc.council_account_member_id, cc.created_at, cc.updated_at;
 END;
 $$;
@@ -79,7 +79,7 @@ RETURNS TABLE (
     target_department_id text
 ) LANGUAGE plpgsql AS $$
 DECLARE
-    v_now timestamptz := timezone('utc', now());
+    v_now timestamptz := timezone('utc', clock_timestamp());
     v_active_count int;
     v_n int;
     v_t int;
@@ -153,10 +153,14 @@ $$;
 
 -- Fetch snapshot member ids
 CREATE OR REPLACE FUNCTION governance.fn_get_snapshot_members(p_proposal_id uuid)
-RETURNS SETOF bigint LANGUAGE plpgsql AS $$
+RETURNS TABLE (
+    member_id bigint
+) LANGUAGE plpgsql AS $$
 BEGIN
     RETURN QUERY
-    SELECT member_id FROM governance.proposal_snapshots WHERE proposal_id = p_proposal_id;
+    SELECT ps.member_id
+    FROM governance.proposal_snapshots AS ps
+    WHERE ps.proposal_id = p_proposal_id;
 END;
 $$;
 
@@ -177,7 +181,7 @@ DECLARE v_votes int; v_ok boolean := false; BEGIN
     SELECT COUNT(*) INTO v_votes FROM governance.votes WHERE proposal_id = p_proposal_id;
     IF COALESCE(v_votes, 0) = 0 THEN
         UPDATE governance.proposals
-        SET status = '已撤案', updated_at = timezone('utc', now())
+        SET status = '已撤案', updated_at = timezone('utc', clock_timestamp())
         WHERE proposal_id = p_proposal_id AND status = '進行中';
         GET DIAGNOSTICS v_votes = ROW_COUNT;
         v_ok := (v_votes = 1);
@@ -196,7 +200,7 @@ BEGIN
     VALUES (p_proposal_id, p_voter_id, p_choice)
     ON CONFLICT (proposal_id, voter_id)
     DO UPDATE SET choice = EXCLUDED.choice,
-                  updated_at = timezone('utc', now());
+                  updated_at = timezone('utc', clock_timestamp());
 END; $$;
 
 -- Fetch tally counts in one row
@@ -230,9 +234,10 @@ RETURNS TABLE (
 ) LANGUAGE plpgsql AS $$
 BEGIN
     RETURN QUERY
-    SELECT voter_id, choice
-    FROM governance.votes WHERE proposal_id = p_proposal_id
-    ORDER BY updated_at;
+    SELECT v.voter_id, v.choice
+    FROM governance.votes AS v
+    WHERE v.proposal_id = p_proposal_id
+    ORDER BY v.updated_at;
 END; $$;
 
 -- Mark proposal status and optional execution info
@@ -247,7 +252,7 @@ BEGIN
     SET status = p_status,
         execution_tx_id = p_execution_tx_id,
         execution_error = p_execution_error,
-        updated_at = timezone('utc', now())
+        updated_at = timezone('utc', clock_timestamp())
     WHERE proposal_id = p_proposal_id;
 END; $$;
 
@@ -277,7 +282,7 @@ BEGIN
            p.attachment_url, p.snapshot_n, p.threshold_t, p.deadline_at, p.status,
            p.reminder_sent, p.created_at, p.updated_at, p.target_department_id
     FROM governance.proposals AS p
-    WHERE p.status = '進行中' AND p.deadline_at <= timezone('utc', now());
+    WHERE p.status = '進行中' AND p.deadline_at <= timezone('utc', clock_timestamp());
 END; $$;
 
 -- List reminder candidates (24h to deadline and not reminded)
@@ -308,7 +313,7 @@ BEGIN
     FROM governance.proposals AS p
     WHERE p.status = '進行中'
       AND p.reminder_sent = false
-      AND p.deadline_at - interval '24 hours' <= timezone('utc', now());
+      AND p.deadline_at - interval '24 hours' <= timezone('utc', clock_timestamp());
 END; $$;
 
 -- List active proposals
@@ -347,7 +352,7 @@ RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
     UPDATE governance.proposals
     SET reminder_sent = true,
-        updated_at = timezone('utc', now())
+        updated_at = timezone('utc', clock_timestamp())
     WHERE proposal_id = p_proposal_id;
 END; $$;
 
@@ -409,14 +414,16 @@ END; $$;
 
 -- List unvoted members for a proposal
 CREATE OR REPLACE FUNCTION governance.fn_list_unvoted_members(p_proposal_id uuid)
-RETURNS SETOF bigint LANGUAGE plpgsql AS $$
+RETURNS TABLE (
+    member_id bigint
+) LANGUAGE plpgsql AS $$
 BEGIN
     RETURN QUERY
     SELECT ps.member_id
-    FROM governance.proposal_snapshots ps
+    FROM governance.proposal_snapshots AS ps
     WHERE ps.proposal_id = p_proposal_id
       AND NOT EXISTS (
-          SELECT 1 FROM governance.votes v
+          SELECT 1 FROM governance.votes AS v
           WHERE v.proposal_id = ps.proposal_id AND v.voter_id = ps.member_id
       )
     ORDER BY ps.member_id;

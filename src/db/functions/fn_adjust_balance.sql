@@ -33,7 +33,7 @@ RETURNS economy.adjustment_result
 LANGUAGE plpgsql
 AS $$
 DECLARE
-    v_now timestamptz := timezone('utc', now());
+    v_now timestamptz := timezone('utc', clock_timestamp());
     v_metadata jsonb := coalesce(p_metadata, '{}'::jsonb);
     v_reason text := nullif(p_reason, '');
     v_target_balance bigint;

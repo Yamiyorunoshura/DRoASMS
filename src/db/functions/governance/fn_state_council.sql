@@ -39,7 +39,7 @@ BEGIN
                   finance_account_id = EXCLUDED.finance_account_id,
                   security_account_id = EXCLUDED.security_account_id,
                   central_bank_account_id = EXCLUDED.central_bank_account_id,
-                  updated_at = timezone('utc', now())
+                  updated_at = timezone('utc', clock_timestamp())
     RETURNING c.guild_id, c.leader_id, c.leader_role_id, c.internal_affairs_account_id,
               c.finance_account_id, c.security_account_id, c.central_bank_account_id,
               c.created_at, c.updated_at;
@@ -110,7 +110,7 @@ BEGIN
                   tax_rate_basis = EXCLUDED.tax_rate_basis,
                   tax_rate_percent = EXCLUDED.tax_rate_percent,
                   max_issuance_per_month = EXCLUDED.max_issuance_per_month,
-                  updated_at = timezone('utc', now())
+                  updated_at = timezone('utc', clock_timestamp())
     RETURNING dc.id, dc.guild_id, dc.department, dc.role_id, dc.welfare_amount, dc.welfare_interval_hours,
               dc.tax_rate_basis, dc.tax_rate_percent, dc.max_issuance_per_month, dc.created_at, dc.updated_at;
 END; $$;
@@ -185,7 +185,7 @@ BEGIN
     -- 使用具名主鍵約束避免與 RETURNS TABLE 之 account_id 衝突
     ON CONFLICT ON CONSTRAINT government_accounts_pkey
     DO UPDATE SET balance = EXCLUDED.balance,
-                  updated_at = timezone('utc', now())
+                  updated_at = timezone('utc', clock_timestamp())
     RETURNING ga.account_id, ga.guild_id, ga.department, ga.balance, ga.created_at, ga.updated_at;
 END; $$;
 
@@ -214,7 +214,7 @@ CREATE OR REPLACE FUNCTION governance.fn_update_government_account_balance(
 BEGIN
     UPDATE governance.government_accounts
     SET balance = p_new_balance,
-        updated_at = timezone('utc', now())
+        updated_at = timezone('utc', clock_timestamp())
     WHERE account_id = p_account_id;
 END; $$;
 

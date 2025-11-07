@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock
 import asyncpg
 import structlog
 
+from src.bot.services.currency_config_service import CurrencyConfigService
 from src.db.gateway.economy_queries import EconomyQueryGateway
 from src.db.gateway.state_council_governance import StateCouncilGovernanceGateway
 
@@ -63,11 +64,17 @@ class ActivityReport:
 class StateCouncilReportGenerator:
     """Generates comprehensive reports for State Council operations."""
 
-    def __init__(self, *, gateway: StateCouncilGovernanceGateway | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        gateway: StateCouncilGovernanceGateway | None = None,
+        currency_service: CurrencyConfigService | None = None,
+    ) -> None:
         # 預設以可被 stub 的 AsyncMock 取代，便於單元測試注入回傳值
         self._gateway = gateway or AsyncMock(spec=StateCouncilGovernanceGateway)
         # 經濟系統查詢：以即時餘額為單一真實來源
         self._economy = EconomyQueryGateway()
+        self._currency_service = currency_service
 
     async def generate_financial_summary(
         self,
@@ -531,7 +538,7 @@ class StateCouncilReportGenerator:
             "generated_at": datetime.now(tz=timezone.utc).isoformat(),
         }
 
-    def format_report_as_markdown(self, report_data: Dict[str, Any]) -> str:
+    async def format_report_as_markdown(self, report_data: Dict[str, Any], *, guild_id: int) -> str:
         """Format report data as markdown."""
         period = report_data["period"]
         financial = report_data["financial_summary"]
@@ -539,14 +546,36 @@ class StateCouncilReportGenerator:
         activity = report_data["activity_summary"]
         balances = report_data["account_balances"]
 
+        # Get currency config
+        currency_display = "幣"  # Default fallback
+        if self._currency_service:
+            try:
+                currency_config = await self._currency_service.get_currency_config(
+                    guild_id=guild_id
+                )
+                currency_display = (
+                    f"{currency_config.currency_name} {currency_config.currency_icon}".strip()
+                    if currency_config.currency_icon
+                    else currency_config.currency_name
+                )
+            except Exception:
+                pass  # Use default if service not available or error
+
+        def _format_amount(amount: int) -> str:
+            return f"{amount:,} {currency_display}"
+
+        def _format_net_flow(amount: int) -> str:
+            sign = "+" if amount >= 0 else "-"
+            return f"{sign}{abs(amount):,} {currency_display}"
+
         lines = [
             f"# 國務院月報 - {period}",
             "",
             "## 📊 財務摘要",
-            f"- 福利發放總額：{financial['total_welfare_disbursed']:,} 幣",
-            f"- 稅收總額：{financial['total_tax_collected']:,} 幣",
-            f"- 貨幣發行總額：{financial['total_currency_issued']:,} 幣",
-            f"- 淨流動：{financial['net_flow']:+,} 幣",
+            f"- 福利發放總額：{_format_amount(financial['total_welfare_disbursed'])}",
+            f"- 稅收總額：{_format_amount(financial['total_tax_collected'])}",
+            f"- 貨幣發行總額：{_format_amount(financial['total_currency_issued'])}",
+            f"- 淨流動：{_format_net_flow(financial['net_flow'])}",
             "",
             "## 🏛️ 各部門表現",
         ]
@@ -560,12 +589,13 @@ class StateCouncilReportGenerator:
                     f"### {dept_emoji} {dept}",
                     f"- 總操作數：{dept_metrics['total_operations']}",
                     (
-                        f"- 總金額：{dept_metrics['total_amount']:,} 幣"
+                        f"- 總金額：{_format_amount(dept_metrics['total_amount'])}"
                         if dept_metrics["total_amount"] > 1
                         else f"- 總操作數：{dept_metrics['total_operations']}"
                     ),
                     (
-                        f"- 平均每次操作：{dept_metrics['average_per_operation']:.2f} 幣"
+                        f"- 平均每次操作：{dept_metrics['average_per_operation']:.2f} "
+                        f"{currency_display}"
                         if dept_metrics["average_per_operation"] >= 1
                         else ""
                     ),
@@ -604,7 +634,7 @@ class StateCouncilReportGenerator:
             dept_emoji = {"內政部": "🏘️", "財政部": "💰", "國土安全部": "🛡️", "中央銀行": "🏦"}.get(
                 dept, ""
             )
-            lines.append(f"- {dept_emoji} {dept}：餘額：{balance:,} 幣")
+            lines.append(f"- {dept_emoji} {dept}：餘額：{_format_amount(balance)}")
 
         lines.extend(["", f"*報表生成時間：{report_data['generated_at']}*"])
 

@@ -10,11 +10,13 @@ from dotenv import load_dotenv
 from src.bot.services.adjustment_service import AdjustmentService
 from src.bot.services.balance_service import BalanceService
 from src.bot.services.council_service import CouncilService
+from src.bot.services.currency_config_service import CurrencyConfigService
 from src.bot.services.state_council_service import StateCouncilService
 from src.bot.services.transfer_service import TransferService
 from src.db import pool as db_pool
 from src.db.gateway.council_governance import CouncilGovernanceGateway
 from src.db.gateway.economy_adjustments import EconomyAdjustmentGateway
+from src.db.gateway.economy_configuration import EconomyConfigurationGateway
 from src.db.gateway.economy_pending_transfers import PendingTransferGateway
 from src.db.gateway.economy_queries import EconomyQueryGateway
 from src.db.gateway.economy_transfers import EconomyTransferGateway
@@ -40,6 +42,7 @@ def bootstrap_container() -> DependencyContainer:
     # Register gateways (stateless, can be singletons)
     container.register(CouncilGovernanceGateway, lifecycle=Lifecycle.SINGLETON)
     container.register(EconomyAdjustmentGateway, lifecycle=Lifecycle.SINGLETON)
+    container.register(EconomyConfigurationGateway, lifecycle=Lifecycle.SINGLETON)
     container.register(EconomyQueryGateway, lifecycle=Lifecycle.SINGLETON)
     container.register(EconomyTransferGateway, lifecycle=Lifecycle.SINGLETON)
     container.register(PendingTransferGateway, lifecycle=Lifecycle.SINGLETON)
@@ -63,6 +66,9 @@ def bootstrap_container() -> DependencyContainer:
 
     # AdjustmentService depends on pool and optional gateway
     container.register(AdjustmentService, lifecycle=Lifecycle.SINGLETON)
+
+    # CurrencyConfigService depends on pool and optional gateway
+    container.register(CurrencyConfigService, lifecycle=Lifecycle.SINGLETON)
 
     # CouncilService depends on optional gateway and transfer_service
     container.register(CouncilService, lifecycle=Lifecycle.SINGLETON)
