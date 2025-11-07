@@ -51,6 +51,7 @@ services:
       - pgadmin:/var/lib/pgadmin
 
   test:
+    profiles: ["test"]
     build:
       context: .
       dockerfile: docker/test.Dockerfile

@@ -18,10 +18,9 @@ from src.bot.services.state_council_service import (
     StateCouncilNotConfiguredError,
     StateCouncilService,
 )
-from src.db import pool as db_pool
+from src.infra.di.container import DependencyContainer
 
 LOGGER = structlog.get_logger(__name__)
-_ADJUST_SERVICE: AdjustmentService | None = None
 
 
 def get_help_data() -> HelpData:
@@ -60,8 +59,20 @@ def get_help_data() -> HelpData:
     }
 
 
-def register(tree: app_commands.CommandTree) -> None:
-    command = build_adjust_command(_get_adjust_service())
+def register(
+    tree: app_commands.CommandTree, *, container: DependencyContainer | None = None
+) -> None:
+    """Register the /adjust slash command with the provided command tree."""
+    if container is None:
+        # Fallback to old behavior for backward compatibility during migration
+        from src.db import pool as db_pool
+
+        pool = db_pool.get_pool()
+        service = AdjustmentService(pool)
+    else:
+        service = container.resolve(AdjustmentService)
+
+    command = build_adjust_command(service)
     tree.add_command(command)
     LOGGER.debug("bot.command.adjust.registered")
 
@@ -185,14 +196,6 @@ def _format_success_message(
     if reason:
         parts.append(f"📝 原因：{reason}")
     return "\n".join(parts)
-
-
-def _get_adjust_service() -> AdjustmentService:
-    global _ADJUST_SERVICE
-    if _ADJUST_SERVICE is None:
-        pool = db_pool.get_pool()
-        _ADJUST_SERVICE = AdjustmentService(pool)
-    return _ADJUST_SERVICE
 
 
 __all__ = ["build_adjust_command", "get_help_data", "register"]

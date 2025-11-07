@@ -16,6 +16,7 @@ from src.bot.services.state_council_service import (
     StateCouncilNotConfiguredError,
     StateCouncilService,
 )
+from src.infra.di.container import DependencyContainer
 from src.infra.events.state_council_events import (
     StateCouncilEvent,
 )
@@ -141,8 +142,16 @@ async def _send_modal_compat(interaction: Any, modal: Any) -> None:
         await interaction.response_send_modal(modal)
 
 
-def register(tree: app_commands.CommandTree) -> None:
-    service = StateCouncilService()
+def register(
+    tree: app_commands.CommandTree, *, container: DependencyContainer | None = None
+) -> None:
+    """Register the /state_council slash command group with the provided command tree."""
+    if container is None:
+        # Fallback to old behavior for backward compatibility during migration
+        service = StateCouncilService()
+    else:
+        service = container.resolve(StateCouncilService)
+
     tree.add_command(build_state_council_group(service))
     _install_background_scheduler(tree.client, service)
     LOGGER.debug("bot.command.state_council.registered")

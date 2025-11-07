@@ -7,7 +7,6 @@ from uuid import UUID
 import discord
 import structlog
 from discord import app_commands
-from dotenv import load_dotenv
 
 from src.bot.commands.help_data import HelpData
 from src.bot.services.council_service import CouncilService, GovernanceNotConfiguredError
@@ -23,10 +22,9 @@ from src.bot.services.transfer_service import (
     TransferThrottleError,
     TransferValidationError,
 )
-from src.db import pool as db_pool
+from src.infra.di.container import DependencyContainer
 
 LOGGER = structlog.get_logger(__name__)
-_TRANSFER_SERVICE: TransferService | None = None
 
 
 def get_help_data() -> HelpData:
@@ -64,9 +62,26 @@ def get_help_data() -> HelpData:
     }
 
 
-def register(tree: app_commands.CommandTree) -> None:
+def register(
+    tree: app_commands.CommandTree, *, container: DependencyContainer | None = None
+) -> None:
     """Register the /transfer slash command with the provided command tree."""
-    command = build_transfer_command(_get_transfer_service())
+    if container is None:
+        # Fallback to old behavior for backward compatibility during migration
+        import os
+
+        from dotenv import load_dotenv
+
+        from src.db import pool as db_pool
+
+        load_dotenv(override=False)
+        event_pool_enabled = os.getenv("TRANSFER_EVENT_POOL_ENABLED", "false").lower() == "true"
+        pool = db_pool.get_pool()
+        service = TransferService(pool, event_pool_enabled=event_pool_enabled)
+    else:
+        service = container.resolve(TransferService)
+
+    command = build_transfer_command(service)
     tree.add_command(command)
     LOGGER.debug("bot.command.transfer.registered")
 
@@ -118,6 +133,9 @@ def build_transfer_command(service: TransferService) -> app_commands.Command[Any
         target_id: int
         if isinstance(target, discord.Role):
             # 嘗試理事會身分組
+            # Note: CouncilService and StateCouncilService are resolved directly
+            # since they don't need the container in this context
+            # (they're stateless for these calls)
             try:
                 cfg = await CouncilService().get_config(guild_id=guild_id)
             except GovernanceNotConfiguredError:
@@ -258,19 +276,6 @@ def _format_pending_message(
         "💡 系統將自動檢查餘額、冷卻時間和每日上限，通過後自動執行轉帳。",
     ]
     return "\n".join(parts)
-
-
-def _get_transfer_service() -> TransferService:
-    global _TRANSFER_SERVICE
-    if _TRANSFER_SERVICE is None:
-        load_dotenv(override=False)
-        event_pool_enabled = os.getenv("TRANSFER_EVENT_POOL_ENABLED", "false").lower() == "true"
-        pool = db_pool.get_pool()
-        _TRANSFER_SERVICE = TransferService(
-            pool,
-            event_pool_enabled=event_pool_enabled,
-        )
-    return _TRANSFER_SERVICE
 
 
 __all__ = ["build_transfer_command", "get_help_data", "register"]

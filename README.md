@@ -696,6 +696,55 @@ act -j lint
 - 預設使用 `-n auto` 自動偵測 CPU 核心數
 - 確保測試使用獨立資料庫連線池與交易隔離
 
+#### 依賴注入容器（Dependency Injection Container）
+
+專案使用自訂的依賴注入容器來管理服務依賴，取代模組層級的全域單例模式。這使得測試更容易（可替換依賴）並提供統一的依賴管理機制。
+
+**核心概念：**
+- 容器位於 `src/infra/di/`
+- 支援三種生命週期：`SINGLETON`（單例）、`FACTORY`（每次新建）、`THREAD_LOCAL`（每執行緒一個）
+- 自動從建構子參數推斷依賴（基於型別提示）
+
+**使用方式：**
+```python
+from src.infra.di.container import DependencyContainer
+from src.infra.di.lifecycle import Lifecycle
+
+# 建立容器
+container = DependencyContainer()
+
+# 註冊服務（自動推斷依賴）
+container.register(MyService, lifecycle=Lifecycle.SINGLETON)
+
+# 解析服務
+service = container.resolve(MyService)
+```
+
+**測試中使用：**
+```python
+# 使用 conftest.py 提供的 di_container fixture
+def test_my_feature(di_container):
+    # 可以替換依賴為 mock
+    mock_service = Mock()
+    di_container.register_instance(MyService, mock_service)
+
+    # 測試邏輯...
+```
+
+**在命令模組中使用：**
+命令模組的 `register()` 函數現在接受可選的 `container` 參數：
+```python
+def register(tree: app_commands.CommandTree, *, container: DependencyContainer | None = None):
+    if container is None:
+        # 向後相容：使用舊的實例化方式
+        service = MyService()
+    else:
+        service = container.resolve(MyService)
+    # ...
+```
+
+詳細實作請參考 `src/infra/di/` 目錄。
+
 ## 生產環境實作要求
 
 根據專案憲章原則 X，本專案禁止在生產環境中使用模擬實現：

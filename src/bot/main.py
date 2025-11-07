@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 from importlib import import_module
 from pkgutil import iter_modules
@@ -14,6 +15,8 @@ from dotenv import load_dotenv
 from src.bot.services.transfer_event_pool import TransferEventPoolCoordinator
 from src.config.settings import BotSettings
 from src.db import pool as db_pool
+from src.infra.di.bootstrap import bootstrap_container
+from src.infra.di.container import DependencyContainer
 from src.infra.logging.config import configure_logging
 from src.infra.telemetry.listener import TelemetryListener
 
@@ -34,6 +37,7 @@ class EconomyBot(discord.Client):
         super().__init__(intents=intents)
         self.settings = settings
         self.tree = app_commands.CommandTree(self)
+        self._container: DependencyContainer | None = None
 
         # Initialize transfer event pool coordinator if enabled
         load_dotenv(override=False)
@@ -51,11 +55,14 @@ class EconomyBot(discord.Client):
         """Run once when the bot starts up to prepare global services."""
         await db_pool.init_pool()
 
+        # Bootstrap dependency injection container
+        self._container = bootstrap_container()
+
         # Start transfer event pool coordinator if enabled
         if self._transfer_coordinator is not None:
             await self._transfer_coordinator.start()
 
-        _bootstrap_command_tree(self.tree)
+        _bootstrap_command_tree(self.tree, container=self._container)
 
         LOGGER.info("bot.commands.loaded", count=len(self.tree.get_commands()))
 
@@ -132,13 +139,20 @@ class EconomyBot(discord.Client):
             LOGGER.exception("bot.commands.clear_global_error", error=str(exc))
 
 
-def _bootstrap_command_tree(tree: app_commands.CommandTree) -> None:
+def _bootstrap_command_tree(
+    tree: app_commands.CommandTree, container: DependencyContainer | None = None
+) -> None:
     """Import command modules so they can register handlers with the tree."""
     for module_name in _iter_command_modules():
         module = import_module(module_name)
         register = getattr(module, "register", None)
         if callable(register):
-            register(tree)
+            # Pass container if register function accepts it
+            sig = inspect.signature(register) if hasattr(inspect, "signature") else None
+            if sig and "container" in sig.parameters:
+                register(tree, container=container)
+            else:
+                register(tree)
             LOGGER.debug("bot.command.registered", module=module_name)
 
 

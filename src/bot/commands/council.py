@@ -20,6 +20,7 @@ from src.bot.services.council_service import (
 )
 from src.bot.services.department_registry import get_registry
 from src.db.pool import get_pool
+from src.infra.di.container import DependencyContainer
 from src.infra.events.council_events import CouncilEvent
 from src.infra.events.council_events import subscribe as subscribe_council_events
 
@@ -65,8 +66,15 @@ def get_help_data() -> dict[str, HelpData]:
     }
 
 
-def register(tree: app_commands.CommandTree) -> None:
-    service = CouncilService()
+def register(
+    tree: app_commands.CommandTree, *, container: DependencyContainer | None = None
+) -> None:
+    """Register the /council slash command group with the provided command tree."""
+    if container is None:
+        # Fallback to old behavior for backward compatibility during migration
+        service = CouncilService()
+    else:
+        service = container.resolve(CouncilService)
 
     tree.add_command(build_council_group(service))
     _install_background_scheduler(tree.client, service)

@@ -16,10 +16,9 @@ from src.bot.services.balance_service import (
     BalanceSnapshot,
     HistoryPage,
 )
-from src.db import pool as db_pool
+from src.infra.di.container import DependencyContainer
 
 LOGGER = structlog.get_logger(__name__)
-_BALANCE_SERVICE: BalanceService | None = None
 
 
 def get_help_data() -> dict[str, HelpData]:
@@ -72,9 +71,19 @@ def get_help_data() -> dict[str, HelpData]:
     }
 
 
-def register(tree: app_commands.CommandTree) -> None:
+def register(
+    tree: app_commands.CommandTree, *, container: DependencyContainer | None = None
+) -> None:
     """Register economy balance/history commands with the provided command tree."""
-    service = _get_balance_service()
+    if container is None:
+        # Fallback to old behavior for backward compatibility during migration
+        from src.db import pool as db_pool
+
+        pool = db_pool.get_pool()
+        service = BalanceService(pool)
+    else:
+        service = container.resolve(BalanceService)
+
     tree.add_command(build_balance_command(service))
     tree.add_command(build_history_command(service))
     LOGGER.debug("bot.command.balance.registered")
@@ -313,14 +322,6 @@ def _has_audit_permission(interaction: discord.Interaction) -> bool:
     return bool(
         getattr(permissions, "administrator", False) or getattr(permissions, "manage_guild", False)
     )
-
-
-def _get_balance_service() -> BalanceService:
-    global _BALANCE_SERVICE
-    if _BALANCE_SERVICE is None:
-        pool = db_pool.get_pool()
-        _BALANCE_SERVICE = BalanceService(pool)
-    return _BALANCE_SERVICE
 
 
 __all__ = ["build_balance_command", "build_history_command", "get_help_data", "register"]
