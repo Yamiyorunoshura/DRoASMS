@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2025-01-27
+
+### Added
+- **歷史記錄分頁輔助函數**：新增資料庫遷移 `030_history_pagination_helpers.py`，提供 `fn_has_more_history` 輔助函數，支援游標式分頁查詢
+- **餘額快照查詢**：新增 `EconomyQueryGateway.fetch_balance_snapshot()` 方法，提供唯讀餘額查詢，避免 `fn_get_balance` 的副作用（鎖等待）
+
+### Changed
+- **測試基礎設施改進**：新增 `pytest-timeout>=2.3.0` 依賴，設定 300 秒測試超時時間
+- **可觀測性改進**：改進 `TelemetryListener` 的餘額查詢邏輯，優先使用快照查詢以避免鎖等待
+- **測試隔離改進**：增強 Docker Compose 測試隔離，使用唯一的專案名稱避免測試間衝突
+- **測試清理改進**：改進非同步協調器清理邏輯，新增超時保護機制
+- **開發工具改進**：更新 Makefile 命令，使用本地 `uv` 而非 Docker Compose，提升開發效率
+
+### Fixed
+- 修復 `test_multi_guild.py` 中的 SQL 佔位符問題
+- 改進測試清理與資源管理
+
 ## [0.6.0] - 2025-11-07
 
 ### Added
