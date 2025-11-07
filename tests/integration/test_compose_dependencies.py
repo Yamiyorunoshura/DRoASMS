@@ -26,8 +26,10 @@ def _has_cmd(cmd: str) -> bool:
     )
 
 
-def _docker_compose(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    cmd = ["bash", "-lc", "docker compose " + " ".join(args)]
+def _docker_compose(
+    project_name: str, *args: str, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    cmd = ["bash", "-lc", f"docker compose -p {project_name} " + " ".join(args)]
     return subprocess.run(
         cmd,
         cwd=str(REPO_ROOT),
@@ -37,8 +39,8 @@ def _docker_compose(*args: str, check: bool = True) -> subprocess.CompletedProce
     )
 
 
-def _container_id(service: str) -> str:
-    out = _docker_compose("ps -q", service, check=True).stdout.strip()
+def _container_id(project_name: str, service: str) -> str:
+    out = _docker_compose(project_name, "ps -q", service, check=True).stdout.strip()
     if not out:
         raise RuntimeError(f"No container for service: {service}")
     return out.splitlines()[0].strip()
@@ -77,7 +79,9 @@ pytestmark = [
 
 @pytest.mark.timeout(240)
 @pytest.mark.integration
-def test_compose_dependencies_postgres_healthy_before_bot_ready(tmp_path: Path) -> None:
+def test_compose_dependencies_postgres_healthy_before_bot_ready(
+    tmp_path: Path, docker_compose_project: str
+) -> None:
     """驗證 postgres 先變為 healthy，之後才出現 bot.ready。"""
 
     token = os.getenv("TEST_DISCORD_TOKEN") or os.getenv("DISCORD_TOKEN")
@@ -99,11 +103,11 @@ def test_compose_dependencies_postgres_healthy_before_bot_ready(tmp_path: Path) 
                 lines.append(line)
         env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-        # 啟動 compose
-        _docker_compose("up -d --build", check=True)
+        # 啟動 compose，使用獨立的專案名稱
+        _docker_compose(docker_compose_project, "up -d --build", check=True)
 
         # 等待 postgres 變為 healthy
-        pg_id = _container_id("postgres")
+        pg_id = _container_id(docker_compose_project, "postgres")
         deadline = time.time() + 120
         became_healthy_at: datetime | None = None
         while time.time() < deadline:
@@ -124,7 +128,7 @@ def test_compose_dependencies_postgres_healthy_before_bot_ready(tmp_path: Path) 
 
         # bot 應在 postgres healthy 之後才就緒
         # 先驗證容器啟動時間 > healthy 時間
-        bot_id = _container_id("bot")
+        bot_id = _container_id(docker_compose_project, "bot")
         bot_started_at = _parse_time(_inspect_json(bot_id)["State"]["StartedAt"])
         assert (
             bot_started_at >= became_healthy_at
@@ -134,7 +138,7 @@ def test_compose_dependencies_postgres_healthy_before_bot_ready(tmp_path: Path) 
         pattern = re.compile(r"\{.*\"event\"\s*:\s*\"bot.ready\".*\}")
         deadline = time.time() + 120
         proc = subprocess.Popen(
-            ["bash", "-lc", "docker compose logs -f bot"],
+            ["bash", "-lc", f"docker compose -p {docker_compose_project} logs -f bot"],
             cwd=str(REPO_ROOT),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -151,7 +155,8 @@ def test_compose_dependencies_postgres_healthy_before_bot_ready(tmp_path: Path) 
         finally:
             proc.terminate()
     finally:
-        _docker_compose("down")
+        # 確保清理 compose 專案
+        _docker_compose(docker_compose_project, "down", check=False)
         if env_backup is None:
             if env_path.exists():
                 env_path.unlink()

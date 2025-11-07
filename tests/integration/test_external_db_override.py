@@ -35,6 +35,7 @@ pytestmark = [
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(30)
 def test_compose_uses_external_database_url_when_overridden(tmp_path: Path) -> None:
     """當 .env 指定 DATABASE_URL 時，compose 應採用該值覆寫預設。"""
 

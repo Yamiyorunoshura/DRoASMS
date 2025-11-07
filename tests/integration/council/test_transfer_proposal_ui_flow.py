@@ -22,6 +22,7 @@ class _FakeGatewayWithList(_FakeGateway):
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(60)
 @pytest.mark.asyncio
 async def test_transfer_to_user_full_flow(monkeypatch: pytest.MonkeyPatch) -> None:
     """完整流程：選擇轉帳給使用者 → 選擇使用者 → 填寫資訊 → 建立提案 → 投票"""

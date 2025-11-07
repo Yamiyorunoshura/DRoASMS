@@ -12,8 +12,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _compose_cmd(*args: str) -> list[str]:
-    return ["docker", "compose", "-f", str(REPO_ROOT / "compose.yaml"), *args]
+def _compose_cmd(project_name: str, *args: str) -> list[str]:
+    return ["docker", "compose", "-p", project_name, "-f", str(REPO_ROOT / "compose.yaml"), *args]
 
 
 def _has_cmd(cmd: str) -> bool:
@@ -43,8 +43,9 @@ pytestmark = [
 ]
 
 
+@pytest.mark.timeout(300)
 @pytest.mark.integration
-def test_compose_restart_update_cycle(tmp_path: Path) -> None:
+def test_compose_restart_update_cycle(tmp_path: Path, docker_compose_project: str) -> None:
     """Down → Up → observe a second bot.ready event.
 
     Preconditions: requires TEST_DISCORD_TOKEN or DISCORD_TOKEN in env.
@@ -67,29 +68,35 @@ def test_compose_restart_update_cycle(tmp_path: Path) -> None:
             lines.append(f"DISCORD_TOKEN={token}")
         env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    # Fresh restart cycle
-    subprocess.run(_compose_cmd("down"), check=False)
-    subprocess.run(_compose_cmd("up", "-d", "--build"), check=True)
+    try:
+        # Fresh restart cycle，使用獨立的專案名稱
+        subprocess.run(_compose_cmd(docker_compose_project, "down"), check=False)
+        subprocess.run(_compose_cmd(docker_compose_project, "up", "-d", "--build"), check=True)
 
-    # Observe first bot.ready
-    pattern = re.compile(r"\{.*\"event\"\s*:\s*\"bot.ready\".*\}")
-    first_seen = _wait_for_log(pattern, timeout=180)
-    if not first_seen:
-        pytest.fail("第一次啟動 180s 內未看到 bot.ready 事件")
+        # Observe first bot.ready
+        pattern = re.compile(r"\{.*\"event\"\s*:\s*\"bot.ready\".*\}")
+        first_seen = _wait_for_log(docker_compose_project, pattern, timeout=180)
+        if not first_seen:
+            pytest.fail("第一次啟動 180s 內未看到 bot.ready 事件")
 
-    # Restart just the bot service to simulate update/redeploy
-    subprocess.run(_compose_cmd("up", "-d", "--build", "bot"), check=True)
+        # Restart just the bot service to simulate update/redeploy
+        subprocess.run(
+            _compose_cmd(docker_compose_project, "up", "-d", "--build", "bot"), check=True
+        )
 
-    # Count bot.ready occurrences – we expect to see at least two
-    count = _count_ready_events(duration=180)
-    assert count >= 2, f"預期至少兩次 bot.ready 事件（重啟後），實際 {count}"
+        # Count bot.ready occurrences – we expect to see at least two
+        count = _count_ready_events(docker_compose_project, duration=180)
+        assert count >= 2, f"預期至少兩次 bot.ready 事件（重啟後），實際 {count}"
+    finally:
+        # 確保清理 compose 專案
+        subprocess.run(_compose_cmd(docker_compose_project, "down"), check=False)
 
 
-def _wait_for_log(pattern: re.Pattern[str], timeout: int) -> bool:
+def _wait_for_log(project_name: str, pattern: re.Pattern[str], timeout: int) -> bool:
     """Stream logs and return True once a line matches pattern or timeout occurs."""
     start = time.time()
     with subprocess.Popen(
-        _compose_cmd("logs", "-f", "bot"),
+        _compose_cmd(project_name, "logs", "-f", "bot"),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -108,12 +115,12 @@ def _wait_for_log(pattern: re.Pattern[str], timeout: int) -> bool:
     return False
 
 
-def _count_ready_events(duration: int) -> int:
+def _count_ready_events(project_name: str, duration: int) -> int:
     """Count occurrences of bot.ready from logs within the given duration."""
     end = time.time() + duration
     count = 0
     with subprocess.Popen(
-        _compose_cmd("logs", "-f", "bot"),
+        _compose_cmd(project_name, "logs", "-f", "bot"),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

@@ -36,6 +36,7 @@ def _snowflake() -> int:
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(60)
 class TestStateCouncilFlow:
     """Integration tests for State Council complete workflows."""
 
@@ -209,7 +210,6 @@ class TestStateCouncilFlow:
                 recipient_id=mock_recipient_id,
                 amount=1500,
                 disbursement_type="特殊福利",
-                reference_id="REF123",
             )
 
             # Verify result

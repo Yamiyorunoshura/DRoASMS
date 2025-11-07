@@ -81,6 +81,29 @@ class EconomyQueryGateway:
             raise RuntimeError("fn_get_balance returned no result.")
         return BalanceRecord.from_record(record)
 
+    async def fetch_balance_snapshot(
+        self,
+        connection: asyncpg.Connection,
+        *,
+        guild_id: int,
+        member_id: int,
+    ) -> BalanceRecord | None:
+        """Read-only balance query that skips fn_get_balance side effects."""
+        sql = f"""
+            SELECT
+                guild_id,
+                member_id,
+                current_balance AS balance,
+                last_modified_at,
+                throttled_until
+            FROM {self._schema}.guild_member_balances
+            WHERE guild_id = $1 AND member_id = $2
+        """
+        record = await connection.fetchrow(sql, guild_id, member_id)
+        if record is None:
+            return None
+        return BalanceRecord.from_record(record)
+
     async def fetch_history(
         self,
         connection: asyncpg.Connection,

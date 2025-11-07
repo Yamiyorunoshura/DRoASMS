@@ -17,6 +17,7 @@ def _snowflake() -> int:
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(60)
 @pytest.mark.asyncio
 async def test_multi_guild_data_isolation(
     db_pool: Any,
@@ -109,6 +110,7 @@ async def test_multi_guild_data_isolation(
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(60)
 @pytest.mark.asyncio
 async def test_multi_guild_concurrent_operations(
     db_pool: Any,
@@ -163,6 +165,7 @@ async def test_multi_guild_concurrent_operations(
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(60)
 @pytest.mark.asyncio
 async def test_multi_guild_same_user_different_guilds(
     db_pool: Any,
@@ -174,6 +177,7 @@ async def test_multi_guild_same_user_different_guilds(
     same_user = _snowflake()
 
     # 同一用戶在兩個 guild 中有不同的初始餘額
+    # Note: $2 is reused, so we pass 5 arguments for 5 unique placeholders
     await db_connection.execute(
         """
         INSERT INTO economy.guild_member_balances (guild_id, member_id, current_balance)
@@ -183,7 +187,6 @@ async def test_multi_guild_same_user_different_guilds(
         same_user,
         1000,
         guild_2,
-        same_user,
         2000,
     )
 

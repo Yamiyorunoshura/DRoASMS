@@ -75,7 +75,7 @@ def register(tree: app_commands.CommandTree) -> None:
 
 
 def build_council_group(service: CouncilService) -> app_commands.Group:
-    council = app_commands.Group(name="council", description="Council governance commands")
+    council = app_commands.Group(name="council", description="理事會治理指令群組")
 
     @council.command(name="config_role", description="設定常任理事身分組（角色）")
     @app_commands.describe(role="Discord 角色，將作為理事名冊來源")

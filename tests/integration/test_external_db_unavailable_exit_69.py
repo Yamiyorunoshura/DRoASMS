@@ -10,6 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(30)
 def test_external_db_unavailable_reports_exit_69_and_event() -> None:
     """將 DATABASE_URL 指向不可達主機時，應在重試後以 69 結束並輸出 db.unavailable。"""
 

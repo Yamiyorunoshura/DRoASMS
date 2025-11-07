@@ -16,6 +16,7 @@ def _snowflake() -> int:
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(60)
 @pytest.mark.asyncio
 async def test_transfer_history_adjust_flow(
     db_pool: Any,

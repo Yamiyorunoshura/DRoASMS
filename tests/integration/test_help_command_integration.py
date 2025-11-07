@@ -23,6 +23,7 @@ def _create_mock_client() -> MagicMock:
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(60)
 @pytest.mark.asyncio
 async def test_help_collects_all_registered_commands() -> None:
     """Test that help system collects all commands from a bootstrapped tree."""

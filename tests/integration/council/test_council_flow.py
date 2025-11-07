@@ -14,6 +14,7 @@ from tests.unit.test_council_service import (
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(60)
 @pytest.mark.asyncio
 async def test_propose_vote_execute_success(monkeypatch: pytest.MonkeyPatch) -> None:
     """整合流程（假件）：建案→投票達標→執行成功。"""

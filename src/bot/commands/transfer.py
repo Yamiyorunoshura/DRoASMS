@@ -33,7 +33,9 @@ def get_help_data() -> HelpData:
     """Return help information for the transfer command."""
     return {
         "name": "transfer",
-        "description": "轉帳虛擬貨幣給伺服器內的其他成員、理事會身分組，或部門領導人身分組。",
+        "description": (
+            "轉帳虛擬貨幣（currency）給伺服器內的其他成員、理事會身分組，" "或部門領導人身分組。"
+        ),
         "category": "economy",
         "parameters": [
             {
@@ -74,7 +76,7 @@ def build_transfer_command(service: TransferService) -> app_commands.Command[Any
 
     @app_commands.command(
         name="transfer",
-        description="Transfer virtual currency to another member in this guild.",
+        description="轉帳虛擬貨幣（currency）給伺服器內的其他成員、理事會身分組，或部門領導人身分組。",
     )
     @app_commands.describe(
         target="要接收點數的成員、理事會身分組，或部門領導人身分組",

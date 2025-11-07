@@ -10,6 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(30)
 def test_missing_env_fails_fast_exit_64_and_event_present() -> None:
     script = REPO_ROOT / "docker" / "bin" / "entrypoint.sh"
     assert script.exists(), f"入口腳本不存在: {script}"

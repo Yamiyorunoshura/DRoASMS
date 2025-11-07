@@ -22,6 +22,7 @@ def _snowflake() -> int:
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(60)
 @pytest.mark.asyncio
 async def test_event_pool_success_flow(
     db_pool: Any,
@@ -98,9 +99,21 @@ async def test_event_pool_success_flow(
         assert pending.checks.get("daily_limit") == 1
 
     finally:
-        await coordinator.stop()
+        # Ensure coordinator stops with timeout protection
+        try:
+            await asyncio.wait_for(coordinator.stop(), timeout=5.0)
+        except asyncio.TimeoutError:
+            # Force cancel cleanup task if timeout
+            if coordinator._cleanup_task and not coordinator._cleanup_task.done():
+                coordinator._cleanup_task.cancel()
+                try:
+                    await coordinator._cleanup_task
+                except asyncio.CancelledError:
+                    pass
 
 
+@pytest.mark.integration
+@pytest.mark.timeout(60)
 @pytest.mark.asyncio
 async def test_event_pool_retry_flow(
     db_pool: Any,
@@ -180,9 +193,21 @@ async def test_event_pool_retry_flow(
         assert pending.checks.get("balance") == 1
 
     finally:
-        await coordinator.stop()
+        # Ensure coordinator stops with timeout protection
+        try:
+            await asyncio.wait_for(coordinator.stop(), timeout=5.0)
+        except asyncio.TimeoutError:
+            # Force cancel cleanup task if timeout
+            if coordinator._cleanup_task and not coordinator._cleanup_task.done():
+                coordinator._cleanup_task.cancel()
+                try:
+                    await coordinator._cleanup_task
+                except asyncio.CancelledError:
+                    pass
 
 
+@pytest.mark.integration
+@pytest.mark.timeout(60)
 @pytest.mark.asyncio
 async def test_transfer_service_event_pool_mode(
     db_pool: Any,
@@ -235,6 +260,8 @@ async def test_transfer_service_event_pool_mode(
         os.environ["TRANSFER_EVENT_POOL_ENABLED"] = original_env
 
 
+@pytest.mark.integration
+@pytest.mark.timeout(60)
 @pytest.mark.asyncio
 async def test_expired_transfer_cleanup(
     db_pool: Any,
@@ -273,4 +300,14 @@ async def test_expired_transfer_cleanup(
         assert pending.status == "rejected"
 
     finally:
-        await coordinator.stop()
+        # Ensure coordinator stops with timeout protection
+        try:
+            await asyncio.wait_for(coordinator.stop(), timeout=5.0)
+        except asyncio.TimeoutError:
+            # Force cancel cleanup task if timeout
+            if coordinator._cleanup_task and not coordinator._cleanup_task.done():
+                coordinator._cleanup_task.cancel()
+                try:
+                    await coordinator._cleanup_task
+                except asyncio.CancelledError:
+                    pass

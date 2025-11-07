@@ -8,6 +8,12 @@ help: ## 顯示此幫助訊息
 	@echo "可用的命令："
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
+start-dev: ## 啟動機器人（開發環境，會重建容器）
+	docker compose up --build --force-recreate
+
+start-prod: ## 啟動機器人（生產環境，後台執行，只啟動 bot 和 postgres）
+	docker compose up -d postgres bot --build --force-recreate
+
 install: ## 安裝專案依賴
 	uv sync --group dev
 
@@ -15,22 +21,22 @@ install-pre-commit: ## 安裝並啟用 pre-commit hooks
 	uv run pre-commit install
 
 format: ## 自動格式化程式碼（black）
-	docker compose run --rm test bash -c "black src/ tests/"
+	uv run black src/ tests/
 
 lint: ## 執行 linting 檢查（ruff）
-	docker compose run --rm test bash -c "ruff check ."
+	uv run ruff check .
 
 lint-fix: ## 執行 linting 並自動修復（ruff）
-	docker compose run --rm test bash -c "ruff check --fix ."
+	uv run ruff check --fix .
 
 type-check: ## 執行型別檢查（mypy）
-	docker compose run --rm test bash -c "mypy src/"
+	uv run mypy src/
 
 format-check: ## 檢查程式碼格式是否正確（black --check）
-	docker compose run --rm test bash -c "black --check src/ tests/"
+	uv run black --check src/ tests/
 
 pre-commit-all: ## 對所有檔案執行 pre-commit 檢查
-	docker compose run --rm test bash -c "pre-commit run --all-files"
+	uv run pre-commit run --all-files
 
 ci-local: format-check lint type-check pre-commit-all ## 執行所有本地 CI 檢查（格式化、lint、型別檢查、pre-commit）
 	@echo "✓ 所有本地 CI 檢查通過！"

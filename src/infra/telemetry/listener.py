@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections import deque
 from collections.abc import Awaitable, Callable
+from inspect import iscoroutinefunction
 from typing import Any
 from uuid import UUID
 
@@ -358,23 +359,40 @@ class TelemetryListener:
             except Exception:
                 target_display = "收款人"
 
-            # 查詢轉帳後的餘額
+            # 查詢轉帳後的餘額（僅讀取，避免 fn_get_balance 造成鎖等待）
             initiator_balance = None
             try:
                 pool = db_pool.get_pool()
-                economy = EconomyQueryGateway()
-                async with pool.acquire() as conn:
-                    balance_result = await economy.fetch_balance(
-                        conn, guild_id=guild_id, member_id=initiator_id
+            except RuntimeError:
+                pool = None
+
+            if pool is not None and guild_id is not None and initiator_id is not None:
+                try:
+                    economy = EconomyQueryGateway()
+                    async with pool.acquire() as conn:
+                        balance_result = None
+
+                        snapshot_fetcher = getattr(economy, "fetch_balance_snapshot", None)
+                        if snapshot_fetcher and iscoroutinefunction(snapshot_fetcher):
+                            balance_result = await snapshot_fetcher(
+                                conn, guild_id=guild_id, member_id=initiator_id
+                            )
+                        else:
+                            balance_fetcher = getattr(economy, "fetch_balance", None)
+                            if balance_fetcher and iscoroutinefunction(balance_fetcher):
+                                balance_result = await balance_fetcher(
+                                    conn, guild_id=guild_id, member_id=initiator_id
+                                )
+
+                    if balance_result is not None:
+                        initiator_balance = balance_result.balance
+                except Exception:
+                    # 查詢餘額失敗不影響通知發送
+                    LOGGER.debug(
+                        "telemetry.listener.notify_initiator_server.balance_query_failed",
+                        guild_id=guild_id,
+                        initiator_id=initiator_id,
                     )
-                    initiator_balance = balance_result.balance
-            except Exception:
-                # 查詢餘額失敗不影響通知發送
-                LOGGER.debug(
-                    "telemetry.listener.notify_initiator_server.balance_query_failed",
-                    guild_id=guild_id,
-                    initiator_id=initiator_id,
-                )
 
             # 格式化訊息
             lines = []

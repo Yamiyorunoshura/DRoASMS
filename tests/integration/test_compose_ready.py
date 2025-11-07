@@ -40,7 +40,7 @@ pytestmark = [
 
 @pytest.mark.timeout(180)
 @pytest.mark.integration
-def test_compose_ready_event_within_slo(tmp_path: Path) -> None:
+def test_compose_ready_event_within_slo(tmp_path: Path, docker_compose_project: str) -> None:
     """以 docker compose 啟動並在 120s 內解析到 bot.ready。
 
     啟動條件：需提供 `TEST_DISCORD_TOKEN` 或 `DISCORD_TOKEN`。
@@ -66,9 +66,9 @@ def test_compose_ready_event_within_slo(tmp_path: Path) -> None:
                 lines.append(line)
         env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-        # 啟動 compose
+        # 啟動 compose，使用獨立的專案名稱
         subprocess.run(
-            ["bash", "-lc", "docker compose up -d --build"],
+            ["bash", "-lc", f"docker compose -p {docker_compose_project} up -d --build"],
             check=True,
             cwd=str(REPO_ROOT),
         )
@@ -77,7 +77,7 @@ def test_compose_ready_event_within_slo(tmp_path: Path) -> None:
         deadline = time.time() + 120
         pattern = re.compile(r"\{.*\"event\"\s*:\s*\"bot.ready\".*\}")
         proc = subprocess.Popen(
-            ["bash", "-lc", "docker compose logs -f bot"],
+            ["bash", "-lc", f"docker compose -p {docker_compose_project} logs -f bot"],
             cwd=str(REPO_ROOT),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -95,7 +95,11 @@ def test_compose_ready_event_within_slo(tmp_path: Path) -> None:
             proc.terminate()
     finally:
         # 清理與還原
-        subprocess.run(["bash", "-lc", "docker compose down"], cwd=str(REPO_ROOT))
+        subprocess.run(
+            ["bash", "-lc", f"docker compose -p {docker_compose_project} down"],
+            cwd=str(REPO_ROOT),
+            check=False,
+        )
         if env_backup is None:
             if env_path.exists():
                 env_path.unlink()

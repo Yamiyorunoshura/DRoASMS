@@ -11,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.integration
+@pytest.mark.timeout(30)
 def test_retry_backoff_attempt_count_and_delays() -> None:
     """設定小的重試/退避參數時，應輸出對應次數與 delay_ms 欄位。"""
 
