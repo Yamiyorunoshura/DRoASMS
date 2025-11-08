@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2025-11-08
+
+### Fixed
+- **CI/CD 管道修復**：修復 6 個 CI/CD 檢查失敗問題
+  - 修復 pre-commit 檢查的 Git 環境配置，添加 `fetch-depth: 0` 和 git 安裝步驟
+  - 修復 Integration Tests 的 Docker-in-Docker 連接問題，添加 Docker daemon 就緒等待機制
+  - 修復 Database Function Tests 配置，改用 `pg_prove` 執行 pgTAP 測試並安裝 `pgtap` 擴充
+  - 修復 Council Tests 路徑配置，將 `tests/council/` 更新為 `tests/integration/council/`
+  - 修復 Contract Tests 的路徑解析邏輯，改進 `repo_root()` 函數以正確處理 CI 環境
+- **類型安全改進**：
+  - 移除 `src/infra/retry.py` 中不必要的 `type: ignore[misc]` 註釋
+  - 為 `src/bot/commands/supreme_assembly.py` 中的 `view` 變數添加明確的類型註解
+
 ## [0.12.0] - 2025-11-08
 
 ### Added

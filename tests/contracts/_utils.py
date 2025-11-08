@@ -14,9 +14,14 @@ def repo_root() -> Path:
     """
     cur = Path(__file__).resolve()
     for p in [cur, *cur.parents]:
-        if (p / "pyproject.toml").exists():
+        pyproject = p / "pyproject.toml"
+        if pyproject.exists():
             return p
-    # 後備：若未找到（理論上不會），退回到原邏輯
+    # 後備：若未找到，嘗試使用當前工作目錄
+    cwd = Path.cwd()
+    if (cwd / "pyproject.toml").exists():
+        return cwd
+    # 最後的後備：退回到原邏輯
     return Path(__file__).resolve().parents[2]
 
 

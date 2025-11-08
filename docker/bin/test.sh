@@ -186,7 +186,7 @@ run_economy() {
 run_council() {
     echo "執行議會相關測試..."
     # 使用 xdist 並行執行時，pytest-cov 會自動處理多進程覆蓋率合併
-    _run_optional_pytest tests/council/ -v -n auto -o cache_dir="$PYTEST_CACHE_DIR"
+    _run_optional_pytest tests/integration/council/ -v -n auto -o cache_dir="$PYTEST_CACHE_DIR"
 }
 
 run_all() {

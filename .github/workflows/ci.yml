@@ -83,6 +83,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install git
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends git
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -310,6 +316,10 @@ jobs:
             ca-certificates curl gnupg lsb-release \
             docker.io docker-compose-plugin
 
+      - name: Wait for Docker daemon to be ready
+        run: |
+          timeout 30 bash -c 'until docker info; do sleep 1; done' || true
+
       - name: Override with real token if available (optional)
         run: |
           # Override default placeholder if real token is provided via secrets
@@ -414,9 +424,9 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
 
-      - name: Install PostgreSQL client
+      - name: Install PostgreSQL client and pgTAP
         run: |
-          apt-get update && apt-get install -y --no-install-recommends postgresql-client
+          apt-get update && apt-get install -y --no-install-recommends postgresql-client pgtap
 
       - name: Install dependencies
         run: uv sync --group dev
@@ -424,13 +434,20 @@ jobs:
       - name: Setup database extensions
         run: |
           PGPASSWORD=bot psql -h postgres -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          PGPASSWORD=bot psql -h postgres -U bot -d economy -c "CREATE EXTENSION IF NOT EXISTS pgtap;"
         continue-on-error: true
 
       - name: Run database migrations
         run: uv run alembic upgrade head
 
-      - name: Run database function tests with coverage
-        run: uv run pytest tests/db/ -v -n auto
+      - name: Run database function tests with pg_prove
+        env:
+          PGHOST: postgres
+          PGPORT: 5432
+          PGUSER: bot
+          PGPASSWORD: bot
+          PGDATABASE: economy
+        run: pg_prove tests/db/*.sql
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -486,7 +503,7 @@ jobs:
         run: uv run alembic upgrade head
 
       - name: Run council tests with coverage
-        run: uv run pytest tests/council/ -v -n auto
+        run: uv run pytest tests/integration/council/ -v -n auto
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4

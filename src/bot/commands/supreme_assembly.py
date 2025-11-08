@@ -712,8 +712,12 @@ class SupremeAssemblyTransferTypeSelectionView(discord.ui.View):
             )
             await interaction.response.send_modal(modal)
         elif selected_type == "department":
-            view = SupremeAssemblyDepartmentSelectView(service=self.service, guild=self.guild)
-            await interaction.response.send_message("請選擇受款部門：", view=view, ephemeral=True)
+            dept_view: SupremeAssemblyDepartmentSelectView = SupremeAssemblyDepartmentSelectView(
+                service=self.service, guild=self.guild
+            )
+            await interaction.response.send_message(
+                "請選擇受款部門：", view=dept_view, ephemeral=True
+            )
         else:
             await interaction.response.send_message("未知的轉帳類型。", ephemeral=True)
 
