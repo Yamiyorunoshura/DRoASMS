@@ -12,6 +12,7 @@ from src.bot.services.balance_service import BalanceService
 from src.bot.services.council_service import CouncilService
 from src.bot.services.currency_config_service import CurrencyConfigService
 from src.bot.services.state_council_service import StateCouncilService
+from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 from src.bot.services.transfer_service import TransferService
 from src.db import pool as db_pool
 from src.db.gateway.council_governance import CouncilGovernanceGateway
@@ -21,6 +22,9 @@ from src.db.gateway.economy_pending_transfers import PendingTransferGateway
 from src.db.gateway.economy_queries import EconomyQueryGateway
 from src.db.gateway.economy_transfers import EconomyTransferGateway
 from src.db.gateway.state_council_governance import StateCouncilGovernanceGateway
+from src.db.gateway.supreme_assembly_governance import (
+    SupremeAssemblyGovernanceGateway,
+)
 from src.infra.di.container import DependencyContainer
 from src.infra.di.lifecycle import Lifecycle
 
@@ -47,6 +51,8 @@ def bootstrap_container() -> DependencyContainer:
     container.register(EconomyTransferGateway, lifecycle=Lifecycle.SINGLETON)
     container.register(PendingTransferGateway, lifecycle=Lifecycle.SINGLETON)
     container.register(StateCouncilGovernanceGateway, lifecycle=Lifecycle.SINGLETON)
+    # Supreme Assembly governance (new)
+    container.register(SupremeAssemblyGovernanceGateway, lifecycle=Lifecycle.SINGLETON)
 
     # Register services with dependencies
     # TransferService needs pool and event_pool_enabled flag
@@ -75,5 +81,10 @@ def bootstrap_container() -> DependencyContainer:
 
     # StateCouncilService depends on optional gateway, transfer_service, and adjustment_service
     container.register(StateCouncilService, lifecycle=Lifecycle.SINGLETON)
+
+    # SupremeAssemblyService depends on SupremeAssemblyGovernanceGateway (optional)
+    # The service can build its own gateway, but registering it enables DI resolution
+    # via commands like container.resolve(SupremeAssemblyService).
+    container.register(SupremeAssemblyService, lifecycle=Lifecycle.SINGLETON)
 
     return container

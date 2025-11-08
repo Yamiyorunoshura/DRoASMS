@@ -114,6 +114,7 @@ async def di_container(db_pool: asyncpg.Pool) -> DependencyContainer:
     from src.db.gateway.economy_queries import EconomyQueryGateway
     from src.db.gateway.economy_transfers import EconomyTransferGateway
     from src.db.gateway.state_council_governance import StateCouncilGovernanceGateway
+    from src.db.gateway.supreme_assembly_governance import SupremeAssemblyGovernanceGateway
 
     container.register(CouncilGovernanceGateway, lifecycle=Lifecycle.SINGLETON)
     container.register(EconomyAdjustmentGateway, lifecycle=Lifecycle.SINGLETON)
@@ -121,12 +122,14 @@ async def di_container(db_pool: asyncpg.Pool) -> DependencyContainer:
     container.register(EconomyTransferGateway, lifecycle=Lifecycle.SINGLETON)
     container.register(PendingTransferGateway, lifecycle=Lifecycle.SINGLETON)
     container.register(StateCouncilGovernanceGateway, lifecycle=Lifecycle.SINGLETON)
+    container.register(SupremeAssemblyGovernanceGateway, lifecycle=Lifecycle.SINGLETON)
 
     # Register services with dependencies
     from src.bot.services.adjustment_service import AdjustmentService
     from src.bot.services.balance_service import BalanceService
     from src.bot.services.council_service import CouncilService
     from src.bot.services.state_council_service import StateCouncilService
+    from src.bot.services.supreme_assembly_service import SupremeAssemblyService
     from src.bot.services.transfer_service import TransferService
 
     load_dotenv(override=False)
@@ -143,5 +146,6 @@ async def di_container(db_pool: asyncpg.Pool) -> DependencyContainer:
     container.register(AdjustmentService, lifecycle=Lifecycle.SINGLETON)
     container.register(CouncilService, lifecycle=Lifecycle.SINGLETON)
     container.register(StateCouncilService, lifecycle=Lifecycle.SINGLETON)
+    container.register(SupremeAssemblyService, lifecycle=Lifecycle.SINGLETON)
 
     return container

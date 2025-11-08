@@ -155,6 +155,24 @@ run_db() {
     export PGPASSWORD="$password"
     export PGDATABASE="$database"
 
+    # 在執行 SQL 測試前，確保資料庫遷移與函數已載入
+    # 使用 Alembic 升級至最新版本，讓 schema 與函數（透過遷移檔載入）到位
+    echo "遷移資料庫至最新版本（alembic upgrade head）..."
+    alembic upgrade head || {
+        echo "❌ Alembic 遷移失敗" >&2
+        exit 1
+    }
+
+    # 防禦性：直接載入最新的治理（最高人民會議）函數，避免因為歷史資料庫狀態或遷移順序
+    # 導致新函數尚未存在
+    if [ -f /app/src/db/functions/governance/fn_supreme_assembly.sql ]; then
+        echo "載入 fn_supreme_assembly.sql ..."
+        psql -v ON_ERROR_STOP=1 -f /app/src/db/functions/governance/fn_supreme_assembly.sql || {
+            echo "❌ 載入 fn_supreme_assembly.sql 失敗" >&2
+            exit 1
+        }
+    fi
+
     # 使用 pg_prove 執行 SQL 測試
     pg_prove tests/db/*.sql
 }

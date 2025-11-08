@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2025-11-08
+
+### Added
+- **最高人民會議治理系統（Supreme Assembly Governance）**：實現完整的最高人民會議提案與投票機制
+  - `/supreme_assembly config_speaker_role`：設定最高人民會議議長身分組（需管理員或管理伺服器權限）
+  - `/supreme_assembly config_member_role`：設定最高人民會議議員身分組（需管理員或管理伺服器權限）
+  - `/supreme_assembly panel`：開啟最高人民會議面板，整合轉帳、表決、傳召與使用指引功能
+  - 最高人民會議面板支援即時更新（透過事件訂閱機制）
+  - 提案建立時自動鎖定議員名冊快照（N 人）並計算門檻（T = floor(N/2) + 1）
+  - 72 小時投票期限，截止前 24 小時 DM 提醒未投票議員
+  - 達門檻自動執行轉帳；餘額不足或錯誤記錄「執行失敗」
+  - 結案時向全體議員與提案人揭露個別最終投票
+  - 同一伺服器進行中提案上限 5 個
+  - 投票後不可改選機制（與理事會的可改票機制區分）
+  - 議長可發起表決提案、傳召議員或政府官員
+- **轉帳功能擴展**：`/transfer` 和 `/adjust` 指令支援以議長身分組為目標（自動映射到最高人民會議帳戶 ID）
+  - 議長身分組自動映射到帳戶 ID：`9_200_000_000_000_000 + guild_id`
+  - 保持與現有理事會和國務院映射的兼容性
+- **資料庫架構**：
+  - 新增資料庫遷移 `035_supreme_assembly.py`：建立 `supreme_assembly_config`、`supreme_assembly_proposals`、`proposal_snapshots`、`votes`、`summons` 表
+  - 新增資料庫遷移 `036_supreme_assembly_functions.py`：建立相關 SQL 函數
+  - 新增 SQL 函數 `fn_supreme_assembly.sql`：提供配置管理、帳戶查詢、提案管理等功能
+- **服務層實現**：
+  - 新增 `SupremeAssemblyService`：治理邏輯服務層，包含帳戶管理、提案建立、投票邏輯、狀態轉移等
+  - 新增 `SupremeAssemblyGovernanceGateway`：資料庫存取層，提供配置、提案、投票、傳召等 CRUD 操作
+- **事件系統**：新增 `supreme_assembly_events.py`，支援提案建立、更新、狀態變更、投票等事件發布訂閱
+- **完整測試覆蓋**：
+  - 新增單元測試：`test_supreme_assembly_service.py`、`test_supreme_assembly_gateway.py`
+  - 新增整合測試：`test_supreme_assembly_flow.py`
+  - 新增資料庫函數測試：`test_fn_get_supreme_assembly_config.sql`、`test_fn_is_sa_account.sql`、`test_fn_sa_account_id.sql`、`test_fn_upsert_supreme_assembly_config.sql`
+
+### Changed
+- **依賴注入**：更新 `bootstrap.py` 以註冊 `SupremeAssemblyService` 和 `SupremeAssemblyGovernanceGateway`
+- **重試機制**：更新 `src/infra/retry.py` 以支援新的錯誤類型
+- **測試基礎設施**：更新 `conftest.py` 以支援最高人民會議相關測試
+
 ## [0.11.0] - 2025-11-08
 
 ### Added
