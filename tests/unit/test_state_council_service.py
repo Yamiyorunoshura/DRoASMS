@@ -68,6 +68,8 @@ class TestStateCouncilService:
             finance_account_id=_snowflake(),
             security_account_id=_snowflake(),
             central_bank_account_id=_snowflake(),
+            citizen_role_id=None,
+            suspect_role_id=None,
             created_at=datetime.now(tz=timezone.utc),
             updated_at=datetime.now(tz=timezone.utc),
         )
@@ -1353,3 +1355,149 @@ class TestStateCouncilService:
             assert gw.upsert_government_account.call_count == 4
             for call in gw.upsert_government_account.call_args_list:
                 assert call.kwargs["balance"] == 0
+
+    # --- Identity Role Configuration Tests ---
+
+    @pytest.mark.asyncio
+    async def test_update_citizen_role_config_success(
+        self, service: StateCouncilService, sample_config: StateCouncilConfig
+    ) -> None:
+        """Test successful citizen role configuration update."""
+        with patch("src.bot.services.state_council_service.get_pool") as mock_get_pool:
+            mock_conn = AsyncMock()
+            mock_pool = AsyncMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+            mock_get_pool.return_value = mock_pool
+
+            gw = cast(AsyncMock, service._gateway)
+            citizen_role_id = _snowflake()
+            updated_config = StateCouncilConfig(
+                guild_id=sample_config.guild_id,
+                leader_id=sample_config.leader_id,
+                leader_role_id=sample_config.leader_role_id,
+                internal_affairs_account_id=sample_config.internal_affairs_account_id,
+                finance_account_id=sample_config.finance_account_id,
+                security_account_id=sample_config.security_account_id,
+                central_bank_account_id=sample_config.central_bank_account_id,
+                citizen_role_id=citizen_role_id,
+                suspect_role_id=sample_config.suspect_role_id,
+                created_at=sample_config.created_at,
+                updated_at=datetime.now(tz=timezone.utc),
+            )
+            gw.fetch_state_council_config.return_value = sample_config
+            gw.upsert_state_council_config.return_value = updated_config
+
+            result = await service.update_citizen_role_config(
+                guild_id=sample_config.guild_id, citizen_role_id=citizen_role_id
+            )
+
+            assert result.citizen_role_id == citizen_role_id
+            gw.upsert_state_council_config.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_citizen_role_config_not_configured(
+        self, service: StateCouncilService
+    ) -> None:
+        """Test citizen role configuration update when state council is not configured."""
+        with patch("src.bot.services.state_council_service.get_pool") as mock_get_pool:
+            mock_conn = AsyncMock()
+            mock_pool = AsyncMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+            mock_get_pool.return_value = mock_pool
+
+            gw = cast(AsyncMock, service._gateway)
+            gw.fetch_state_council_config.return_value = None
+
+            with pytest.raises(StateCouncilNotConfiguredError):
+                await service.update_citizen_role_config(
+                    guild_id=_snowflake(), citizen_role_id=_snowflake()
+                )
+
+    @pytest.mark.asyncio
+    async def test_update_suspect_role_config_success(
+        self, service: StateCouncilService, sample_config: StateCouncilConfig
+    ) -> None:
+        """Test successful suspect role configuration update."""
+        with patch("src.bot.services.state_council_service.get_pool") as mock_get_pool:
+            mock_conn = AsyncMock()
+            mock_pool = AsyncMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+            mock_get_pool.return_value = mock_pool
+
+            gw = cast(AsyncMock, service._gateway)
+            suspect_role_id = _snowflake()
+            updated_config = StateCouncilConfig(
+                guild_id=sample_config.guild_id,
+                leader_id=sample_config.leader_id,
+                leader_role_id=sample_config.leader_role_id,
+                internal_affairs_account_id=sample_config.internal_affairs_account_id,
+                finance_account_id=sample_config.finance_account_id,
+                security_account_id=sample_config.security_account_id,
+                central_bank_account_id=sample_config.central_bank_account_id,
+                citizen_role_id=sample_config.citizen_role_id,
+                suspect_role_id=suspect_role_id,
+                created_at=sample_config.created_at,
+                updated_at=datetime.now(tz=timezone.utc),
+            )
+            gw.fetch_state_council_config.return_value = sample_config
+            gw.upsert_state_council_config.return_value = updated_config
+
+            result = await service.update_suspect_role_config(
+                guild_id=sample_config.guild_id, suspect_role_id=suspect_role_id
+            )
+
+            assert result.suspect_role_id == suspect_role_id
+            gw.upsert_state_council_config.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_suspect_role_config_not_configured(
+        self, service: StateCouncilService
+    ) -> None:
+        """Test suspect role configuration update when state council is not configured."""
+        with patch("src.bot.services.state_council_service.get_pool") as mock_get_pool:
+            mock_conn = AsyncMock()
+            mock_pool = AsyncMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+            mock_get_pool.return_value = mock_pool
+
+            gw = cast(AsyncMock, service._gateway)
+            gw.fetch_state_council_config.return_value = None
+
+            with pytest.raises(StateCouncilNotConfiguredError):
+                await service.update_suspect_role_config(
+                    guild_id=_snowflake(), suspect_role_id=_snowflake()
+                )
+
+    @pytest.mark.asyncio
+    async def test_update_citizen_role_config_clear(
+        self, service: StateCouncilService, sample_config: StateCouncilConfig
+    ) -> None:
+        """Test clearing citizen role configuration (setting to None)."""
+        with patch("src.bot.services.state_council_service.get_pool") as mock_get_pool:
+            mock_conn = AsyncMock()
+            mock_pool = AsyncMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+            mock_get_pool.return_value = mock_pool
+
+            gw = cast(AsyncMock, service._gateway)
+            updated_config = StateCouncilConfig(
+                guild_id=sample_config.guild_id,
+                leader_id=sample_config.leader_id,
+                leader_role_id=sample_config.leader_role_id,
+                internal_affairs_account_id=sample_config.internal_affairs_account_id,
+                finance_account_id=sample_config.finance_account_id,
+                security_account_id=sample_config.security_account_id,
+                central_bank_account_id=sample_config.central_bank_account_id,
+                citizen_role_id=None,
+                suspect_role_id=sample_config.suspect_role_id,
+                created_at=sample_config.created_at,
+                updated_at=datetime.now(tz=timezone.utc),
+            )
+            gw.fetch_state_council_config.return_value = sample_config
+            gw.upsert_state_council_config.return_value = updated_config
+
+            result = await service.update_citizen_role_config(
+                guild_id=sample_config.guild_id, citizen_role_id=None
+            )
+
+            assert result.citizen_role_id is None

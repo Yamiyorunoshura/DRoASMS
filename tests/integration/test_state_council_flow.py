@@ -5,7 +5,7 @@ from __future__ import annotations
 import secrets
 from datetime import datetime, timezone
 from typing import cast
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -22,6 +22,7 @@ from src.db.gateway.state_council_governance import (
     CurrencyIssuance,
     DepartmentConfig,
     GovernmentAccount,
+    IdentityRecord,
     InterdepartmentTransfer,
     StateCouncilConfig,
     StateCouncilGovernanceGateway,
@@ -814,3 +815,362 @@ class TestStateCouncilFlow:
                 guild_id=guild_id, user_id=_snowflake(), department="內政部", user_roles=[]
             )
             assert result is False
+
+    @pytest.mark.asyncio
+    async def test_arrest_user_workflow(
+        self,
+        service: StateCouncilService,
+        guild_id: int,
+        mock_user_id: int,
+        department_role_id: int,
+    ) -> None:
+        """Test complete arrest user workflow."""
+        with patch("src.bot.services.state_council_service.get_pool") as mock_get_pool:
+            mock_pool = AsyncMock()
+            mock_conn = AsyncMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+            mock_get_pool.return_value = mock_pool
+
+            # Setup config with citizen and suspect roles
+            citizen_role_id = _snowflake()
+            suspect_role_id = _snowflake()
+            config = StateCouncilConfig(
+                guild_id=guild_id,
+                leader_id=_snowflake(),
+                leader_role_id=_snowflake(),
+                internal_affairs_account_id=9500000000000001,
+                finance_account_id=9500000000000002,
+                security_account_id=9500000000000003,
+                central_bank_account_id=9500000000000004,
+                citizen_role_id=citizen_role_id,
+                suspect_role_id=suspect_role_id,
+                created_at=datetime.now(tz=timezone.utc),
+                updated_at=datetime.now(tz=timezone.utc),
+            )
+
+            # Mock guild and member
+            mock_guild = MagicMock()
+            mock_target_member = MagicMock()
+            mock_target_member.id = _snowflake()
+            mock_target_member.bot = False
+            mock_target_member.roles = []
+            mock_target_member.remove_roles = AsyncMock()
+            mock_target_member.add_roles = AsyncMock()
+            mock_guild.get_member.return_value = mock_target_member
+
+            mock_citizen_role = MagicMock()
+            mock_citizen_role.id = citizen_role_id
+            mock_suspect_role = MagicMock()
+            mock_suspect_role.id = suspect_role_id
+            mock_guild.get_role.side_effect = lambda role_id: (
+                mock_citizen_role if role_id == citizen_role_id else mock_suspect_role
+            )
+
+            # Mock gateway responses
+            gw = cast(AsyncMock, service._gateway)
+            gw.fetch_state_council_config.return_value = config
+            gw.fetch_department_config.return_value = DepartmentConfig(
+                id=_snowflake(),
+                guild_id=guild_id,
+                department="國土安全部",
+                role_id=department_role_id,
+                welfare_amount=0,
+                welfare_interval_hours=24,
+                tax_rate_basis=0,
+                tax_rate_percent=0,
+                max_issuance_per_month=0,
+                created_at=datetime.now(tz=timezone.utc),
+                updated_at=datetime.now(tz=timezone.utc),
+            )
+            gw.create_identity_record.return_value = IdentityRecord(
+                record_id=UUID(int=123),
+                guild_id=guild_id,
+                target_id=mock_target_member.id,
+                action="逮捕",
+                reason="測試逮捕",
+                performed_by=mock_user_id,
+                performed_at=datetime.now(tz=timezone.utc),
+            )
+
+            # Set up target member with citizen role
+            mock_target_member.roles = [mock_citizen_role]
+
+            # Perform arrest
+            with patch.object(service, "check_department_permission", return_value=True):
+                record = await service.arrest_user(
+                    guild_id=guild_id,
+                    department="國土安全部",
+                    user_id=mock_user_id,
+                    user_roles=[department_role_id],
+                    target_id=mock_target_member.id,
+                    reason="測試逮捕",
+                    guild=mock_guild,
+                )
+
+            # Verify result
+            assert record.action == "逮捕"
+            assert record.reason == "測試逮捕"
+            assert record.target_id == mock_target_member.id
+
+            # Verify roles were modified
+            mock_target_member.remove_roles.assert_called_once_with(
+                mock_citizen_role, reason="逮捕：測試逮捕"
+            )
+            mock_target_member.add_roles.assert_called_once_with(
+                mock_suspect_role, reason="逮捕：測試逮捕"
+            )
+
+            # Verify identity record was created
+            gw.create_identity_record.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_arrest_user_missing_role_config(
+        self,
+        service: StateCouncilService,
+        guild_id: int,
+        mock_user_id: int,
+        department_role_id: int,
+    ) -> None:
+        """Test arrest fails when role configuration is missing."""
+        with patch("src.bot.services.state_council_service.get_pool") as mock_get_pool:
+            mock_pool = AsyncMock()
+            mock_conn = AsyncMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+            mock_get_pool.return_value = mock_pool
+
+            # Setup config without role IDs
+            config = StateCouncilConfig(
+                guild_id=guild_id,
+                leader_id=_snowflake(),
+                leader_role_id=_snowflake(),
+                internal_affairs_account_id=9500000000000001,
+                finance_account_id=9500000000000002,
+                security_account_id=9500000000000003,
+                central_bank_account_id=9500000000000004,
+                citizen_role_id=None,  # Not configured
+                suspect_role_id=None,  # Not configured
+                created_at=datetime.now(tz=timezone.utc),
+                updated_at=datetime.now(tz=timezone.utc),
+            )
+
+            gw = cast(AsyncMock, service._gateway)
+            gw.fetch_state_council_config.return_value = config
+            gw.fetch_department_config.return_value = DepartmentConfig(
+                id=_snowflake(),
+                guild_id=guild_id,
+                department="國土安全部",
+                role_id=department_role_id,
+                welfare_amount=0,
+                welfare_interval_hours=24,
+                tax_rate_basis=0,
+                tax_rate_percent=0,
+                max_issuance_per_month=0,
+                created_at=datetime.now(tz=timezone.utc),
+                updated_at=datetime.now(tz=timezone.utc),
+            )
+
+            mock_guild = MagicMock()
+
+            with patch.object(service, "check_department_permission", return_value=True):
+                with pytest.raises(ValueError, match="公民身分組或嫌犯身分組未設定"):
+                    await service.arrest_user(
+                        guild_id=guild_id,
+                        department="國土安全部",
+                        user_id=mock_user_id,
+                        user_roles=[department_role_id],
+                        target_id=_snowflake(),
+                        reason="測試逮捕",
+                        guild=mock_guild,
+                    )
+
+    @pytest.mark.asyncio
+    async def test_arrest_user_permission_denied(
+        self,
+        service: StateCouncilService,
+        guild_id: int,
+        mock_user_id: int,
+    ) -> None:
+        """Test arrest fails when user lacks permission."""
+        with patch("src.bot.services.state_council_service.get_pool") as mock_get_pool:
+            mock_pool = AsyncMock()
+            mock_conn = AsyncMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+            mock_get_pool.return_value = mock_pool
+
+            config = StateCouncilConfig(
+                guild_id=guild_id,
+                leader_id=_snowflake(),
+                leader_role_id=_snowflake(),
+                internal_affairs_account_id=9500000000000001,
+                finance_account_id=9500000000000002,
+                security_account_id=9500000000000003,
+                central_bank_account_id=9500000000000004,
+                citizen_role_id=_snowflake(),
+                suspect_role_id=_snowflake(),
+                created_at=datetime.now(tz=timezone.utc),
+                updated_at=datetime.now(tz=timezone.utc),
+            )
+
+            gw = cast(AsyncMock, service._gateway)
+            gw.fetch_state_council_config.return_value = config
+
+            mock_guild = MagicMock()
+
+            with patch.object(service, "check_department_permission", return_value=False):
+                with pytest.raises(PermissionDeniedError):
+                    await service.arrest_user(
+                        guild_id=guild_id,
+                        department="國土安全部",
+                        user_id=mock_user_id,
+                        user_roles=[],
+                        target_id=_snowflake(),
+                        reason="測試逮捕",
+                        guild=mock_guild,
+                    )
+
+    @pytest.mark.asyncio
+    async def test_arrest_user_wrong_department(
+        self,
+        service: StateCouncilService,
+        guild_id: int,
+        mock_user_id: int,
+        department_role_id: int,
+    ) -> None:
+        """Test arrest fails when called from wrong department."""
+        with patch("src.bot.services.state_council_service.get_pool") as mock_get_pool:
+            mock_pool = AsyncMock()
+            mock_conn = AsyncMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+            mock_get_pool.return_value = mock_pool
+
+            mock_guild = MagicMock()
+
+            with patch.object(service, "check_department_permission", return_value=True):
+                with pytest.raises(PermissionDeniedError, match="Only Security can arrest users"):
+                    await service.arrest_user(
+                        guild_id=guild_id,
+                        department="內政部",  # Wrong department
+                        user_id=mock_user_id,
+                        user_roles=[department_role_id],
+                        target_id=_snowflake(),
+                        reason="測試逮捕",
+                        guild=mock_guild,
+                    )
+
+    @pytest.mark.asyncio
+    async def test_arrest_user_role_removal_and_addition(
+        self,
+        service: StateCouncilService,
+        guild_id: int,
+        mock_user_id: int,
+        department_role_id: int,
+    ) -> None:
+        """Test that arrest correctly removes citizen role and adds suspect role."""
+        with patch("src.bot.services.state_council_service.get_pool") as mock_get_pool:
+            mock_pool = AsyncMock()
+            mock_conn = AsyncMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+            mock_get_pool.return_value = mock_pool
+
+            # Setup config with citizen and suspect roles
+            citizen_role_id = _snowflake()
+            suspect_role_id = _snowflake()
+            config = StateCouncilConfig(
+                guild_id=guild_id,
+                leader_id=_snowflake(),
+                leader_role_id=_snowflake(),
+                internal_affairs_account_id=9500000000000001,
+                finance_account_id=9500000000000002,
+                security_account_id=9500000000000003,
+                central_bank_account_id=9500000000000004,
+                citizen_role_id=citizen_role_id,
+                suspect_role_id=suspect_role_id,
+                created_at=datetime.now(tz=timezone.utc),
+                updated_at=datetime.now(tz=timezone.utc),
+            )
+
+            # Mock guild and member
+            mock_guild = MagicMock()
+            mock_target_member = MagicMock()
+            target_id = _snowflake()
+            mock_target_member.id = target_id
+            mock_target_member.bot = False
+
+            # Create role mocks
+            mock_citizen_role = MagicMock()
+            mock_citizen_role.id = citizen_role_id
+            mock_suspect_role = MagicMock()
+            mock_suspect_role.id = suspect_role_id
+
+            # Initially, member has citizen role but not suspect role
+            mock_target_member.roles = [mock_citizen_role]
+            mock_target_member.remove_roles = AsyncMock()
+            mock_target_member.add_roles = AsyncMock()
+
+            mock_guild.get_member.return_value = mock_target_member
+            mock_guild.get_role.side_effect = lambda role_id: (
+                mock_citizen_role if role_id == citizen_role_id else mock_suspect_role
+            )
+
+            # Mock gateway responses
+            gw = cast(AsyncMock, service._gateway)
+            gw.fetch_state_council_config.return_value = config
+            gw.fetch_department_config.return_value = DepartmentConfig(
+                id=_snowflake(),
+                guild_id=guild_id,
+                department="國土安全部",
+                role_id=department_role_id,
+                welfare_amount=0,
+                welfare_interval_hours=24,
+                tax_rate_basis=0,
+                tax_rate_percent=0,
+                max_issuance_per_month=0,
+                created_at=datetime.now(tz=timezone.utc),
+                updated_at=datetime.now(tz=timezone.utc),
+            )
+            gw.create_identity_record.return_value = IdentityRecord(
+                record_id=UUID(int=123),
+                guild_id=guild_id,
+                target_id=target_id,
+                action="逮捕",
+                reason="測試身分組變更",
+                performed_by=mock_user_id,
+                performed_at=datetime.now(tz=timezone.utc),
+            )
+
+            # Perform arrest
+            with patch.object(service, "check_department_permission", return_value=True):
+                await service.arrest_user(
+                    guild_id=guild_id,
+                    department="國土安全部",
+                    user_id=mock_user_id,
+                    user_roles=[department_role_id],
+                    target_id=target_id,
+                    reason="測試身分組變更",
+                    guild=mock_guild,
+                )
+
+            # Verify citizen role was removed
+            mock_target_member.remove_roles.assert_called_once()
+            call_args = mock_target_member.remove_roles.call_args
+            # Check that citizen_role is in the positional args
+            assert len(call_args[0]) > 0
+            assert mock_citizen_role in call_args[0]
+            assert "reason" in call_args.kwargs
+            assert "逮捕：測試身分組變更" in call_args.kwargs["reason"]
+
+            # Verify suspect role was added
+            mock_target_member.add_roles.assert_called_once()
+            call_args = mock_target_member.add_roles.call_args
+            # Check that suspect_role is in the positional args
+            assert len(call_args[0]) > 0
+            assert mock_suspect_role in call_args[0]
+            assert "reason" in call_args.kwargs
+            assert "逮捕：測試身分組變更" in call_args.kwargs["reason"]
+
+            # Verify identity record was created
+            gw.create_identity_record.assert_called_once()
+            record_call = gw.create_identity_record.call_args
+            assert record_call.kwargs["action"] == "逮捕"
+            assert record_call.kwargs["reason"] == "測試身分組變更"
+            assert record_call.kwargs["target_id"] == target_id

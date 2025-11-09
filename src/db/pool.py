@@ -76,6 +76,28 @@ async def init_pool(config: PoolConfig | None = None) -> asyncpg.Pool:
             **kwargs,
         )
         _POOLS[loop] = pool
+        # Best-effort: ensure DB schema is migrated for tests/first-run environments.
+        # Contract tests may run before dedicated DB test migrations; auto-upgrade here.
+        try:
+            async with pool.acquire() as conn:
+                exists = await conn.fetchval(
+                    "SELECT to_regclass('economy.guild_member_balances') IS NOT NULL"
+                )
+                if not bool(exists):
+                    # Attempt to run Alembic upgrade if available in PATH
+                    LOGGER.info("db.pool.auto_migrate.start")
+                    try:
+                        proc = await asyncio.create_subprocess_exec("alembic", "upgrade", "head")
+                        rc = await proc.wait()
+                        if rc == 0:
+                            LOGGER.info("db.pool.auto_migrate.done")
+                        else:
+                            LOGGER.warning("db.pool.auto_migrate.failed", code=rc)
+                    except Exception as exc:  # pragma: no cover - best-effort only
+                        LOGGER.warning("db.pool.auto_migrate.failed", error=str(exc))
+        except Exception as exc:  # pragma: no cover - non-fatal
+            LOGGER.warning("db.pool.schema_check_failed", error=str(exc))
+
         LOGGER.info(
             "db.pool.initialised",
             min_size=pool_config.min_size,

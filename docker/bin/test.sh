@@ -78,6 +78,12 @@ run_unit() {
 
 run_contract() {
     echo "執行合約測試..."
+    # 確保資料庫 schema 與函數已就緒（合約測試也會操作 DB）
+    echo "遷移資料庫至最新版本（alembic upgrade head）..."
+    alembic upgrade head || {
+        echo "❌ Alembic 遷移失敗" >&2
+        exit 1
+    }
     # 使用 xdist 並行執行時，pytest-cov 會自動處理多進程覆蓋率合併
     _run_pytest_with_timeout tests/contracts/ -v -n auto -o cache_dir="$PYTEST_CACHE_DIR"
 }
@@ -191,6 +197,8 @@ run_council() {
 
 run_all() {
     echo "執行所有測試（不含整合測試）..."
+    # 先建立 DB schema（供後續合約測試使用）
+    alembic upgrade head || true
     run_unit
     run_contract
     run_economy

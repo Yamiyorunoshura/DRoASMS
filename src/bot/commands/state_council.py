@@ -76,6 +76,40 @@ def get_help_data() -> dict[str, HelpData]:
             ],
             "tags": ["設定", "配置"],
         },
+        "state_council config_citizen_role": {
+            "name": "state_council config_citizen_role",
+            "description": "設定公民身分組。需要管理員或管理伺服器權限。",
+            "category": "governance",
+            "parameters": [
+                {
+                    "name": "role",
+                    "description": "要設定為公民身分組的身分組",
+                    "required": True,
+                },
+            ],
+            "permissions": ["administrator", "manage_guild"],
+            "examples": [
+                "/state_council config_citizen_role role:@CitizenRole",
+            ],
+            "tags": ["設定", "配置", "身分組"],
+        },
+        "state_council config_suspect_role": {
+            "name": "state_council config_suspect_role",
+            "description": "設定嫌犯身分組。需要管理員或管理伺服器權限。",
+            "category": "governance",
+            "parameters": [
+                {
+                    "name": "role",
+                    "description": "要設定為嫌犯身分組的身分組",
+                    "required": True,
+                },
+            ],
+            "permissions": ["administrator", "manage_guild"],
+            "examples": [
+                "/state_council config_suspect_role role:@SuspectRole",
+            ],
+            "tags": ["設定", "配置", "身分組"],
+        },
         "state_council panel": {
             "name": "state_council panel",
             "description": "開啟國務院面板（部門管理/發行點數/匯出）。僅限國務院領袖使用。",
@@ -241,6 +275,106 @@ def build_state_council_group(
             await _send_message_compat(interaction, content="".join(response_parts), ephemeral=True)
         except Exception as exc:
             LOGGER.exception("state_council.config_leader.error", error=str(exc))
+            await _send_message_compat(
+                interaction, content="設定失敗，請稍後再試。", ephemeral=True
+            )
+
+    @state_council.command(name="config_citizen_role", description="設定公民身分組")
+    @app_commands.describe(role="要設定為公民身分組的身分組")
+    async def config_citizen_role(
+        interaction: discord.Interaction,
+        role: discord.Role,
+    ) -> None:
+        if interaction.guild_id is None or interaction.guild is None:
+            await _send_message_compat(
+                interaction, content="本指令需在伺服器中執行。", ephemeral=True
+            )
+            return
+
+        # Require admin/manage_guild
+        perms = getattr(interaction.user, "guild_permissions", None) or getattr(
+            interaction, "guild_permissions", None
+        )
+        if not perms or not (perms.administrator or perms.manage_guild):
+            await _send_message_compat(
+                interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
+            )
+            return
+
+        try:
+            service = StateCouncilService()
+            await service.update_citizen_role_config(
+                guild_id=interaction.guild_id, citizen_role_id=role.id
+            )
+            await _send_message_compat(
+                interaction,
+                content=f"✅ 已設定公民身分組為 {role.mention}。",
+                ephemeral=True,
+            )
+            LOGGER.info(
+                "state_council.config_citizen_role.success",
+                guild_id=interaction.guild_id,
+                user_id=interaction.user.id,
+                role_id=role.id,
+            )
+        except StateCouncilNotConfiguredError:
+            await _send_message_compat(
+                interaction,
+                content="尚未完成國務院設定，請先執行 /state_council config_leader。",
+                ephemeral=True,
+            )
+        except Exception as exc:
+            LOGGER.exception("state_council.config_citizen_role.error", error=str(exc))
+            await _send_message_compat(
+                interaction, content="設定失敗，請稍後再試。", ephemeral=True
+            )
+
+    @state_council.command(name="config_suspect_role", description="設定嫌犯身分組")
+    @app_commands.describe(role="要設定為嫌犯身分組的身分組")
+    async def config_suspect_role(
+        interaction: discord.Interaction,
+        role: discord.Role,
+    ) -> None:
+        if interaction.guild_id is None or interaction.guild is None:
+            await _send_message_compat(
+                interaction, content="本指令需在伺服器中執行。", ephemeral=True
+            )
+            return
+
+        # Require admin/manage_guild
+        perms = getattr(interaction.user, "guild_permissions", None) or getattr(
+            interaction, "guild_permissions", None
+        )
+        if not perms or not (perms.administrator or perms.manage_guild):
+            await _send_message_compat(
+                interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
+            )
+            return
+
+        try:
+            service = StateCouncilService()
+            await service.update_suspect_role_config(
+                guild_id=interaction.guild_id, suspect_role_id=role.id
+            )
+            await _send_message_compat(
+                interaction,
+                content=f"✅ 已設定嫌犯身分組為 {role.mention}。",
+                ephemeral=True,
+            )
+            LOGGER.info(
+                "state_council.config_suspect_role.success",
+                guild_id=interaction.guild_id,
+                user_id=interaction.user.id,
+                role_id=role.id,
+            )
+        except StateCouncilNotConfiguredError:
+            await _send_message_compat(
+                interaction,
+                content="尚未完成國務院設定，請先執行 /state_council config_leader。",
+                ephemeral=True,
+            )
+        except Exception as exc:
+            LOGGER.exception("state_council.config_suspect_role.error", error=str(exc))
             await _send_message_compat(
                 interaction, content="設定失敗，請稍後再試。", ephemeral=True
             )
@@ -797,15 +931,15 @@ class StateCouncilPanelView(discord.ui.View):
             self.add_item(tax_settings_btn)
 
         elif department == "國土安全部":
-            # Identity management
-            identity_btn: discord.ui.Button[Self] = discord.ui.Button(
-                label="身分管理",
+            # Arrest
+            arrest_btn: discord.ui.Button[Self] = discord.ui.Button(
+                label="逮捕人員",
                 style=discord.ButtonStyle.danger,
-                custom_id="identity_manage",
+                custom_id="arrest_user",
                 row=1,
             )
-            identity_btn.callback = self._identity_callback
-            self.add_item(identity_btn)
+            arrest_btn.callback = self._arrest_callback
+            self.add_item(arrest_btn)
 
         elif department == "中央銀行":
             # Currency issuance
@@ -863,7 +997,7 @@ class StateCouncilPanelView(discord.ui.View):
         elif self.current_page == "國土安全部":
             title = "🛡️ 使用指引｜國土安全部"
             bullets = [
-                "• 身分管理：輸入目標使用者、操作類型（例如移除公民/標記疑犯）與理由。",
+                "• 逮捕人員：從下拉選單選擇目標使用者，填寫逮捕原因，系統會自動移除公民身分組並掛上嫌犯身分組。",
                 "• 權限：僅授權人員可執行；所有操作皆留痕。",
                 "• 部門轉帳：來源自目前頁面，僅在需跨部門費用時使用。",
                 "• 轉帳給使用者：來源自目前頁面，向指定使用者撥款（含本人）。",
@@ -1105,15 +1239,28 @@ class StateCouncilPanelView(discord.ui.View):
         modal = TaxSettingsModal(self.service, self.guild_id, self.author_id, self.user_roles)
         await _send_modal_compat(interaction, modal)
 
-    async def _identity_callback(self, interaction: discord.Interaction) -> None:
+    async def _arrest_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
             await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
-        modal = IdentityManagementModal(
-            self.service, self.guild_id, self.author_id, self.user_roles
+        if self.guild is None:
+            await _send_message_compat(interaction, content="無法取得伺服器資訊。", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title="🔒 逮捕人員",
+            description="請從下方下拉選單選擇要逮捕的使用者，然後填寫逮捕原因。",
+            color=0xE74C3C,
         )
-        await _send_modal_compat(interaction, modal)
+        view = ArrestSelectView(
+            service=self.service,
+            guild=self.guild,
+            guild_id=self.guild_id,
+            author_id=self.author_id,
+            user_roles=self.user_roles,
+        )
+        await _send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
 
     async def _currency_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
@@ -2093,6 +2240,169 @@ class TaxSettingsModal(discord.ui.Modal, title="稅率設定"):
             await _send_message_compat(
                 interaction, content="❌ 設定更新失敗，請稍後再試。", ephemeral=True
             )
+
+
+class ArrestReasonModal(discord.ui.Modal, title="逮捕原因"):
+    def __init__(
+        self,
+        service: StateCouncilService,
+        guild: discord.Guild,
+        guild_id: int,
+        author_id: int,
+        user_roles: list[int],
+        target_id: int,
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.guild = guild
+        self.guild_id = guild_id
+        self.author_id = author_id
+        self.user_roles = user_roles
+        self.target_id = target_id
+
+        self.add_item(
+            discord.ui.TextInput(
+                label="逮捕原因",
+                placeholder="輸入逮捕原因（必填）",
+                required=True,
+                style=discord.TextStyle.paragraph,
+            )
+        )
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            reason = self.children[0].value.strip()
+            if not reason:
+                await _send_message_compat(
+                    interaction, content="❌ 逮捕原因不能為空。", ephemeral=True
+                )
+                return
+
+            await self.service.arrest_user(
+                guild_id=self.guild_id,
+                department="國土安全部",
+                user_id=self.author_id,
+                user_roles=self.user_roles,
+                target_id=self.target_id,
+                reason=reason,
+                guild=self.guild,
+            )
+            # 嘗試重新抓取最新成員狀態以產生更準確的提示
+            target_member = None
+            if hasattr(self.guild, "fetch_member"):
+                try:
+                    target_member = await self.guild.fetch_member(self.target_id)
+                except Exception:
+                    target_member = self.guild.get_member(self.target_id)
+            else:
+                target_member = self.guild.get_member(self.target_id)
+
+            target_mention = (
+                target_member.mention if getattr(target_member, "mention", None) else f"<@{self.target_id}>"
+            )
+
+            # 依實際結果描述是否成功移除/賦予
+            try:
+                cfg = await self.service.get_config(self.guild_id)
+                citizen_role = self.guild.get_role(cfg.citizen_role_id) if hasattr(self.guild, "get_role") else None
+                suspect_role = self.guild.get_role(cfg.suspect_role_id) if hasattr(self.guild, "get_role") else None
+                roles = list(getattr(target_member, "roles", []) or [])
+                has_suspect = bool(suspect_role in roles) if suspect_role else False
+                has_citizen = bool(citizen_role in roles) if citizen_role else False
+                result_lines = ["✅ 逮捕操作完成！", f"目標：{target_mention}", f"原因：{reason}"]
+                if has_suspect:
+                    result_lines.append("結果：已掛上『嫌犯』身分組。")
+                else:
+                    result_lines.append("結果：未能掛上『嫌犯』身分組，請檢查機器人權限與身分組層級。")
+                if citizen_role is not None:
+                    if not has_citizen:
+                        result_lines.append("附註：已移除『公民』身分組。")
+                    else:
+                        result_lines.append("附註：『公民』身分組未移除（可能因層級不足）。")
+                await _send_message_compat(
+                    interaction,
+                    content="\n".join(result_lines),
+                    ephemeral=True,
+                )
+            except Exception:
+                # 後援：維持原本成功訊息
+                await _send_message_compat(
+                    interaction,
+                    content=(
+                        f"✅ 逮捕操作完成！\n"
+                        f"目標：{target_mention}\n"
+                        f"原因：{reason}\n"
+                        f"已嘗試移除『公民』並掛上『嫌犯』身分組。"
+                    ),
+                    ephemeral=True,
+                )
+
+        except ValueError as e:
+            await _send_message_compat(interaction, content=f"❌ {e}", ephemeral=True)
+        except PermissionDeniedError as e:
+            await _send_message_compat(interaction, content=f"❌ {e}", ephemeral=True)
+        except Exception as e:
+            LOGGER.exception("Arrest failed", error=str(e))
+            await _send_message_compat(
+                interaction, content="❌ 逮捕操作失敗，請稍後再試。", ephemeral=True
+            )
+
+
+class ArrestSelectView(discord.ui.View):
+    """View for selecting a user to arrest."""
+
+    def __init__(
+        self,
+        service: StateCouncilService,
+        guild: discord.Guild,
+        guild_id: int,
+        author_id: int,
+        user_roles: list[int],
+    ) -> None:
+        super().__init__(timeout=300)
+        self.service = service
+        self.guild = guild
+        self.guild_id = guild_id
+        self.author_id = author_id
+        self.user_roles = user_roles
+
+        # 以物件方式建立 UserSelect（避免某些 discord.py 版本沒有 ui.user_select decorator）
+        self._user_select: object = discord.ui.UserSelect(
+            placeholder="選擇要逮捕的使用者", min_values=1, max_values=1
+        )
+
+        async def _on_select(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await _send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+
+            if not self._user_select.values:
+                await _send_message_compat(
+                    interaction, content="請選擇一個使用者。", ephemeral=True
+                )
+                return
+
+            target_user = self._user_select.values[0]
+            if getattr(target_user, "bot", False):
+                await _send_message_compat(
+                    interaction, content="無法逮捕機器人帳號。", ephemeral=True
+                )
+                return
+
+            modal = ArrestReasonModal(
+                service=self.service,
+                guild=self.guild,
+                guild_id=self.guild_id,
+                author_id=self.author_id,
+                user_roles=self.user_roles,
+                target_id=int(getattr(target_user, "id", 0)),
+            )
+            await _send_modal_compat(interaction, modal)
+
+        self._user_select.callback = _on_select
+        self.add_item(self._user_select)
 
 
 class IdentityManagementModal(discord.ui.Modal, title="身分管理"):

@@ -54,3 +54,6 @@ openspec/
 
 # hypothesis
 .hypothesis/
+
+# uv
+uv.lock
