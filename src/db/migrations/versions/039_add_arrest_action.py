@@ -74,7 +74,3 @@ def downgrade() -> None:
         f"action IN ({', '.join(IDENTITY_ACTIONS_PREVIOUS)})",
         schema=schema,
     )
-<<<<<<< HEAD
-
-=======
->>>>>>> eee4912 (chore(release): v0.13.0)

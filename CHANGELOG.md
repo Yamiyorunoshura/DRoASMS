@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2025-11-09
+
+### Fixed
+- **合併衝突修復**：修復 v0.13.0 發佈過程中的合併衝突
+  - 修復 `src/bot/commands/state_council.py` 中的格式化衝突
+  - 修復 `src/bot/services/state_council_service.py` 中的錯誤訊息格式化
+  - 修復 `src/db/migrations/versions/039_add_arrest_action.py` 中的檔案結尾衝突
+
 ## [0.13.0] - 2025-11-09
 
 ### Added

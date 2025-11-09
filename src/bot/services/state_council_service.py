@@ -1376,13 +1376,9 @@ class StateCouncilService:
                 LOGGER.exception("state_council.arrest.add_suspect_failed", error=str(e))
             except Exception:
                 pass
-<<<<<<< HEAD
-            raise PermissionDeniedError("無法賦予『嫌犯』身分組，請確認機器人權限與身分組層級。") from None
-=======
             raise PermissionDeniedError(
                 "無法賦予『嫌犯』身分組，請確認機器人權限與身分組層級。"
             ) from None
->>>>>>> eee4912 (chore(release): v0.13.0)
 
         # 公民移除：只有在層級允許時才嘗試；失敗記錄告警但不中斷
         try:

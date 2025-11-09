@@ -2298,22 +2298,14 @@ class ArrestReasonModal(discord.ui.Modal, title="逮捕原因"):
                 target_member = self.guild.get_member(self.target_id)
 
             target_mention = (
-<<<<<<< HEAD
-                target_member.mention if getattr(target_member, "mention", None) else f"<@{self.target_id}>"
-=======
                 target_member.mention
                 if getattr(target_member, "mention", None)
                 else f"<@{self.target_id}>"
->>>>>>> eee4912 (chore(release): v0.13.0)
             )
 
             # 依實際結果描述是否成功移除/賦予
             try:
                 cfg = await self.service.get_config(self.guild_id)
-<<<<<<< HEAD
-                citizen_role = self.guild.get_role(cfg.citizen_role_id) if hasattr(self.guild, "get_role") else None
-                suspect_role = self.guild.get_role(cfg.suspect_role_id) if hasattr(self.guild, "get_role") else None
-=======
                 citizen_role = (
                     self.guild.get_role(cfg.citizen_role_id)
                     if hasattr(self.guild, "get_role")
@@ -2324,7 +2316,6 @@ class ArrestReasonModal(discord.ui.Modal, title="逮捕原因"):
                     if hasattr(self.guild, "get_role")
                     else None
                 )
->>>>>>> eee4912 (chore(release): v0.13.0)
                 roles = list(getattr(target_member, "roles", []) or [])
                 has_suspect = bool(suspect_role in roles) if suspect_role else False
                 has_citizen = bool(citizen_role in roles) if citizen_role else False
@@ -2332,13 +2323,9 @@ class ArrestReasonModal(discord.ui.Modal, title="逮捕原因"):
                 if has_suspect:
                     result_lines.append("結果：已掛上『嫌犯』身分組。")
                 else:
-<<<<<<< HEAD
-                    result_lines.append("結果：未能掛上『嫌犯』身分組，請檢查機器人權限與身分組層級。")
-=======
                     result_lines.append(
                         "結果：未能掛上『嫌犯』身分組，請檢查機器人權限與身分組層級。"
                     )
->>>>>>> eee4912 (chore(release): v0.13.0)
                 if citizen_role is not None:
                     if not has_citizen:
                         result_lines.append("附註：已移除『公民』身分組。")
