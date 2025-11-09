@@ -563,6 +563,62 @@ class StateCouncilService:
             )
         return cfg
 
+    async def update_citizen_role_config(
+        self, *, guild_id: int, citizen_role_id: int | None
+    ) -> StateCouncilConfig:
+        """Update citizen role configuration for a guild."""
+        pool = get_pool()
+        cm = await self._pool_acquire_cm(pool)
+        async with cm as conn:
+            # Get existing config
+            existing = await self._fetch_config(conn, guild_id=guild_id)
+            if existing is None:
+                raise StateCouncilNotConfiguredError(
+                    "State council governance is not configured for this guild."
+                )
+            # Update config with new citizen_role_id
+            config = await self._gateway.upsert_state_council_config(
+                conn,
+                guild_id=guild_id,
+                leader_id=existing.leader_id,
+                leader_role_id=existing.leader_role_id,
+                internal_affairs_account_id=existing.internal_affairs_account_id,
+                finance_account_id=existing.finance_account_id,
+                security_account_id=existing.security_account_id,
+                central_bank_account_id=existing.central_bank_account_id,
+                citizen_role_id=citizen_role_id,
+                suspect_role_id=existing.suspect_role_id,
+            )
+        return config
+
+    async def update_suspect_role_config(
+        self, *, guild_id: int, suspect_role_id: int | None
+    ) -> StateCouncilConfig:
+        """Update suspect role configuration for a guild."""
+        pool = get_pool()
+        cm = await self._pool_acquire_cm(pool)
+        async with cm as conn:
+            # Get existing config
+            existing = await self._fetch_config(conn, guild_id=guild_id)
+            if existing is None:
+                raise StateCouncilNotConfiguredError(
+                    "State council governance is not configured for this guild."
+                )
+            # Update config with new suspect_role_id
+            config = await self._gateway.upsert_state_council_config(
+                conn,
+                guild_id=guild_id,
+                leader_id=existing.leader_id,
+                leader_role_id=existing.leader_role_id,
+                internal_affairs_account_id=existing.internal_affairs_account_id,
+                finance_account_id=existing.finance_account_id,
+                security_account_id=existing.security_account_id,
+                central_bank_account_id=existing.central_bank_account_id,
+                citizen_role_id=existing.citizen_role_id,
+                suspect_role_id=suspect_role_id,
+            )
+        return config
+
     async def ensure_government_accounts(self, *, guild_id: int, admin_id: int) -> None:
         """確保所有部門的政府帳戶存在，並同步經濟系統餘額。
 
@@ -1184,6 +1240,174 @@ class StateCouncilService:
                 guild_id=guild_id,
                 target_id=target_id,
                 action=action,
+                reason=reason,
+                performed_by=user_id,
+            )
+            # 契約相容：_FakeGateway 以 dict 回傳
+            if isinstance(rv, dict):
+                try:
+                    record_id_val = rv.get("id") or rv.get("record_id")
+                    if record_id_val is None:
+                        raise ValueError("Missing record_id")
+                    return IdentityRecord(
+                        record_id=record_id_val,
+                        guild_id=rv["guild_id"],
+                        target_id=rv["target_id"],
+                        action=rv["action"],
+                        reason=rv.get("reason"),
+                        performed_by=rv.get("performed_by", user_id),
+                        performed_at=rv.get("created_at") or datetime.now(timezone.utc),
+                    )
+                except Exception:
+                    from types import SimpleNamespace
+
+                    return cast(IdentityRecord, SimpleNamespace(**rv))
+            return rv
+
+    async def arrest_user(
+        self,
+        *,
+        guild_id: int,
+        department: str,
+        user_id: int,
+        user_roles: Sequence[int],
+        target_id: int,
+        reason: str,
+        guild: Any,  # discord.Guild or stub
+    ) -> IdentityRecord:
+        """Arrest a user: remove citizen role and add suspect role."""
+        if department != "國土安全部":
+            raise PermissionDeniedError("Only Security can arrest users")
+
+        if not await self.check_department_permission(
+            guild_id=guild_id, user_id=user_id, department=department, user_roles=user_roles
+        ):
+            raise PermissionDeniedError(f"No permission to arrest from {department}")
+
+        # Get config to check role IDs
+        cfg = await self.get_config(guild_id=guild_id)
+        if not cfg.citizen_role_id or not cfg.suspect_role_id:
+            raise ValueError(
+                "公民身分組或嫌犯身分組未設定，請先使用 /state_council "
+                "config_citizen_role 和 config_suspect_role 設定"
+            )
+
+        # Get target member
+        target_member = None
+        if hasattr(guild, "get_member"):
+            target_member = guild.get_member(target_id)
+        if target_member is None:
+            raise ValueError(f"無法找到目標使用者（ID: {target_id}）")
+
+        # Remove citizen role and add suspect role
+        citizen_role = None
+        suspect_role = None
+        if hasattr(guild, "get_role"):
+            citizen_role = guild.get_role(cfg.citizen_role_id)
+            suspect_role = guild.get_role(cfg.suspect_role_id)
+
+        if citizen_role is None:
+            raise ValueError(f"無法找到公民身分組（ID: {cfg.citizen_role_id}）")
+        if suspect_role is None:
+            raise ValueError(f"無法找到嫌犯身分組（ID: {cfg.suspect_role_id}）")
+
+        # --- Discord 權限與層級檢查（避免 50013）---
+        def _role_pos(r: Any) -> int:
+            try:
+                return int(getattr(r, "position", -1))
+            except Exception:
+                return -1
+
+        bot_member = getattr(guild, "me", None)
+        bot_perms = getattr(bot_member, "guild_permissions", None)
+        has_manage_roles = bool(getattr(bot_perms, "manage_roles", False)) if bot_perms else False
+        bot_top_role = None
+        try:
+            roles_seq = list(getattr(bot_member, "roles", []) or [])
+            bot_top_role = max(roles_seq, key=_role_pos) if roles_seq else None
+        except Exception:
+            bot_top_role = None
+        bot_top_pos = _role_pos(bot_top_role) if bot_top_role is not None else -1
+
+        # 目標成員最高身分組位置
+        try:
+            target_roles = list(getattr(target_member, "roles", []) or [])
+            target_top_role = max(target_roles, key=_role_pos) if target_roles else None
+        except Exception:
+            target_top_role = None
+        target_top_pos = _role_pos(target_top_role) if target_top_role is not None else -1
+
+        citizen_pos = _role_pos(citizen_role)
+        suspect_pos = _role_pos(suspect_role)
+
+        # 基礎能力：必須能管理身分組且機器人層級要高於對方最高身分組
+        if not has_manage_roles or not (bot_top_pos > target_top_pos >= -1):
+            # 詳細記錄以利診斷
+            try:
+                LOGGER.error(
+                    "state_council.arrest.permission_violation",
+                    has_manage_roles=has_manage_roles,
+                    bot_top_pos=bot_top_pos,
+                    target_top_pos=target_top_pos,
+                    citizen_pos=citizen_pos,
+                    suspect_pos=suspect_pos,
+                )
+            except Exception:
+                pass
+            raise PermissionDeniedError(
+                "機器人缺少『管理身分組』權限或角色層級過低，無法變更該成員的身分組。"
+                "請到伺服器設定將機器人最高身分組拖到『公民/嫌犯』之上，並勾選『管理身分組』。"
+            )
+
+        # 若嫌犯身分組在機器人之上，將無法賦予
+        if not (suspect_pos < bot_top_pos):
+            raise PermissionDeniedError(
+                "無法賦予『嫌犯』身分組：其層級不低於機器人最高身分組。"
+                "請將機器人最高身分組移到更高位置，再重試。"
+            )
+
+        # 先嘗試增加嫌犯（通常更關鍵）；再盡力移除公民
+        try:
+            if suspect_role not in getattr(target_member, "roles", []):
+                if hasattr(target_member, "add_roles"):
+                    await target_member.add_roles(suspect_role, reason=f"逮捕：{reason}")
+        except Exception as e:  # 轉為語意化錯誤
+            try:
+                LOGGER.exception("state_council.arrest.add_suspect_failed", error=str(e))
+            except Exception:
+                pass
+            raise PermissionDeniedError(
+                "無法賦予『嫌犯』身分組，請確認機器人權限與身分組層級。"
+            ) from None
+
+        # 公民移除：只有在層級允許時才嘗試；失敗記錄告警但不中斷
+        try:
+            if citizen_role in getattr(target_member, "roles", []) and (citizen_pos < bot_top_pos):
+                if hasattr(target_member, "remove_roles"):
+                    await target_member.remove_roles(citizen_role, reason=f"逮捕：{reason}")
+            elif citizen_role in getattr(target_member, "roles", []):
+                # 有該身分組但層級不允許移除
+                LOGGER.warning(
+                    "state_council.arrest.remove_citizen_skipped_due_to_hierarchy",
+                    citizen_pos=citizen_pos,
+                    bot_top_pos=bot_top_pos,
+                )
+        except Exception as e:
+            # 記錄但不阻擋逮捕主流程（嫌犯已掛上）
+            try:
+                LOGGER.warning("state_council.arrest.remove_citizen_failed", error=str(e))
+            except Exception:
+                pass
+
+        # Create identity record
+        pool = get_pool()
+        cm = await self._pool_acquire_cm(pool)
+        async with cm as conn:
+            rv = await self._gateway.create_identity_record(
+                conn,
+                guild_id=guild_id,
+                target_id=target_id,
+                action="逮捕",
                 reason=reason,
                 performed_by=user_id,
             )

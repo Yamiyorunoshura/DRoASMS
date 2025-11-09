@@ -269,3 +269,37 @@ async def test_expire_due_proposals_flow(monkeypatch: pytest.MonkeyPatch) -> Non
     updated = await svc.get_proposal(proposal_id=p.proposal_id)
     assert updated is not None
     assert updated.status in ("已通過", "已逾時")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_summon_multiple_permanent_council_members(monkeypatch: pytest.MonkeyPatch) -> None:
+    """整合流程：傳召多個常任理事會成員"""
+    gw = _FakeGateway()
+    conn = _FakeConnection(gw)
+    pool = _FakePool(conn)
+    monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
+
+    svc = SupremeAssemblyService(gateway=gw)
+    await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+
+    # 創建多個常任理事傳召記錄
+    target_ids = [2, 3, 4]
+    summons = []
+    for target_id in target_ids:
+        summon = await svc.create_summon(
+            guild_id=100,
+            invoked_by=1,
+            target_id=target_id,
+            target_kind="official",
+            note=f"傳召常任理事 {target_id}",
+        )
+        summons.append(summon)
+        assert summon.target_kind == "official"
+        assert summon.target_id == target_id
+
+    # 驗證所有傳召記錄都已創建
+    assert len(summons) == len(target_ids)
+    for i, summon in enumerate(summons):
+        assert summon.target_id == target_ids[i]
+        assert summon.note == f"傳召常任理事 {target_ids[i]}"

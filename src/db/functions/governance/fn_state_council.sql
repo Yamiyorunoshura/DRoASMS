@@ -1,7 +1,69 @@
--- State council governance functions consolidated.
 -- Schema: governance
 
+-- Ensure a clean slate before recreating (avoid "cannot change return type" and
+-- eliminate default-arg overload ambiguity across migrations/tests)
+DROP FUNCTION IF EXISTS governance.fn_upsert_state_council_config(
+    bigint, bigint, bigint, bigint, bigint, bigint, bigint
+);
+DROP FUNCTION IF EXISTS governance.fn_upsert_state_council_config(
+    bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint
+);
+
 -- Upsert state council config
+CREATE OR REPLACE FUNCTION governance.fn_upsert_state_council_config(
+    p_guild_id bigint,
+    p_leader_id bigint,
+    p_leader_role_id bigint,
+    p_internal_affairs_account_id bigint,
+    p_finance_account_id bigint,
+    p_security_account_id bigint,
+    p_central_bank_account_id bigint,
+    p_citizen_role_id bigint,
+    p_suspect_role_id bigint
+)
+RETURNS TABLE (
+    guild_id bigint,
+    leader_id bigint,
+    leader_role_id bigint,
+    internal_affairs_account_id bigint,
+    finance_account_id bigint,
+    security_account_id bigint,
+    central_bank_account_id bigint,
+    citizen_role_id bigint,
+    suspect_role_id bigint,
+    created_at timestamptz,
+    updated_at timestamptz
+) LANGUAGE plpgsql AS $$
+BEGIN
+    RETURN QUERY
+    INSERT INTO governance.state_council_config AS c (
+        guild_id, leader_id, leader_role_id, internal_affairs_account_id,
+        finance_account_id, security_account_id, central_bank_account_id,
+        citizen_role_id, suspect_role_id
+    ) VALUES (
+        p_guild_id, p_leader_id, p_leader_role_id, p_internal_affairs_account_id,
+        p_finance_account_id, p_security_account_id, p_central_bank_account_id,
+        p_citizen_role_id, p_suspect_role_id
+    )
+    -- 使用具名主鍵約束避免與 RETURNS TABLE 之 guild_id 衝突
+    ON CONFLICT ON CONSTRAINT state_council_config_pkey
+    DO UPDATE SET leader_id = EXCLUDED.leader_id,
+                  leader_role_id = EXCLUDED.leader_role_id,
+                  internal_affairs_account_id = EXCLUDED.internal_affairs_account_id,
+                  finance_account_id = EXCLUDED.finance_account_id,
+                  security_account_id = EXCLUDED.security_account_id,
+                  central_bank_account_id = EXCLUDED.central_bank_account_id,
+                  citizen_role_id = EXCLUDED.citizen_role_id,
+                  suspect_role_id = EXCLUDED.suspect_role_id,
+                  updated_at = timezone('utc', clock_timestamp())
+    RETURNING c.guild_id, c.leader_id, c.leader_role_id, c.internal_affairs_account_id,
+              c.finance_account_id, c.security_account_id, c.central_bank_account_id,
+              c.citizen_role_id, c.suspect_role_id,
+              c.created_at, c.updated_at;
+END; $$;
+
+-- Backward-compat overload: 7-arg wrapper that forwards to the 9-arg version
+-- This preserves existing callers/tests that still use the legacy signature.
 CREATE OR REPLACE FUNCTION governance.fn_upsert_state_council_config(
     p_guild_id bigint,
     p_leader_id bigint,
@@ -19,30 +81,24 @@ RETURNS TABLE (
     finance_account_id bigint,
     security_account_id bigint,
     central_bank_account_id bigint,
+    citizen_role_id bigint,
+    suspect_role_id bigint,
     created_at timestamptz,
     updated_at timestamptz
 ) LANGUAGE plpgsql AS $$
 BEGIN
     RETURN QUERY
-    INSERT INTO governance.state_council_config AS c (
-        guild_id, leader_id, leader_role_id, internal_affairs_account_id,
-        finance_account_id, security_account_id, central_bank_account_id
-    ) VALUES (
-        p_guild_id, p_leader_id, p_leader_role_id, p_internal_affairs_account_id,
-        p_finance_account_id, p_security_account_id, p_central_bank_account_id
-    )
-    -- 使用具名主鍵約束避免與 RETURNS TABLE 之 guild_id 衝突
-    ON CONFLICT ON CONSTRAINT state_council_config_pkey
-    DO UPDATE SET leader_id = EXCLUDED.leader_id,
-                  leader_role_id = EXCLUDED.leader_role_id,
-                  internal_affairs_account_id = EXCLUDED.internal_affairs_account_id,
-                  finance_account_id = EXCLUDED.finance_account_id,
-                  security_account_id = EXCLUDED.security_account_id,
-                  central_bank_account_id = EXCLUDED.central_bank_account_id,
-                  updated_at = timezone('utc', clock_timestamp())
-    RETURNING c.guild_id, c.leader_id, c.leader_role_id, c.internal_affairs_account_id,
-              c.finance_account_id, c.security_account_id, c.central_bank_account_id,
-              c.created_at, c.updated_at;
+    SELECT * FROM governance.fn_upsert_state_council_config(
+        p_guild_id,
+        p_leader_id,
+        p_leader_role_id,
+        p_internal_affairs_account_id,
+        p_finance_account_id,
+        p_security_account_id,
+        p_central_bank_account_id,
+        NULL::bigint,
+        NULL::bigint
+    );
 END; $$;
 
 CREATE OR REPLACE FUNCTION governance.fn_get_state_council_config(
@@ -56,6 +112,8 @@ RETURNS TABLE (
     finance_account_id bigint,
     security_account_id bigint,
     central_bank_account_id bigint,
+    citizen_role_id bigint,
+    suspect_role_id bigint,
     created_at timestamptz,
     updated_at timestamptz
 ) LANGUAGE plpgsql AS $$
@@ -64,6 +122,7 @@ BEGIN
     RETURN QUERY
     SELECT c.guild_id, c.leader_id, c.leader_role_id, c.internal_affairs_account_id,
            c.finance_account_id, c.security_account_id, c.central_bank_account_id,
+           c.citizen_role_id, c.suspect_role_id,
            c.created_at, c.updated_at
     FROM governance.state_council_config AS c
     WHERE c.guild_id = p_guild_id;

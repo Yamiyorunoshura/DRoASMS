@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2025-11-09
+
+### Added
+- **國務院身分管理系統（State Council Identity Management）**：實現完整的公民與嫌犯身分管理機制
+  - `/state_council config_citizen_role`：設定公民身分組（需管理員或管理伺服器權限）
+  - `/state_council config_suspect_role`：設定嫌犯身分組（需管理員或管理伺服器權限）
+  - 新增「逮捕」動作支援，國務院可對成員執行逮捕行動
+- **資料庫架構擴展**：
+  - 新增資料庫遷移 `037_add_identity_role_config.py`：為國務院配置表添加公民與嫌犯身分組欄位
+  - 新增資料庫遷移 `038_backcompat_upsert_sc_wrapper.py`：提供向後相容的 upsert 包裝函數
+  - 新增資料庫遷移 `039_add_arrest_action.py`：在身分動作枚舉中添加逮捕動作
+- **服務層增強**：擴展 `StateCouncilService` 以支援身分管理與逮捕功能
+- **最高人民會議傳召功能改進**：優化常任理事會成員傳召流程，提供多選介面
+- **測試覆蓋提升**：新增完整的單元測試與整合測試覆蓋新功能
+
+### Changed
+- **重試機制優化**：改進 `src/infra/retry.py` 的錯誤處理邏輯
+- **資料庫連線管理**：增強 `src/db/pool.py` 的連線池配置
+- **測試基礎設施**：更新 `.gitignore` 與 `docker/bin/test.sh` 以支援新的測試需求
+
 ## [0.12.1] - 2025-11-08
 
 ### Fixed

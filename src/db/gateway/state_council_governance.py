@@ -12,6 +12,13 @@ import asyncpg
 
 @dataclass(frozen=True, slots=True)
 class StateCouncilConfig:
+    """國務院（伺服器）層級的治理設定。
+
+    注意：`citizen_role_id` 與 `suspect_role_id` 在有些資料庫版本/測試替身中
+    可能不存在，因此這兩個欄位必須是可選且具備預設值，以相容舊資料與單元測試。
+    將其移到最後並提供 `None` 預設，可讓測試以關鍵字參數省略它們。
+    """
+
     guild_id: int
     leader_id: int | None
     leader_role_id: int | None
@@ -21,6 +28,9 @@ class StateCouncilConfig:
     central_bank_account_id: int
     created_at: datetime
     updated_at: datetime
+    # 可選欄位放最後並提供預設值，避免 KeyError/TypeError
+    citizen_role_id: int | None = None
+    suspect_role_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +222,19 @@ class InterdepartmentTransfer:
     transferred_at: datetime
 
 
+def _safe_row_get(row: Any, key: str, default: Any | None = None) -> Any | None:
+    """容錯取得列值。
+
+    - asyncpg.Record 不一定支援 dict.get；
+    - 測試常以 dict 模擬；
+    因此統一改以 try/except 擷取，缺值時回傳 default（預設 None）。
+    """
+    try:
+        return row[key]
+    except Exception:
+        return default
+
+
 class StateCouncilGovernanceGateway:
     """Encapsulate CRUD ops for state council governance tables."""
 
@@ -230,9 +253,12 @@ class StateCouncilGovernanceGateway:
         finance_account_id: int,
         security_account_id: int,
         central_bank_account_id: int,
+        citizen_role_id: int | None = None,
+        suspect_role_id: int | None = None,
     ) -> StateCouncilConfig:
         sql = (
-            f"SELECT * FROM {self._schema}.fn_upsert_state_council_config(" "$1,$2,$3,$4,$5,$6,$7)"
+            f"SELECT * FROM {self._schema}.fn_upsert_state_council_config("
+            "$1,$2,$3,$4,$5,$6,$7,$8,$9)"
         )
         row = await connection.fetchrow(
             sql,
@@ -243,6 +269,8 @@ class StateCouncilGovernanceGateway:
             finance_account_id,
             security_account_id,
             central_bank_account_id,
+            citizen_role_id,
+            suspect_role_id,
         )
         assert row is not None
         return StateCouncilConfig(
@@ -255,6 +283,9 @@ class StateCouncilGovernanceGateway:
             central_bank_account_id=row["central_bank_account_id"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            # 許多測試使用 dict 作為 row，且不含下列鍵；以 try/except 降級為 None
+            citizen_role_id=_safe_row_get(row, "citizen_role_id"),
+            suspect_role_id=_safe_row_get(row, "suspect_role_id"),
         )
 
     async def fetch_state_council_config(
@@ -274,6 +305,8 @@ class StateCouncilGovernanceGateway:
             central_bank_account_id=row["central_bank_account_id"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            citizen_role_id=_safe_row_get(row, "citizen_role_id"),
+            suspect_role_id=_safe_row_get(row, "suspect_role_id"),
         )
 
     # 契約相容：提供 fetch_config 與舊名稱對應

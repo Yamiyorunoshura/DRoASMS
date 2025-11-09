@@ -1484,21 +1484,14 @@ class SummonOfficialSelectView(discord.ui.View):
                             recipients.extend(role.members)
 
             elif selected_value == "permanent_council":
-                target_id = CouncilService.derive_council_account_id(self.guild.id)
-                target_name = "常任理事會成員"
-
-                # DM 常任理事會身分組所有成員
-                from src.db.gateway.council_governance import CouncilGovernanceGateway
-                from src.db.pool import get_pool as _get_pool
-
-                council_gw: CouncilGovernanceGateway = CouncilGovernanceGateway()
-                pool = _get_pool()
-                async with pool.acquire() as conn:
-                    c_cfg = await council_gw.fetch_config(conn, guild_id=self.guild.id)
-                if c_cfg:
-                    role = self.guild.get_role(int(c_cfg.council_role_id))
-                    if role:
-                        recipients.extend(role.members)
+                # Show multi-select view for permanent council members
+                view = SummonPermanentCouncilView(
+                    service=self.service, guild=self.guild, original_view=self
+                )
+                await interaction.response.send_message(
+                    "請選擇要傳召的常任理事會成員（可多選）：", view=view, ephemeral=True
+                )
+                return
 
             if not target_id:
                 await interaction.response.send_message("無法確定目標官員。", ephemeral=True)
@@ -1558,6 +1551,163 @@ class SummonOfficialSelectView(discord.ui.View):
             )
         except Exception as exc:
             LOGGER.exception("supreme_assembly.panel.summon.error", error=str(exc))
+            await interaction.response.send_message("傳召失敗，請稍後再試。", ephemeral=True)
+
+
+class SummonPermanentCouncilView(discord.ui.View):
+    """View for selecting permanent council members to summon (multi-select)."""
+
+    def __init__(
+        self,
+        *,
+        service: SupremeAssemblyService,
+        guild: discord.Guild,
+        original_view: SummonOfficialSelectView,
+    ) -> None:
+        super().__init__(timeout=300)
+        self.service = service
+        self.guild = guild
+        self.original_view = original_view
+
+        # Load permanent council members
+        from src.db.gateway.council_governance import CouncilGovernanceGateway
+        from src.db.pool import get_pool as _get_pool
+
+        council_gw: CouncilGovernanceGateway = CouncilGovernanceGateway()
+        pool = _get_pool()
+
+        # We need to load members asynchronously, so we'll do it in interaction_check
+        self._members_loaded = False
+        self._council_role_id: int | None = None
+
+        # Store reference for async loading
+        self._council_gw = council_gw
+        self._pool = pool
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Load members when view is first shown."""
+        if not self._members_loaded:
+            try:
+                async with self._pool.acquire() as conn:
+                    c_cfg = await self._council_gw.fetch_config(conn, guild_id=self.guild.id)
+                if c_cfg:
+                    self._council_role_id = int(c_cfg.council_role_id)
+                    role = self.guild.get_role(self._council_role_id)
+                    if role:
+                        members = role.members
+                        options: list[discord.SelectOption] = []
+                        for m in members[:25]:  # Discord limit
+                            options.append(
+                                discord.SelectOption(
+                                    label=m.display_name,
+                                    value=str(m.id),
+                                    description=f"常任理事：{m.name}",
+                                )
+                            )
+                        if options:
+                            # Clear existing items and add select
+                            self.clear_items()
+                            select: discord.ui.Select[Any] = discord.ui.Select(
+                                placeholder="選擇常任理事會成員（可多選）",
+                                options=options,
+                                min_values=1,
+                                max_values=min(len(options), 25),  # Support multi-select
+                            )
+                            select.callback = self._on_select
+                            self.add_item(select)
+                        self._members_loaded = True
+            except Exception:
+                pass
+        result = await super().interaction_check(interaction)
+        return bool(result)
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        if not interaction.data:
+            await interaction.response.send_message("請選擇至少一個常任理事。", ephemeral=True)
+            return
+        values = interaction.data.get("values")
+        if not values or not isinstance(values, list) or len(values) == 0:
+            await interaction.response.send_message("請選擇至少一個常任理事。", ephemeral=True)
+            return
+
+        selected_ids = [int(v) for v in values if isinstance(v, str) and v.isdigit()]
+
+        if not selected_ids:
+            await interaction.response.send_message("請選擇至少一個常任理事。", ephemeral=True)
+            return
+
+        try:
+            # Create summon records for each selected member
+            from src.bot.services.council_service import CouncilService
+
+            target_id = CouncilService.derive_council_account_id(self.guild.id)
+            target_name = "常任理事會成員"
+
+            # Prepare DM content
+            embed = discord.Embed(
+                title="最高人民會議傳召",
+                color=0xE74C3C,
+                description=(
+                    f"議長 {interaction.user.mention} 傳召您出席最高人民會議（{target_name}）。"
+                ),
+            )
+
+            sent = 0
+            summoned_members: list[str] = []
+
+            # Send DM to each selected member
+            for member_id in selected_ids:
+                member = self.guild.get_member(member_id)
+                if member:
+                    try:
+                        await member.send(embed=embed)
+                        sent += 1
+                        summoned_members.append(member.mention)
+                    except Exception:
+                        summoned_members.append(f"<@{member_id}>")
+
+            # Create summon record (using the council account ID as target)
+            summon = await self.service.create_summon(
+                guild_id=self.guild.id,
+                invoked_by=interaction.user.id,
+                target_id=target_id,
+                target_kind="official",
+                note=f"傳召常任理事會成員：{', '.join([str(mid) for mid in selected_ids])}",
+            )
+
+            if sent > 0:
+                try:
+                    await self.service.mark_summon_delivered(summon_id=summon.summon_id)
+                except Exception:
+                    pass
+
+            members_list = ", ".join(summoned_members[:5])  # Limit display
+            if len(summoned_members) > 5:
+                members_list += f" 等 {len(summoned_members)} 人"
+
+            await interaction.response.send_message(
+                (
+                    f"已傳召 {members_list}。"
+                    + (
+                        f" 已成功私訊 {sent} 人。"
+                        if sent > 0
+                        else " 未能私訊任何成員（可能關閉 DM）。"
+                    )
+                ),
+                ephemeral=True,
+            )
+            LOGGER.info(
+                "supreme_assembly.panel.summon.permanent_council",
+                guild_id=self.guild.id,
+                user_id=interaction.user.id,
+                target_ids=selected_ids,
+                target_kind="official",
+                dm_sent=sent,
+            )
+        except Exception as exc:
+            LOGGER.exception(
+                "supreme_assembly.panel.summon.permanent_council.error", error=str(exc)
+            )
             await interaction.response.send_message("傳召失敗，請稍後再試。", ephemeral=True)
 
 
