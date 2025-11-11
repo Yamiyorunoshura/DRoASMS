@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Sequence
+from typing import Sequence, cast
 from uuid import UUID
 
-import asyncpg
 import structlog
 
 from src.db.gateway.supreme_assembly_governance import (
@@ -20,6 +19,7 @@ from src.infra.events.supreme_assembly_events import (
     SupremeAssemblyEvent,
     publish,
 )
+from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -69,23 +69,25 @@ class SupremeAssemblyService:
         speaker_role_id: int,
         member_role_id: int,
     ) -> SupremeAssemblyConfig:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
             config = await self._gateway.upsert_config(
-                conn,
+                c,
                 guild_id=guild_id,
                 speaker_role_id=speaker_role_id,
                 member_role_id=member_role_id,
             )
             # Ensure account exists
             account_id = self.derive_account_id(guild_id)
-            await self._gateway.ensure_account(conn, guild_id=guild_id, account_id=account_id)
+            await self._gateway.ensure_account(c, guild_id=guild_id, account_id=account_id)
             return config
 
     async def get_config(self, *, guild_id: int) -> SupremeAssemblyConfig:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            cfg = await self._gateway.fetch_config(conn, guild_id=guild_id)
+            c: ConnectionProtocol = conn
+            cfg = await self._gateway.fetch_config(c, guild_id=guild_id)
         if cfg is None:
             raise GovernanceNotConfiguredError(
                 "Supreme assembly governance is not configured for this guild."
@@ -94,9 +96,10 @@ class SupremeAssemblyService:
 
     async def get_account_balance(self, *, guild_id: int) -> int:
         """Get the balance of the supreme assembly account for a guild."""
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            result = await self._gateway.fetch_account(conn, guild_id=guild_id)
+            c: ConnectionProtocol = conn
+            result = await self._gateway.fetch_account(c, guild_id=guild_id)
             if result is None:
                 # Account doesn't exist yet, return 0
                 return 0
@@ -118,10 +121,11 @@ class SupremeAssemblyService:
                 "No members to snapshot. Configure member role or ensure members exist."
             )
 
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
             # Check concurrency limit
-            active_count = await self._gateway.count_active_by_guild(conn, guild_id=guild_id)
+            active_count = await self._gateway.count_active_by_guild(c, guild_id=guild_id)
             if active_count >= 5:
                 raise RuntimeError(
                     (
@@ -131,7 +135,7 @@ class SupremeAssemblyService:
                 )
 
             proposal = await self._gateway.create_proposal(
-                conn,
+                c,
                 guild_id=guild_id,
                 proposer_id=proposer_id,
                 title=title,
@@ -151,13 +155,14 @@ class SupremeAssemblyService:
         return proposal
 
     async def cancel_proposal(self, *, proposal_id: UUID) -> bool:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         proposal = None
         async with pool.acquire() as conn:
-            proposal = await self._gateway.fetch_proposal(conn, proposal_id=proposal_id)
+            c: ConnectionProtocol = conn
+            proposal = await self._gateway.fetch_proposal(c, proposal_id=proposal_id)
             if proposal is None:
                 return False
-            ok = await self._gateway.cancel_proposal(conn, proposal_id=proposal_id)
+            ok = await self._gateway.cancel_proposal(c, proposal_id=proposal_id)
         if ok and proposal:
             # Publish event for proposal cancellation
             await publish(
@@ -177,25 +182,26 @@ class SupremeAssemblyService:
         if choice not in ("approve", "reject", "abstain"):
             raise ValueError("Invalid vote choice. Must be 'approve', 'reject', or 'abstain'.")
 
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         totals: VoteTotals
         final_status: str
         async with pool.acquire() as conn:
-            proposal = await self._gateway.fetch_proposal(conn, proposal_id=proposal_id)
+            c: ConnectionProtocol = conn
+            proposal = await self._gateway.fetch_proposal(c, proposal_id=proposal_id)
             if proposal is None:
                 raise RuntimeError("Proposal not found.")
             if proposal.status != "進行中":
-                totals = await self._compute_totals(conn, proposal_id, proposal)
+                totals = await self._compute_totals(c, proposal_id, proposal)
                 final_status = proposal.status
             else:
-                snapshot = await self._gateway.fetch_snapshot(conn, proposal_id=proposal_id)
+                snapshot = await self._gateway.fetch_snapshot(c, proposal_id=proposal_id)
                 if voter_id not in snapshot:
                     raise PermissionDeniedError("Voter is not in the snapshot for this proposal.")
 
-                async with conn.transaction():
+                async with c.transaction():
                     try:
                         await self._gateway.upsert_vote(
-                            conn,
+                            c,
                             proposal_id=proposal_id,
                             voter_id=voter_id,
                             choice=choice,
@@ -207,13 +213,13 @@ class SupremeAssemblyService:
                             ) from exc
                         raise
 
-                    totals = await self._compute_totals(conn, proposal_id, proposal)
+                    totals = await self._compute_totals(c, proposal_id, proposal)
                     final_status = "進行中"
 
                     # Passing threshold
                     if totals.approve >= proposal.threshold_t:
                         await self._gateway.mark_status(
-                            conn,
+                            c,
                             proposal_id=proposal_id,
                             status="已通過",
                         )
@@ -230,7 +236,7 @@ class SupremeAssemblyService:
                     # Early rejection: even if all remaining unvoted approve, cannot reach T
                     elif totals.approve + totals.remaining_unvoted < proposal.threshold_t:
                         await self._gateway.mark_status(
-                            conn,
+                            c,
                             proposal_id=proposal_id,
                             status="已否決",
                         )
@@ -259,15 +265,16 @@ class SupremeAssemblyService:
 
     async def get_vote_totals(self, *, proposal_id: UUID) -> VoteTotals:
         """Get vote totals for a proposal."""
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            proposal = await self._gateway.fetch_proposal(conn, proposal_id=proposal_id)
+            c: ConnectionProtocol = conn
+            proposal = await self._gateway.fetch_proposal(c, proposal_id=proposal_id)
             if proposal is None:
                 raise RuntimeError("Proposal not found.")
-            return await self._compute_totals(conn, proposal_id, proposal)
+            return await self._compute_totals(c, proposal_id, proposal)
 
     async def _compute_totals(
-        self, connection: asyncpg.Connection, proposal_id: UUID, proposal: Proposal
+        self, connection: ConnectionProtocol, proposal_id: UUID, proposal: Proposal
     ) -> VoteTotals:
         tally: Tally = await self._gateway.fetch_tally(connection, proposal_id=proposal_id)
         remaining = max(0, proposal.snapshot_n - tally.total_voted)
@@ -282,22 +289,23 @@ class SupremeAssemblyService:
 
     # --- Timeout & reminders ---
     async def expire_due_proposals(self) -> int:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         changed = 0
         async with pool.acquire() as conn:
-            for p in await self._gateway.list_due_proposals(conn):
-                totals = await self._compute_totals(conn, p.proposal_id, p)
+            c: ConnectionProtocol = conn
+            for p in await self._gateway.list_due_proposals(c):
+                totals = await self._compute_totals(c, p.proposal_id, p)
                 if totals.approve >= p.threshold_t:
                     # In case we crossed threshold but scheduler fired late, mark as passed
                     await self._gateway.mark_status(
-                        conn,
+                        c,
                         proposal_id=p.proposal_id,
                         status="已通過",
                     )
                     status = "已通過"
                 else:
                     await self._gateway.mark_status(
-                        conn,
+                        c,
                         proposal_id=p.proposal_id,
                         status="已逾時",
                     )
@@ -315,49 +323,56 @@ class SupremeAssemblyService:
         return changed
 
     async def list_unvoted_members(self, *, proposal_id: UUID) -> Sequence[int]:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            return await self._gateway.list_unvoted_members(conn, proposal_id=proposal_id)
+            c: ConnectionProtocol = conn
+            return await self._gateway.list_unvoted_members(c, proposal_id=proposal_id)
 
     async def mark_reminded(self, *, proposal_id: UUID) -> None:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            await self._gateway.mark_reminded(conn, proposal_id=proposal_id)
+            c: ConnectionProtocol = conn
+            await self._gateway.mark_reminded(c, proposal_id=proposal_id)
 
     # --- Export ---
     async def export_interval(
         self, *, guild_id: int, start: datetime, end: datetime
     ) -> list[dict[str, object]]:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
             return await self._gateway.export_interval(
-                conn,
+                c,
                 guild_id=guild_id,
                 start=start,
                 end=end,
             )
 
     async def get_snapshot(self, *, proposal_id: UUID) -> Sequence[int]:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            return await self._gateway.fetch_snapshot(conn, proposal_id=proposal_id)
+            c: ConnectionProtocol = conn
+            return await self._gateway.fetch_snapshot(c, proposal_id=proposal_id)
 
     async def get_votes_detail(self, *, proposal_id: UUID) -> Sequence[tuple[int, str]]:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            return await self._gateway.fetch_votes_detail(conn, proposal_id=proposal_id)
+            c: ConnectionProtocol = conn
+            return await self._gateway.fetch_votes_detail(c, proposal_id=proposal_id)
 
     async def get_proposal(self, *, proposal_id: UUID) -> Proposal | None:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            return await self._gateway.fetch_proposal(conn, proposal_id=proposal_id)
+            c: ConnectionProtocol = conn
+            return await self._gateway.fetch_proposal(c, proposal_id=proposal_id)
 
     # --- Queries for UI ---
     async def list_active_proposals(self, *, guild_id: int | None = None) -> Sequence[Proposal]:
         """List active proposals, optionally filtered by guild."""
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            proposals = await self._gateway.list_active_proposals(conn)
+            c: ConnectionProtocol = conn
+            proposals = await self._gateway.list_active_proposals(c)
             if guild_id is not None:
                 return [p for p in proposals if p.guild_id == guild_id]
             return proposals
@@ -375,10 +390,11 @@ class SupremeAssemblyService:
         if target_kind not in ("member", "official"):
             raise ValueError("target_kind must be 'member' or 'official'")
 
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
             return await self._gateway.create_summon(
-                conn,
+                c,
                 guild_id=guild_id,
                 invoked_by=invoked_by,
                 target_id=target_id,
@@ -387,14 +403,16 @@ class SupremeAssemblyService:
             )
 
     async def mark_summon_delivered(self, *, summon_id: UUID) -> None:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            await self._gateway.mark_summon_delivered(conn, summon_id=summon_id)
+            c: ConnectionProtocol = conn
+            await self._gateway.mark_summon_delivered(c, summon_id=summon_id)
 
     async def list_summons(self, *, guild_id: int, limit: int = 50) -> Sequence[Summon]:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            return await self._gateway.list_summons(conn, guild_id=guild_id, limit=limit)
+            c: ConnectionProtocol = conn
+            return await self._gateway.list_summons(c, guild_id=guild_id, limit=limit)
 
 
 __all__ = [

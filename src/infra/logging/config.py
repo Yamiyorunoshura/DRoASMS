@@ -7,7 +7,7 @@ from typing import Any, Mapping, MutableMapping
 
 import structlog
 
-_CONFIGURED: bool = False
+_configured: bool = False
 
 
 def _add_msg_from_event(_: Any, __: str, event_dict: MutableMapping[str, Any]) -> Mapping[str, Any]:
@@ -47,8 +47,13 @@ def _mask_sensitive_values(
 
     def mask_value(key: str, value: Any) -> Any:
         if isinstance(value, dict):
-            return {k: mask_value(k, v) for k, v in value.items()}
+            from typing import Mapping as _Mapping
+            from typing import cast as _cast
+
+            d = _cast(_Mapping[str, Any], value)
+            return {k: mask_value(k, v) for k, v in d.items()}
         if isinstance(value, list):
+            # list 類型已由 isinstance 確認，無需再 cast
             return [mask_value(key, v) for v in value]
         if key.lower() in _SENSITIVE_KEYS:
             if isinstance(value, str):
@@ -56,7 +61,8 @@ def _mask_sensitive_values(
             return "[REDACTED]"
         return value
 
-    return {k: mask_value(k, v) for k, v in event_dict.items()}
+    masked: dict[str, Any] = {k: mask_value(k, v) for k, v in event_dict.items()}
+    return masked
 
 
 def configure_logging(level: str | None = None) -> None:
@@ -67,7 +73,7 @@ def configure_logging(level: str | None = None) -> None:
     - Output: one JSON object per line (stdout via stdlib logging)
     """
 
-    global _CONFIGURED
+    global _configured
 
     raw_level: str = level if level is not None else os.getenv("LOG_LEVEL", "INFO")
     level_name = raw_level.upper()
@@ -98,4 +104,4 @@ def configure_logging(level: str | None = None) -> None:
         cache_logger_on_first_use=True,
     )
 
-    _CONFIGURED = True
+    _configured = True

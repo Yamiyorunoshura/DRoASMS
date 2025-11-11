@@ -12,15 +12,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
 from unittest.mock import AsyncMock
 
-import asyncpg
 import structlog
 
 from src.bot.services.currency_config_service import CurrencyConfigService
 from src.db.gateway.economy_queries import EconomyQueryGateway
 from src.db.gateway.state_council_governance import StateCouncilGovernanceGateway
+from src.infra.types.db import ConnectionProtocol
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -78,7 +78,7 @@ class StateCouncilReportGenerator:
 
     async def generate_financial_summary(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         start_date: datetime,
@@ -132,7 +132,7 @@ class StateCouncilReportGenerator:
 
     async def generate_department_metrics(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         department: str,
@@ -169,7 +169,7 @@ class StateCouncilReportGenerator:
 
     async def _generate_welfare_metrics(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         start_date: datetime,
@@ -188,13 +188,13 @@ class StateCouncilReportGenerator:
         operations: list[tuple[str, int, datetime, int | None]] = [
             (
                 "福利發放",
-                r.amount,
-                r.disbursed_at,
-                r.performed_by if hasattr(r, "performed_by") else None,
+                int(cast(int, r.amount)),
+                cast(datetime, r.disbursed_at),
+                cast(int | None, getattr(r, "performed_by", None)),
             )
             for r in filtered_records
         ]
-        total_amount = sum(r.amount for r in filtered_records)
+        total_amount = sum(int(cast(int, r.amount)) for r in filtered_records)
 
         return self._calculate_metrics(
             department="內政部",
@@ -204,7 +204,7 @@ class StateCouncilReportGenerator:
 
     async def _generate_tax_metrics(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         start_date: datetime,
@@ -221,13 +221,13 @@ class StateCouncilReportGenerator:
         operations: list[tuple[str, int, datetime, int | None]] = [
             (
                 "稅收徵收",
-                r.tax_amount,
-                r.collected_at,
-                r.performed_by if hasattr(r, "performed_by") else None,
+                int(cast(int, r.tax_amount)),
+                cast(datetime, r.collected_at),
+                cast(int | None, getattr(r, "performed_by", None)),
             )
             for r in filtered_records
         ]
-        total_amount = sum(r.tax_amount for r in filtered_records)
+        total_amount = sum(int(cast(int, r.tax_amount)) for r in filtered_records)
 
         return self._calculate_metrics(
             department="財政部",
@@ -237,7 +237,7 @@ class StateCouncilReportGenerator:
 
     async def _generate_identity_metrics(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         start_date: datetime,
@@ -254,7 +254,8 @@ class StateCouncilReportGenerator:
         ]
 
         operations: list[tuple[str, int, datetime, int | None]] = [
-            (r.action, 1, r.performed_at, r.performed_by) for r in filtered_records
+            (r.action, 1, r.performed_at, cast(int | None, getattr(r, "performed_by", None)))
+            for r in filtered_records
         ]
         total_amount = len(operations)
 
@@ -266,7 +267,7 @@ class StateCouncilReportGenerator:
 
     async def _generate_currency_metrics(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         start_date: datetime,
@@ -283,9 +284,15 @@ class StateCouncilReportGenerator:
         ]
 
         operations: list[tuple[str, int, datetime, int | None]] = [
-            ("貨幣發行", r.amount, r.issued_at, r.performed_by) for r in filtered_records
+            (
+                "貨幣發行",
+                int(cast(int, r.amount)),
+                cast(datetime, r.issued_at),
+                cast(int | None, getattr(r, "performed_by", None)),
+            )
+            for r in filtered_records
         ]
-        total_amount = sum(r.amount for r in filtered_records)
+        total_amount = sum(int(cast(int, r.amount)) for r in filtered_records)
 
         return self._calculate_metrics(
             department="中央銀行",
@@ -334,7 +341,7 @@ class StateCouncilReportGenerator:
 
     async def generate_activity_report(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         start_date: datetime,
@@ -463,7 +470,7 @@ class StateCouncilReportGenerator:
 
     async def generate_monthly_summary(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         year: int,
@@ -482,7 +489,7 @@ class StateCouncilReportGenerator:
             connection, guild_id=guild_id, start_date=start_date, end_date=end_date
         )
 
-        department_metrics = {}
+        department_metrics: dict[str, DepartmentMetrics] = {}
         for department in ["內政部", "財政部", "國土安全部", "中央銀行"]:
             metrics = await self.generate_department_metrics(
                 connection,

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Sequence
 from uuid import UUID
 
-import asyncpg
+from src.infra.types.db import ConnectionProtocol
 
 # --- Data Models ---
 
@@ -244,7 +244,7 @@ class StateCouncilGovernanceGateway:
     # --- State Council Config ---
     async def upsert_state_council_config(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         leader_id: int | None = None,
@@ -289,7 +289,7 @@ class StateCouncilGovernanceGateway:
         )
 
     async def fetch_state_council_config(
-        self, connection: asyncpg.Connection, *, guild_id: int
+        self, connection: ConnectionProtocol, *, guild_id: int
     ) -> StateCouncilConfig | None:
         sql = f"SELECT * FROM {self._schema}.fn_get_state_council_config($1)"
         row = await connection.fetchrow(sql, guild_id)
@@ -311,14 +311,14 @@ class StateCouncilGovernanceGateway:
 
     # 契約相容：提供 fetch_config 與舊名稱對應
     async def fetch_config(
-        self, connection: asyncpg.Connection, *, guild_id: int
+        self, connection: ConnectionProtocol, *, guild_id: int
     ) -> StateCouncilConfig | None:
         return await self.fetch_state_council_config(connection, guild_id=guild_id)
 
     # --- Department Configs ---
     async def upsert_department_config(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         department: str,
@@ -359,7 +359,7 @@ class StateCouncilGovernanceGateway:
         )
 
     async def fetch_department_configs(
-        self, connection: asyncpg.Connection, *, guild_id: int
+        self, connection: ConnectionProtocol, *, guild_id: int
     ) -> Sequence[DepartmentConfig]:
         sql = f"SELECT * FROM {self._schema}.fn_list_department_configs($1)"
         rows = await connection.fetch(sql, guild_id)
@@ -381,7 +381,7 @@ class StateCouncilGovernanceGateway:
         ]
 
     async def fetch_department_config(
-        self, connection: asyncpg.Connection, *, guild_id: int, department: str
+        self, connection: ConnectionProtocol, *, guild_id: int, department: str
     ) -> DepartmentConfig | None:
         sql = f"SELECT * FROM {self._schema}.fn_get_department_config($1,$2)"
         row = await connection.fetchrow(sql, guild_id, department)
@@ -403,7 +403,7 @@ class StateCouncilGovernanceGateway:
 
     async def check_department_permission(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         department: str,
@@ -422,7 +422,7 @@ class StateCouncilGovernanceGateway:
     # --- Government Accounts ---
     async def upsert_government_account(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         department: str,
@@ -458,7 +458,7 @@ class StateCouncilGovernanceGateway:
         )
 
     async def fetch_government_accounts(
-        self, connection: asyncpg.Connection, *, guild_id: int
+        self, connection: ConnectionProtocol, *, guild_id: int
     ) -> Sequence[GovernmentAccount]:
         sql = f"SELECT * FROM {self._schema}.fn_list_government_accounts($1)"
         # 測試替身可能不具備 .fetch（如合約測試的 _FakeConnection）。
@@ -480,7 +480,7 @@ class StateCouncilGovernanceGateway:
 
     async def update_account_balance(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         account_id: int,
         new_balance: int,
@@ -497,7 +497,7 @@ class StateCouncilGovernanceGateway:
     # --- Welfare Disbursements ---
     async def create_welfare_disbursement(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         recipient_id: int,
@@ -526,7 +526,7 @@ class StateCouncilGovernanceGateway:
 
     async def fetch_welfare_disbursements(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         limit: int = 100,
@@ -554,7 +554,7 @@ class StateCouncilGovernanceGateway:
     # --- Tax Records ---
     async def create_tax_record(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         taxpayer_id: int,
@@ -589,7 +589,7 @@ class StateCouncilGovernanceGateway:
 
     async def fetch_tax_records(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         limit: int = 100,
@@ -619,7 +619,7 @@ class StateCouncilGovernanceGateway:
     # --- Identity Records ---
     async def create_identity_record(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         target_id: int,
@@ -648,7 +648,7 @@ class StateCouncilGovernanceGateway:
 
     async def fetch_identity_records(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         limit: int = 100,
@@ -676,7 +676,7 @@ class StateCouncilGovernanceGateway:
     # --- Currency Issuances ---
     async def create_currency_issuance(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         amount: int,
@@ -705,7 +705,7 @@ class StateCouncilGovernanceGateway:
 
     async def fetch_currency_issuances(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         month_period: str | None = None,
@@ -733,7 +733,7 @@ class StateCouncilGovernanceGateway:
         ]
 
     async def sum_monthly_issuance(
-        self, connection: asyncpg.Connection, *, guild_id: int, month_period: str
+        self, connection: ConnectionProtocol, *, guild_id: int, month_period: str
     ) -> int:
         total = await connection.fetchval(
             f"SELECT {self._schema}.fn_sum_monthly_issuance($1,$2)", guild_id, month_period
@@ -743,7 +743,7 @@ class StateCouncilGovernanceGateway:
     # --- Interdepartment Transfers ---
     async def create_interdepartment_transfer(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         from_department: str,
@@ -775,7 +775,7 @@ class StateCouncilGovernanceGateway:
 
     async def fetch_interdepartment_transfers(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         limit: int = 100,
@@ -802,7 +802,7 @@ class StateCouncilGovernanceGateway:
         ]
 
     async def fetch_all_department_configs_with_welfare(
-        self, connection: asyncpg.Connection
+        self, connection: ConnectionProtocol
     ) -> list[dict[str, Any]]:  # Keep generic for compatibility
         """Fetch all department configs that have welfare settings."""
         rows = await connection.fetch(
@@ -811,7 +811,7 @@ class StateCouncilGovernanceGateway:
         return [dict(row) for row in rows]
 
     async def fetch_all_department_configs_for_issuance(
-        self, connection: asyncpg.Connection
+        self, connection: ConnectionProtocol
     ) -> list[dict[str, Any]]:
         """Fetch all department configs that have issuance limits."""
         rows = await connection.fetch(

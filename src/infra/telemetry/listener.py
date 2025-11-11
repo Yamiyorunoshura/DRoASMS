@@ -5,10 +5,9 @@ import json
 from collections import deque
 from collections.abc import Awaitable, Callable
 from inspect import iscoroutinefunction
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
-import asyncpg
 import structlog
 
 from src.db import pool as db_pool
@@ -20,6 +19,7 @@ from src.infra.events.state_council_events import (
 from src.infra.events.state_council_events import (
     publish as publish_state_council_event,
 )
+from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
 NotificationHandler = Callable[[str], Awaitable[None] | None]
@@ -75,7 +75,8 @@ class TelemetryListener:
     async def _run(self) -> None:
         try:
             pool = await db_pool.init_pool()
-            async with pool.acquire() as connection:
+            # 在部分環境中 asyncpg 缺少完整型別資訊；以 Any/Dynamic 呼叫即可。
+            async with cast(Any, pool).acquire() as connection:
                 await connection.add_listener(self._channel, self._dispatch)
 
                 try:
@@ -91,7 +92,7 @@ class TelemetryListener:
 
     async def _dispatch(
         self,
-        connection: asyncpg.Connection,
+        connection: Any,
         pid: int,
         channel: str,
         payload: str,
@@ -104,7 +105,7 @@ class TelemetryListener:
     async def _default_handler(self, payload: str) -> None:
         """Default observer: parse JSON payloads and emit structured logs."""
         try:
-            parsed: Any = json.loads(payload)
+            parsed = json.loads(payload)
         except json.JSONDecodeError:
             LOGGER.warning(
                 "telemetry.listener.payload.unparseable",
@@ -119,72 +120,77 @@ class TelemetryListener:
             )
             return
 
-        event_type = parsed.get("event_type", "unknown")
+        # 之後流程使用具體型別以減少 Unknown 診斷
+        from typing import cast as _cast
+
+        data = _cast(dict[str, Any], parsed)
+        event_type = data.get("event_type", "unknown")
         if event_type == "transaction_success":
-            tx_id_raw = parsed.get("transaction_id")
-            tx_id = None
+            tx_id_raw = data.get("transaction_id")
+            tx_id: str | None = None
             if isinstance(tx_id_raw, str):
                 tx_id = tx_id_raw
-            elif isinstance(tx_id_raw, dict) and tx_id_raw.get("hex"):
-                tx_id = tx_id_raw.get("hex")
+            elif isinstance(tx_id_raw, dict):
+                txd: dict[str, Any] = _cast(dict[str, Any], tx_id_raw)
+                hexval = txd.get("hex")
+                if isinstance(hexval, str):
+                    tx_id = hexval
 
             LOGGER.info(
                 "telemetry.transfer.success",
-                guild_id=parsed.get("guild_id"),
-                initiator_id=parsed.get("initiator_id"),
-                target_id=parsed.get("target_id"),
-                amount=parsed.get("amount"),
-                metadata=parsed.get("metadata", {}),
+                guild_id=data.get("guild_id"),
+                initiator_id=data.get("initiator_id"),
+                target_id=data.get("target_id"),
+                amount=data.get("amount"),
+                metadata=data.get("metadata", {}),
             )
             # 轉帳成功時通知接收者（私訊）
             try:
                 # 若同一 transaction_id 已處理，略過 DM（去重）
                 if tx_id is None or not self._is_tx_seen(tx_id):
-                    await self._notify_target_dm(parsed)
+                    await self._notify_target_dm(data)
             except Exception:
-                LOGGER.exception("telemetry.listener.notify_target_failed", payload=parsed)
+                LOGGER.exception("telemetry.listener.notify_target_failed", payload=data)
             # 轉帳成功時通知發起人（伺服器內 ephemeral notification）
             try:
-                await self._notify_initiator_server(parsed)
+                await self._notify_initiator_server(data)
             except Exception:
-                LOGGER.exception(
-                    "telemetry.listener.notify_initiator_server_failed", payload=parsed
-                )
+                LOGGER.exception("telemetry.listener.notify_initiator_server_failed", payload=data)
             # 嘗試判定是否涉及政府部門帳戶，若是則通知國務院面板刷新
-            await _maybe_emit_state_council_event(parsed, cause="transaction_success")
+            await _maybe_emit_state_council_event(data, cause="transaction_success")
         elif event_type == "transaction_denied":
             LOGGER.warning(
                 "telemetry.transfer.denied",
-                guild_id=parsed.get("guild_id"),
-                initiator_id=parsed.get("initiator_id"),
-                reason=parsed.get("reason"),
-                metadata=parsed.get("metadata", {}),
+                guild_id=data.get("guild_id"),
+                initiator_id=data.get("initiator_id"),
+                reason=data.get("reason"),
+                metadata=data.get("metadata", {}),
             )
             # 轉帳失敗時通知發起人（私訊）
             try:
-                await self._notify_initiator_dm(parsed)
+                await self._notify_initiator_dm(data)
             except Exception:
-                LOGGER.exception("telemetry.listener.notify_initiator_failed", payload=parsed)
+                LOGGER.exception("telemetry.listener.notify_initiator_failed", payload=data)
         elif event_type == "adjustment_success":
             LOGGER.info(
                 "telemetry.adjustment.success",
-                guild_id=parsed.get("guild_id"),
-                admin_id=parsed.get("admin_id"),
-                target_id=parsed.get("target_id"),
-                amount=parsed.get("amount"),
-                direction=parsed.get("direction"),
-                reason=parsed.get("reason"),
-                metadata=parsed.get("metadata", {}),
+                guild_id=data.get("guild_id"),
+                admin_id=data.get("admin_id"),
+                target_id=data.get("target_id"),
+                amount=data.get("amount"),
+                direction=data.get("direction"),
+                reason=data.get("reason"),
+                metadata=data.get("metadata", {}),
             )
-            await _maybe_emit_state_council_event(parsed, cause="adjustment_success")
+            await _maybe_emit_state_council_event(data, cause="adjustment_success")
         elif event_type == "transfer_check_result":
             # Handle transfer check result events
-            await self._handle_transfer_check_result(parsed)
+            await self._handle_transfer_check_result(data)
         elif event_type == "transfer_check_approved":
             # Handle transfer check approved events
-            await self._handle_transfer_check_approved(parsed)
+            await self._handle_transfer_check_approved(data)
         else:
-            LOGGER.info("telemetry.listener.payload.received", payload=parsed)
+            LOGGER.info("telemetry.listener.payload.received", payload=data)
 
     async def _notify_target_dm(self, parsed: Any) -> None:
         """以 DM 通知轉帳成功的接收者。
@@ -199,7 +205,14 @@ class TelemetryListener:
         target_id = parsed.get("target_id")
         amount = parsed.get("amount")
         metadata = parsed.get("metadata", {})
-        reason = metadata.get("reason") if isinstance(metadata, dict) else None
+        if isinstance(metadata, dict):
+            from typing import cast as _cast
+
+            meta = _cast(dict[str, Any], metadata)
+            _rv = meta.get("reason")
+            reason: str | None = _rv if isinstance(_rv, str) else None
+        else:
+            reason = None
 
         try:
             uid = int(target_id)
@@ -247,7 +260,7 @@ class TelemetryListener:
             lines.append(f"📝 備註：{reason}")
 
         try:
-            await user.send("\n".join(lines))
+            await cast(Any, user).send("\n".join(lines))
         except Exception:
             # DM 失敗不應影響主流程
             LOGGER.debug("telemetry.listener.notify_target.dm_failed", target_id=uid)
@@ -305,7 +318,7 @@ class TelemetryListener:
                 pass
 
         try:
-            await user.send("\n".join(lines))
+            await cast(Any, user).send("\n".join(lines))
         except Exception:
             # DM 失敗不應影響主流程
             LOGGER.debug("telemetry.listener.notify_initiator.dm_failed", initiator_id=uid)
@@ -323,8 +336,12 @@ class TelemetryListener:
         metadata = parsed.get("metadata", {})
         if not isinstance(metadata, dict):
             return
+        from typing import cast as _cast
 
-        interaction_token = metadata.get("interaction_token")
+        metadata = _cast(dict[str, Any], metadata)
+
+        token_raw = metadata.get("interaction_token")
+        interaction_token: str | None = token_raw if isinstance(token_raw, str) else None
         if not interaction_token:
             # 同步模式下沒有 token，跳過
             return
@@ -337,7 +354,8 @@ class TelemetryListener:
         initiator_id = parsed.get("initiator_id")
         target_id = parsed.get("target_id")
         amount = parsed.get("amount")
-        reason = metadata.get("reason")
+        reason_val = metadata.get("reason")
+        reason: str | None = reason_val if isinstance(reason_val, str) else None
 
         try:
             application_id = getattr(self._discord_client, "application_id", None)
@@ -369,7 +387,7 @@ class TelemetryListener:
             if pool is not None and guild_id is not None and initiator_id is not None:
                 try:
                     economy = EconomyQueryGateway()
-                    async with pool.acquire() as conn:
+                    async with cast(Any, pool).acquire() as conn:
                         balance_result = None
 
                         snapshot_fetcher = getattr(economy, "fetch_balance_snapshot", None)
@@ -395,7 +413,7 @@ class TelemetryListener:
                     )
 
             # 格式化訊息
-            lines = []
+            lines: list[str] = []
             if amount is not None:
                 try:
                     amt = int(amount)
@@ -527,11 +545,14 @@ async def _maybe_emit_state_council_event(parsed: Any, *, cause: str) -> None:
     target_id = parsed.get("target_id")
 
     try:
-        pool = db_pool.get_pool()
+        pool = cast(PoolProtocol, db_pool.get_pool())
         governance = StateCouncilGovernanceGateway()
         economy = EconomyQueryGateway()
+        # 型別提示：PoolProtocol.acquire() 會回傳 AsyncContextManager[ConnectionProtocol]
         async with pool.acquire() as conn:
-            accounts = await governance.fetch_government_accounts(conn, guild_id=guild_id)
+            # 在嚴格模式下，部分第三方庫的回傳型別較寬鬆；此處直接標註以協助型別推論
+            conn_typed: ConnectionProtocol = conn
+            accounts = await governance.fetch_government_accounts(conn_typed, guild_id=guild_id)
             if not accounts:
                 return
 
@@ -553,10 +574,10 @@ async def _maybe_emit_state_council_event(parsed: Any, *, cause: str) -> None:
                     continue
                 try:
                     snap = await economy.fetch_balance(
-                        conn, guild_id=guild_id, member_id=acc.account_id
+                        conn_typed, guild_id=guild_id, member_id=acc.account_id
                     )
                     await governance.update_account_balance(
-                        conn, account_id=acc.account_id, new_balance=snap.balance
+                        conn_typed, account_id=acc.account_id, new_balance=snap.balance
                     )
                 except Exception:
                     # 設計上不讓 listener 失敗阻斷事件，失敗時略過同步

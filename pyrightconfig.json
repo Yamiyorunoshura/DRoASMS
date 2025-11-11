@@ -13,9 +13,13 @@
   "typeCheckingMode": "strict",
   "reportMissingImports": "none",
   "reportUnnecessaryTypeIgnoreComment": "warning",
+  "reportMissingTypeStubs": "none",
   "venvPath": ".",
   "venv": ".venv",
   "executionEnvironments": [
-    { "root": "src" }
+    {
+      "root": ".",
+      "extraPaths": ["src"]
+    }
   ]
 }

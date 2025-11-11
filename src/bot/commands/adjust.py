@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Union
+from typing import Any, Callable, Union, cast
 
 import discord
 import structlog
@@ -209,7 +209,9 @@ def build_adjust_command(
         message = _format_success_message(target, result, currency_config)
         await interaction.response.send_message(content=message, ephemeral=True)
 
-    return adjust
+    # Pylance 在嚴格模式下無法從 decorators 推導泛型參數，導致回傳型別含 Unknown。
+    # 這裡以顯式 cast 讓型別檢查器理解實際回傳為 `app_commands.Command`。
+    return cast(app_commands.Command[Any, Any, None], adjust)
 
 
 def _format_success_message(

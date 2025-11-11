@@ -7,6 +7,8 @@ from uuid import UUID
 
 import asyncpg
 
+from src.infra.types.db import ConnectionProtocol
+
 
 @dataclass(frozen=True, slots=True)
 class AdjustmentProcedureResult:
@@ -46,7 +48,7 @@ class EconomyAdjustmentGateway:
 
     async def adjust_balance(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         admin_id: int,

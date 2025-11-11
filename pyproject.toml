@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "droasms-bot"
-version = "0.13.1"
+version = "0.14.0"
 description = "Discord bot economy foundations."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -23,6 +23,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "tenacity>=9.0.0",
+    "dpy-paginator @ git+https://github.com/Seniatical/dpy-paginator/",
 ]
 
 [dependency-groups]
@@ -43,7 +44,13 @@ dev = [
     "watchfiles>=1.0.0",
     "setuptools>=68.0.0",
     "wheel>=0.43.0",
+    "types-setuptools>=80.9.0.20250822",
+    "pylance>=0.39.0",
+    "pyright>=1.1.407",
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
@@ -77,6 +84,27 @@ line-length = 100
 target-version = ["py313"]
 include = "\\.pyi?$"
 
+[tool.pyright]
+include = ["src"]
+exclude = [
+  "**/__pycache__/**",
+  "alembic/**",
+  "src/db/migrations/**",
+  "src/db/seeds/**",
+  "tests/**",
+  "htmlcov/**",
+]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+reportMissingImports = "none"
+reportMissingTypeStubs = "none"
+reportUnnecessaryTypeIgnoreComment = "warning"
+venvPath = "."
+venv = ".venv"
+executionEnvironments = [
+  { root = ".", extraPaths = ["src"] }
+]
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra --cov=src --cov-report=html --cov-report=term --cov-report=term-missing"
@@ -95,6 +123,10 @@ timeout_method = "thread"
 python_version = "3.13"
 namespace_packages = true
 files = ["src"]
+exclude = [
+    "build/",
+    "dist/",
+]
 explicit_package_bases = true
 enable_error_code = "ignore-without-code"
 strict = true
@@ -158,6 +190,7 @@ module = [
     "pydantic.*",
 ]
 ignore_missing_imports = true
+ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = [

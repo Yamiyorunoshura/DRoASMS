@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence, cast
 from uuid import UUID
 
-import asyncpg
+from src.infra.types.db import ConnectionProtocol as AsyncPGConnectionProto
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,13 +19,13 @@ class BalanceRecord:
     throttled_until: datetime | None
 
     @classmethod
-    def from_record(cls, record: asyncpg.Record) -> "BalanceRecord":
+    def from_record(cls, record: Mapping[str, Any]) -> "BalanceRecord":
         return cls(
-            guild_id=record["guild_id"],
-            member_id=record["member_id"],
-            balance=record["balance"],
-            last_modified_at=record["last_modified_at"],
-            throttled_until=record["throttled_until"],
+            guild_id=int(record["guild_id"]),
+            member_id=int(record["member_id"]),
+            balance=int(record["balance"]),
+            last_modified_at=cast(datetime, record["last_modified_at"]),
+            throttled_until=cast(datetime | None, record["throttled_until"]),
         )
 
 
@@ -46,19 +46,19 @@ class HistoryRecord:
     balance_after_target: int | None
 
     @classmethod
-    def from_record(cls, record: asyncpg.Record) -> "HistoryRecord":
+    def from_record(cls, record: Mapping[str, Any]) -> "HistoryRecord":
         return cls(
-            transaction_id=record["transaction_id"],
-            guild_id=record["guild_id"],
-            initiator_id=record["initiator_id"],
-            target_id=record["target_id"],
-            amount=record["amount"],
+            transaction_id=cast(UUID, record["transaction_id"]),
+            guild_id=int(record["guild_id"]),
+            initiator_id=int(record["initiator_id"]),
+            target_id=cast(int | None, record["target_id"]),
+            amount=int(record["amount"]),
             direction=str(record["direction"]),
-            reason=record["reason"],
-            created_at=record["created_at"],
-            metadata=dict(record["metadata"] or {}),
-            balance_after_initiator=record["balance_after_initiator"],
-            balance_after_target=record["balance_after_target"],
+            reason=cast(str | None, record["reason"]),
+            created_at=cast(datetime, record["created_at"]),
+            metadata=dict(cast(Mapping[str, Any] | None, record.get("metadata")) or {}),
+            balance_after_initiator=int(record["balance_after_initiator"]),
+            balance_after_target=cast(int | None, record["balance_after_target"]),
         )
 
 
@@ -70,7 +70,7 @@ class EconomyQueryGateway:
 
     async def fetch_balance(
         self,
-        connection: asyncpg.Connection,
+        connection: AsyncPGConnectionProto,
         *,
         guild_id: int,
         member_id: int,
@@ -83,7 +83,7 @@ class EconomyQueryGateway:
 
     async def fetch_balance_snapshot(
         self,
-        connection: asyncpg.Connection,
+        connection: AsyncPGConnectionProto,
         *,
         guild_id: int,
         member_id: int,
@@ -106,7 +106,7 @@ class EconomyQueryGateway:
 
     async def fetch_history(
         self,
-        connection: asyncpg.Connection,
+        connection: AsyncPGConnectionProto,
         *,
         guild_id: int,
         member_id: int,
@@ -114,7 +114,9 @@ class EconomyQueryGateway:
         cursor: datetime | None,
     ) -> Sequence[HistoryRecord]:
         sql = f"SELECT * FROM {self._schema}.fn_get_history($1, $2, $3, $4)"
-        records = await connection.fetch(sql, guild_id, member_id, limit, cursor)
+        records = cast(
+            list[Mapping[str, Any]], await connection.fetch(sql, guild_id, member_id, limit, cursor)
+        )
         return [HistoryRecord.from_record(record) for record in records]
 
 

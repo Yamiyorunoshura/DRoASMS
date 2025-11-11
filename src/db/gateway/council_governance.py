@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Sequence
 from uuid import UUID
 
-import asyncpg
+from src.infra.types.db import ConnectionProtocol
 
 # --- Data Models ---
 
@@ -55,7 +55,7 @@ class CouncilGovernanceGateway:
     # --- Config ---
     async def upsert_config(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         council_role_id: int,
@@ -73,7 +73,7 @@ class CouncilGovernanceGateway:
         )
 
     async def fetch_config(
-        self, connection: asyncpg.Connection, *, guild_id: int
+        self, connection: ConnectionProtocol, *, guild_id: int
     ) -> CouncilConfig | None:
         sql = f"SELECT * FROM {self._schema}.fn_get_council_config($1)"
         row = await connection.fetchrow(sql, guild_id)
@@ -90,7 +90,7 @@ class CouncilGovernanceGateway:
     # --- Proposals ---
     async def create_proposal(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         proposer_id: int,
@@ -140,7 +140,7 @@ class CouncilGovernanceGateway:
 
     async def fetch_proposal(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         proposal_id: UUID,
     ) -> Proposal | None:
@@ -168,7 +168,7 @@ class CouncilGovernanceGateway:
 
     async def fetch_snapshot(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         proposal_id: UUID,
     ) -> Sequence[int]:
@@ -177,13 +177,13 @@ class CouncilGovernanceGateway:
         )
         return [int(r["fn_get_snapshot_members"]) for r in rows]
 
-    async def count_active_by_guild(self, connection: asyncpg.Connection, *, guild_id: int) -> int:
+    async def count_active_by_guild(self, connection: ConnectionProtocol, *, guild_id: int) -> int:
         val = await connection.fetchval(
             f"SELECT {self._schema}.fn_count_active_proposals($1)", guild_id
         )
         return int(val or 0)
 
-    async def cancel_proposal(self, connection: asyncpg.Connection, *, proposal_id: UUID) -> bool:
+    async def cancel_proposal(self, connection: ConnectionProtocol, *, proposal_id: UUID) -> bool:
         ok = await connection.fetchval(
             f"SELECT {self._schema}.fn_attempt_cancel_proposal($1)", proposal_id
         )
@@ -191,7 +191,7 @@ class CouncilGovernanceGateway:
 
     async def mark_status(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         proposal_id: UUID,
         status: str,
@@ -209,7 +209,7 @@ class CouncilGovernanceGateway:
     # --- Voting ---
     async def upsert_vote(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         proposal_id: UUID,
         voter_id: int,
@@ -219,7 +219,7 @@ class CouncilGovernanceGateway:
             f"SELECT {self._schema}.fn_upsert_vote($1,$2,$3)", proposal_id, voter_id, choice
         )
 
-    async def fetch_tally(self, connection: asyncpg.Connection, *, proposal_id: UUID) -> Tally:
+    async def fetch_tally(self, connection: ConnectionProtocol, *, proposal_id: UUID) -> Tally:
         row = await connection.fetchrow(
             f"SELECT * FROM {self._schema}.fn_fetch_tally($1)", proposal_id
         )
@@ -232,7 +232,7 @@ class CouncilGovernanceGateway:
         )
 
     async def fetch_votes_detail(
-        self, connection: asyncpg.Connection, *, proposal_id: UUID
+        self, connection: ConnectionProtocol, *, proposal_id: UUID
     ) -> Sequence[tuple[int, str]]:
         rows = await connection.fetch(
             f"SELECT * FROM {self._schema}.fn_list_votes_detail($1)", proposal_id
@@ -240,7 +240,7 @@ class CouncilGovernanceGateway:
         return [(int(r["voter_id"]), str(r["choice"])) for r in rows]
 
     # --- Queries for scheduler ---
-    async def list_due_proposals(self, connection: asyncpg.Connection) -> Sequence[Proposal]:
+    async def list_due_proposals(self, connection: ConnectionProtocol) -> Sequence[Proposal]:
         rows = await connection.fetch(f"SELECT * FROM {self._schema}.fn_list_due_proposals()")
         return [
             Proposal(
@@ -262,7 +262,7 @@ class CouncilGovernanceGateway:
             for r in rows
         ]
 
-    async def list_reminder_candidates(self, connection: asyncpg.Connection) -> Sequence[Proposal]:
+    async def list_reminder_candidates(self, connection: ConnectionProtocol) -> Sequence[Proposal]:
         rows = await connection.fetch(f"SELECT * FROM {self._schema}.fn_list_reminder_candidates()")
         return [
             Proposal(
@@ -284,7 +284,7 @@ class CouncilGovernanceGateway:
             for r in rows
         ]
 
-    async def list_active_proposals(self, connection: asyncpg.Connection) -> Sequence[Proposal]:
+    async def list_active_proposals(self, connection: ConnectionProtocol) -> Sequence[Proposal]:
         rows = await connection.fetch(f"SELECT * FROM {self._schema}.fn_list_active_proposals()")
         return [
             Proposal(
@@ -306,13 +306,13 @@ class CouncilGovernanceGateway:
             for r in rows
         ]
 
-    async def mark_reminded(self, connection: asyncpg.Connection, *, proposal_id: UUID) -> None:
+    async def mark_reminded(self, connection: ConnectionProtocol, *, proposal_id: UUID) -> None:
         await connection.execute(f"SELECT {self._schema}.fn_mark_reminded($1)", proposal_id)
 
     # --- Export ---
     async def export_interval(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         start: datetime,
@@ -328,7 +328,7 @@ class CouncilGovernanceGateway:
         return [dict(r) for r in rows]
 
     async def list_unvoted_members(
-        self, connection: asyncpg.Connection, *, proposal_id: UUID
+        self, connection: ConnectionProtocol, *, proposal_id: UUID
     ) -> Sequence[int]:
         rows = await connection.fetch(
             f"SELECT * FROM {self._schema}.fn_list_unvoted_members($1)", proposal_id

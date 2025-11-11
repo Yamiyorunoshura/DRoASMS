@@ -68,19 +68,52 @@ def bootstrap_container() -> DependencyContainer:
     )
 
     # BalanceService depends on pool and optional gateway
-    container.register(BalanceService, lifecycle=Lifecycle.SINGLETON)
+    def create_balance_service() -> BalanceService:
+        pool = container.resolve(asyncpg.Pool)
+        return BalanceService(pool)
+
+    container.register(
+        BalanceService, factory=create_balance_service, lifecycle=Lifecycle.SINGLETON
+    )
 
     # AdjustmentService depends on pool and optional gateway
-    container.register(AdjustmentService, lifecycle=Lifecycle.SINGLETON)
+    def create_adjustment_service() -> AdjustmentService:
+        pool = container.resolve(asyncpg.Pool)
+        return AdjustmentService(pool)
+
+    container.register(
+        AdjustmentService, factory=create_adjustment_service, lifecycle=Lifecycle.SINGLETON
+    )
 
     # CurrencyConfigService depends on pool and optional gateway
-    container.register(CurrencyConfigService, lifecycle=Lifecycle.SINGLETON)
+    def create_currency_config_service() -> CurrencyConfigService:
+        pool = container.resolve(asyncpg.Pool)
+        return CurrencyConfigService(pool)
+
+    container.register(
+        CurrencyConfigService, factory=create_currency_config_service, lifecycle=Lifecycle.SINGLETON
+    )
 
     # CouncilService depends on optional gateway and transfer_service
-    container.register(CouncilService, lifecycle=Lifecycle.SINGLETON)
+    def create_council_service() -> CouncilService:
+        transfer_service = container.resolve(TransferService)
+        return CouncilService(transfer_service=transfer_service)
+
+    container.register(
+        CouncilService, factory=create_council_service, lifecycle=Lifecycle.SINGLETON
+    )
 
     # StateCouncilService depends on optional gateway, transfer_service, and adjustment_service
-    container.register(StateCouncilService, lifecycle=Lifecycle.SINGLETON)
+    def create_state_council_service() -> StateCouncilService:
+        transfer_service = container.resolve(TransferService)
+        adjustment_service = container.resolve(AdjustmentService)
+        return StateCouncilService(
+            transfer_service=transfer_service, adjustment_service=adjustment_service
+        )
+
+    container.register(
+        StateCouncilService, factory=create_state_council_service, lifecycle=Lifecycle.SINGLETON
+    )
 
     # SupremeAssemblyService depends on SupremeAssemblyGovernanceGateway (optional)
     # The service can build its own gateway, but registering it enables DI resolution

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, cast
 
 import discord
 import structlog
@@ -125,7 +125,7 @@ def build_balance_command(
             try:
                 defer = getattr(interaction.response, "defer", None)
                 if callable(defer):
-                    await defer(ephemeral=True)
+                    await cast(Any, defer)(ephemeral=True)
             except Exception as exc:  # 防禦性：即使 defer 失敗也不終止流程
                 LOGGER.debug("bot.balance.defer_failed", error=str(exc))
 
@@ -155,7 +155,8 @@ def build_balance_command(
         message = _format_balance_response(snapshot, target_display, currency_config)
         await _respond(interaction, message)
 
-    return balance
+    # Cast 以解決 Pylance 對 decorators 之回傳型別推導為 Unknown 的問題。
+    return cast(app_commands.Command[Any, Any, None], balance)
 
 
 def build_history_command(
@@ -191,7 +192,7 @@ def build_history_command(
             try:
                 defer = getattr(interaction.response, "defer", None)
                 if callable(defer):
-                    await defer(ephemeral=True)
+                    await cast(Any, defer)(ephemeral=True)
             except Exception as exc:  # 防禦性：即使 defer 失敗也不終止流程
                 LOGGER.debug("bot.history.defer_failed", error=str(exc))
 
@@ -236,7 +237,8 @@ def build_history_command(
         message = _format_history_response(page, target_display, currency_config)
         await _respond(interaction, message)
 
-    return history
+    # Cast 以解決 Pylance 對 decorators 之回傳型別推導為 Unknown 的問題。
+    return cast(app_commands.Command[Any, Any, None], history)
 
 
 async def _respond(interaction: discord.Interaction, content: str) -> None:
@@ -253,9 +255,12 @@ async def _respond(interaction: discord.Interaction, content: str) -> None:
             is_done = False
         if is_done and hasattr(interaction, "edit_original_response"):
             await interaction.edit_original_response(content=content)
-            # 測試 stub 相容：標記為已送出
+            # 測試 stub 相容：標記為已送出（若 stub 支援）
             try:
-                interaction.response.sent = True
+                if hasattr(interaction.response, "sent"):
+                    # 以 setattr + cast(Any, ...) 動態設定測試 stub 旗標
+                    # 避免 Pylance 屬性存取診斷
+                    cast(Any, interaction.response).sent = True
             except Exception:
                 pass
         else:

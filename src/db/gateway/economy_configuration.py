@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Mapping
 
-import asyncpg
+from src.infra.types.db import ConnectionProtocol as AsyncPGConnectionProto
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,11 +17,11 @@ class CurrencyConfig:
     currency_icon: str
 
     @classmethod
-    def from_record(cls, record: asyncpg.Record) -> "CurrencyConfig":
+    def from_record(cls, record: Mapping[str, Any]) -> "CurrencyConfig":
         return cls(
-            guild_id=record["guild_id"],
-            currency_name=record["currency_name"],
-            currency_icon=record["currency_icon"],
+            guild_id=int(record["guild_id"]),
+            currency_name=str(record["currency_name"]),
+            currency_icon=str(record["currency_icon"]),
         )
 
 
@@ -32,7 +33,7 @@ class EconomyConfigurationGateway:
 
     async def get_currency_config(
         self,
-        connection: asyncpg.Connection,
+        connection: AsyncPGConnectionProto,
         *,
         guild_id: int,
     ) -> CurrencyConfig | None:
@@ -49,7 +50,7 @@ class EconomyConfigurationGateway:
 
     async def update_currency_config(
         self,
-        connection: asyncpg.Connection,
+        connection: AsyncPGConnectionProto,
         *,
         guild_id: int,
         currency_name: str | None = None,

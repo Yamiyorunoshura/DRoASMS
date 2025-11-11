@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Sequence, TypeVar
+from typing import Any, Awaitable, Callable, Sequence, TypeVar, cast
 from uuid import UUID
 
-import asyncpg
 from mypy_extensions import mypyc_attr
 
 from src.db.gateway.economy_queries import (
@@ -15,6 +14,7 @@ from src.db.gateway.economy_queries import (
     EconomyQueryGateway,
     HistoryRecord,
 )
+from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 T = TypeVar("T")
 
@@ -109,7 +109,7 @@ class BalanceService:
 
     def __init__(
         self,
-        pool: asyncpg.Pool,
+        pool: PoolProtocol,
         *,
         gateway: EconomyQueryGateway | None = None,
     ) -> None:
@@ -123,13 +123,13 @@ class BalanceService:
         requester_id: int,
         target_member_id: int | None = None,
         can_view_others: bool = False,
-        connection: asyncpg.Connection | None = None,
+        connection: ConnectionProtocol | None = None,
     ) -> BalanceSnapshot:
         """Return the balance snapshot for the target member (defaults to requester)."""
         target_id = target_member_id or requester_id
         self._assert_permission(requester_id, target_id, can_view_others)
 
-        async def _run(conn: asyncpg.Connection) -> BalanceSnapshot:
+        async def _run(conn: ConnectionProtocol) -> BalanceSnapshot:
             record = await self._gateway.fetch_balance(
                 conn,
                 guild_id=guild_id,
@@ -148,7 +148,7 @@ class BalanceService:
         can_view_others: bool = False,
         limit: int = 10,
         cursor: datetime | None = None,
-        connection: asyncpg.Connection | None = None,
+        connection: ConnectionProtocol | None = None,
     ) -> HistoryPage:
         """Return a paginated set of transactions for the target member."""
         if limit < 1 or limit > 50:
@@ -157,7 +157,7 @@ class BalanceService:
         target_id = target_member_id or requester_id
         self._assert_permission(requester_id, target_id, can_view_others)
 
-        async def _run(conn: asyncpg.Connection) -> HistoryPage:
+        async def _run(conn: ConnectionProtocol) -> HistoryPage:
             records = await self._gateway.fetch_history(
                 conn,
                 guild_id=guild_id,
@@ -170,11 +170,15 @@ class BalanceService:
             next_cursor_value: datetime | None = None
             if len(entries) == limit and entries:
                 last_created = entries[-1].created_at
-                has_more = await conn.fetchval(
-                    "SELECT economy.fn_has_more_history($1,$2,$3)",
-                    guild_id,
-                    target_id,
-                    last_created,
+                # Pylance: 對 asyncpg.fetchval 回傳值進行顯式 cast，避免 Unknown 型別傳染
+                has_more = cast(
+                    bool | None,
+                    await conn.fetchval(
+                        "SELECT economy.fn_has_more_history($1,$2,$3)",
+                        guild_id,
+                        target_id,
+                        last_created,
+                    ),
                 )
                 if bool(has_more):
                     next_cursor_value = last_created
@@ -196,8 +200,8 @@ class BalanceService:
 
     async def _with_connection(
         self,
-        connection: asyncpg.Connection | None,
-        func: Callable[[asyncpg.Connection], Awaitable[T]],
+        connection: ConnectionProtocol | None,
+        func: Callable[[ConnectionProtocol], Awaitable[T]],
     ) -> T:
         if connection is not None:
             return await func(connection)

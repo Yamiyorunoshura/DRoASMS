@@ -1,0 +1,120 @@
+{
+  "transfer": {
+    "name": "transfer",
+    "description": "轉帳貨幣給其他用戶",
+    "category": "economy",
+    "parameters": [
+      {
+        "name": "recipient",
+        "description": "接收者",
+        "required": true
+      },
+      {
+        "name": "amount",
+        "description": "轉帳金額",
+        "required": true
+      },
+      {
+        "name": "reason",
+        "description": "轉帳原因",
+        "required": false
+      }
+    ],
+    "permissions": [],
+    "examples": ["/transfer @用戶 100 感謝幫助"],
+    "tags": ["經濟", "轉帳", "貨幣"]
+  },
+  "balance": {
+    "name": "balance",
+    "description": "查詢帳戶餘額",
+    "category": "economy",
+    "parameters": [
+      {
+        "name": "user",
+        "description": "要查詢的用戶（可選）",
+        "required": false
+      }
+    ],
+    "permissions": [],
+    "examples": ["/balance", "/balance @用戶"],
+    "tags": ["經濟", "餘額", "查詢"]
+  },
+  "help": {
+    "name": "help",
+    "description": "顯示指令說明與使用指南",
+    "category": "general",
+    "parameters": [
+      {
+        "name": "command",
+        "description": "要查詢的特定指令（可選）",
+        "required": false
+      }
+    ],
+    "permissions": [],
+    "examples": ["/help", "/help transfer"],
+    "tags": ["幫助", "說明", "指南"]
+  },
+  "council": {
+    "name": "council",
+    "description": "國務院治理系統相關指令",
+    "category": "governance",
+    "parameters": [],
+    "permissions": ["administrator"],
+    "examples": ["/council panel"],
+    "tags": ["治理", "國務院", "管理"]
+  },
+  "state": {
+    "name": "state",
+    "description": "國家狀態與資訊查詢",
+    "category": "general",
+    "parameters": [],
+    "permissions": [],
+    "examples": ["/state info"],
+    "tags": ["狀態", "資訊", "國家"]
+  },
+  "register": {
+    "name": "register",
+    "description": "註冊成為公民",
+    "category": "general",
+    "parameters": [],
+    "permissions": [],
+    "examples": ["/register"],
+    "tags": ["註冊", "公民", "加入"]
+  },
+  "identity": {
+    "name": "identity",
+    "description": "身份管理相關指令",
+    "category": "governance",
+    "parameters": [],
+    "permissions": ["administrator"],
+    "examples": ["/identity set"],
+    "tags": ["身份", "管理", "治理"]
+  },
+  "welfare": {
+    "name": "welfare",
+    "description": "福利系統相關指令",
+    "category": "economy",
+    "parameters": [],
+    "permissions": [],
+    "examples": ["/ welfare claim"],
+    "tags": ["福利", "經濟", "補助"]
+  },
+  "tax": {
+    "name": "tax",
+    "description": "稅務系統相關指令",
+    "category": "economy",
+    "parameters": [],
+    "permissions": ["administrator"],
+    "examples": ["/tax collect"],
+    "tags": ["稅務", "經濟", "管理"]
+  },
+  "audit": {
+    "name": "audit",
+    "description": "審計與記錄查詢",
+    "category": "governance",
+    "parameters": [],
+    "permissions": ["administrator"],
+    "examples": ["/audit log"],
+    "tags": ["審計", "記錄", "查詢"]
+  }
+}

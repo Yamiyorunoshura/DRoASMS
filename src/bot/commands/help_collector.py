@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import discord
 import structlog
@@ -23,8 +23,8 @@ def collect_help_data(
     """Collect help data from all commands in the command tree.
 
     Priority order:
-    1. `get_help_data()` function from command module
-    2. JSON file in `help_data/` directory
+    1. JSON file in `help_data/` directory (unified registry)
+    2. `get_help_data()` function from command module
     3. Auto-extracted from command metadata (fallback)
 
     Returns:
@@ -57,34 +57,36 @@ def _collect_command_help(
     """Recursively collect help data from a command or group."""
     full_name = f"{parent_name} {command.name}".strip() if parent_name else command.name
 
-    # Try to get help data from module function first
+    # Try JSON file first (unified registry)
     help_data: HelpData | None = None
-    module_name = getattr(command, "__module__", None)
-    if module_name:
-        try:
-            module = import_module(module_name)
-            get_help_func = getattr(module, "get_help_data", None)
-            if callable(get_help_func):
-                # IMPORTANT: avoid shadowing the outer `result` collector dict.
-                func_result = get_help_func()
-                # Handle both single HelpData and dict[str, HelpData] cases
-                if isinstance(func_result, dict):
-                    # If it's a dict, look up by command name
-                    help_data = func_result.get(command.name) or func_result.get(full_name)
-                else:
-                    # Single HelpData object
-                    help_data = func_result
-                if help_data:
-                    LOGGER.debug("help.collect.from_function", command=full_name)
-        except Exception as exc:
-            LOGGER.warning("help.collect.function_error", command=full_name, error=str(exc))
+    json_data = _load_help_json(command.name, parent_name)
+    if json_data:
+        help_data = json_data
+        LOGGER.debug("help.collect.from_json", command=full_name)
 
-    # Try JSON file if function didn't provide data
+    # Try module function if JSON didn't provide data
+    # 先取模組名稱，以便後續群組子指令也能使用（避免未繫結警告）
+    module_name: str | None = getattr(command, "__module__", None)
     if help_data is None:
-        json_data = _load_help_json(command.name, parent_name)
-        if json_data:
-            help_data = json_data
-            LOGGER.debug("help.collect.from_json", command=full_name)
+        if module_name:
+            try:
+                module = import_module(module_name)
+                get_help_func = getattr(module, "get_help_data", None)
+                if callable(get_help_func):
+                    # IMPORTANT: avoid shadowing the outer `result` collector dict.
+                    func_result = get_help_func()
+                    # Handle both single HelpData and dict[str, HelpData] cases
+                    if isinstance(func_result, dict):
+                        # If it's a dict, look up by command name
+                        fd = cast(dict[str, HelpData], func_result)
+                        help_data = fd.get(command.name) or fd.get(full_name)
+                    else:
+                        # Single HelpData object
+                        help_data = cast(HelpData, func_result)
+                    if help_data:
+                        LOGGER.debug("help.collect.from_function", command=full_name)
+            except Exception as exc:
+                LOGGER.warning("help.collect.function_error", command=full_name, error=str(exc))
 
     # Fallback to command metadata
     if help_data is None:
@@ -105,7 +107,7 @@ def _collect_command_help(
                 if callable(get_help_func):
                     result_data = get_help_func()
                     if isinstance(result_data, dict):
-                        parent_module_help = result_data
+                        parent_module_help = cast(dict[str, HelpData], result_data)
             except Exception:
                 pass
 
@@ -150,7 +152,7 @@ def _load_help_json(command_name: str, parent_name: str = "") -> HelpData | None
     try:
         with file_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
-            return data  # type: ignore[no-any-return]
+            return cast(HelpData, data)
     except Exception as exc:
         LOGGER.warning("help.collect.json_error", path=str(file_path), error=str(exc))
         return None

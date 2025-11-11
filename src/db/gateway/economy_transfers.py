@@ -7,6 +7,8 @@ from uuid import UUID
 
 import asyncpg
 
+from src.infra.types.db import ConnectionProtocol
+
 
 @dataclass(frozen=True, slots=True)
 class TransferProcedureResult:
@@ -50,7 +52,7 @@ class EconomyTransferGateway:
 
     async def transfer_currency(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         initiator_id: int,

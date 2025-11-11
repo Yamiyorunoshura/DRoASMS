@@ -13,6 +13,7 @@ from src.db.gateway.economy_adjustments import (
     AdjustmentProcedureResult,
     EconomyAdjustmentGateway,
 )
+from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -52,7 +53,7 @@ class AdjustmentService:
 
     def __init__(
         self,
-        pool: asyncpg.Pool,
+        pool: PoolProtocol,
         *,
         gateway: EconomyAdjustmentGateway | None = None,
     ) -> None:
@@ -68,7 +69,7 @@ class AdjustmentService:
         amount: int,
         reason: str,
         can_adjust: bool,
-        connection: asyncpg.Connection | None = None,
+        connection: ConnectionProtocol | None = None,
     ) -> AdjustmentResult:
         if not can_adjust:
             raise UnauthorizedAdjustmentError(
@@ -81,7 +82,7 @@ class AdjustmentService:
 
         metadata: dict[str, Any] = {"reason": reason}
 
-        async def _run(conn: asyncpg.Connection) -> AdjustmentResult:
+        async def _run(conn: ConnectionProtocol) -> AdjustmentResult:
             try:
                 result = await self._gateway.adjust_balance(
                     conn,

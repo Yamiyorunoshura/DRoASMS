@@ -14,6 +14,7 @@ from src.db.gateway.economy_transfers import (
     EconomyTransferGateway,
     TransferProcedureResult,
 )
+from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -64,7 +65,7 @@ class TransferService:
 
     def __init__(
         self,
-        pool: asyncpg.Pool,
+        pool: PoolProtocol,
         *,
         gateway: EconomyTransferGateway | None = None,
         pending_gateway: PendingTransferGateway | None = None,
@@ -85,7 +86,7 @@ class TransferService:
         target_id: int,
         amount: int,
         reason: str | None = None,
-        connection: asyncpg.Connection | None = None,
+        connection: ConnectionProtocol | None = None,
         expires_hours: int | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> TransferResult | UUID:
@@ -155,7 +156,7 @@ class TransferService:
 
     async def _execute_transfer(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         initiator_id: int,
@@ -198,7 +199,7 @@ class TransferService:
 
     async def _create_pending_transfer(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         initiator_id: int,
@@ -231,7 +232,7 @@ class TransferService:
         self,
         *,
         transfer_id: UUID,
-        connection: asyncpg.Connection | None = None,
+        connection: ConnectionProtocol | None = None,
     ) -> Any | None:
         """Get the status of a pending transfer."""
         if connection is not None:
@@ -247,12 +248,13 @@ class TransferService:
     @staticmethod
     def _handle_postgres_error(exc: asyncpg.PostgresError) -> None:
         message = (exc.args[0] if exc.args else "").lower()
-        if exc.sqlstate == "P0001" and "insufficient" in message:
+        sqlstate = getattr(exc, "sqlstate", None)
+        if sqlstate == "P0001" and "insufficient" in message:
             raise InsufficientBalanceError(exc.args[0]) from exc
-        if exc.sqlstate == "P0001" and "throttle" in message:
+        if sqlstate == "P0001" and "throttle" in message:
             raise TransferThrottleError(exc.args[0]) from exc
-        if exc.sqlstate == "22023":
+        if sqlstate == "22023":
             raise TransferValidationError(exc.args[0]) from exc
 
-        LOGGER.exception("transfer_service.database_error", sqlstate=exc.sqlstate)
+        LOGGER.exception("transfer_service.database_error", sqlstate=sqlstate)
         raise TransferError("Transfer failed due to an unexpected database error.") from exc

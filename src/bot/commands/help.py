@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import discord
 import structlog
@@ -102,4 +102,5 @@ def build_help_command(tree: app_commands.CommandTree) -> app_commands.Command[A
                 ephemeral=True,
             )
 
-    return help
+    # Cast 以解決 Pylance 對 decorators 之回傳型別推導為 Unknown 的問題。
+    return cast(app_commands.Command[Any, Any, None], help)

@@ -5,10 +5,10 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 
-import asyncpg
 import structlog
 
 from src.db.gateway.economy_configuration import EconomyConfigurationGateway
+from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -29,7 +29,7 @@ class CurrencyConfigService:
 
     def __init__(
         self,
-        pool: asyncpg.Pool,
+        pool: PoolProtocol,
         *,
         gateway: EconomyConfigurationGateway | None = None,
     ) -> None:
@@ -40,7 +40,7 @@ class CurrencyConfigService:
         self,
         *,
         guild_id: int,
-        connection: asyncpg.Connection | None = None,
+        connection: ConnectionProtocol | None = None,
     ) -> CurrencyConfigResult:
         """Get currency configuration for a guild, with defaults if not configured."""
         if connection is None:
@@ -51,7 +51,7 @@ class CurrencyConfigService:
 
     async def _get_config(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
     ) -> CurrencyConfigResult:
@@ -79,7 +79,7 @@ class CurrencyConfigService:
         guild_id: int,
         currency_name: str | None = None,
         currency_icon: str | None = None,
-        connection: asyncpg.Connection | None = None,
+        connection: ConnectionProtocol | None = None,
     ) -> CurrencyConfigResult:
         """Update currency configuration for a guild."""
         if connection is None:
@@ -101,7 +101,7 @@ class CurrencyConfigService:
 
     async def _update_config(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         currency_name: str | None = None,

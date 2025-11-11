@@ -1,0 +1,11 @@
+{
+  "panel": {
+    "name": "panel",
+    "description": "國務院管理面板，顯示部門狀態與管理功能",
+    "category": "governance",
+    "parameters": [],
+    "permissions": ["administrator"],
+    "examples": ["/council panel"],
+    "tags": ["面板", "管理", "國務院"]
+  }
+}

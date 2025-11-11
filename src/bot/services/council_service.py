@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Sequence
+from typing import Sequence, cast
 from uuid import UUID
 
-import asyncpg
 import structlog
 
 from src.bot.services.transfer_service import TransferError, TransferService
@@ -18,6 +17,7 @@ from src.db.gateway.council_governance import (
 from src.db.pool import get_pool
 from src.infra.events.council_events import CouncilEvent
 from src.infra.events.council_events import publish as publish_council_event
+from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -64,19 +64,21 @@ class CouncilService:
         guild_id: int,
         council_role_id: int,
     ) -> CouncilConfig:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
             return await self._gateway.upsert_config(
-                conn,
+                c,
                 guild_id=guild_id,
                 council_role_id=council_role_id,
                 council_account_member_id=self.derive_council_account_id(guild_id),
             )
 
     async def get_config(self, *, guild_id: int) -> CouncilConfig:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            cfg = await self._gateway.fetch_config(conn, guild_id=guild_id)
+            c: ConnectionProtocol = conn
+            cfg = await self._gateway.fetch_config(c, guild_id=guild_id)
         if cfg is None:
             raise GovernanceNotConfiguredError(
                 "Council governance is not configured for this guild."
@@ -104,14 +106,15 @@ class CouncilService:
             raise PermissionDeniedError(
                 "No council members to snapshot. Configure role or members."
             )
-        # Validate that either target_id or target_department_id is provided
-        if target_department_id is None and target_id is None:
-            raise ValueError("Either target_id or target_department_id must be provided.")
+        # Validate that either a valid target_id or a department id is provided
+        if target_department_id is None and target_id <= 0:
+            raise ValueError("Either a valid target_id or target_department_id must be provided.")
 
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
             proposal = await self._gateway.create_proposal(
-                conn,
+                c,
                 guild_id=guild_id,
                 proposer_id=proposer_id,
                 target_id=target_id,
@@ -132,13 +135,14 @@ class CouncilService:
         return proposal
 
     async def cancel_proposal(self, *, proposal_id: UUID) -> bool:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         proposal = None
         async with pool.acquire() as conn:
-            proposal = await self._gateway.fetch_proposal(conn, proposal_id=proposal_id)
+            c: ConnectionProtocol = conn
+            proposal = await self._gateway.fetch_proposal(c, proposal_id=proposal_id)
             if proposal is None:
                 return False
-            ok = await self._gateway.cancel_proposal(conn, proposal_id=proposal_id)
+            ok = await self._gateway.cancel_proposal(c, proposal_id=proposal_id)
         if ok:
             await publish_council_event(
                 CouncilEvent(
@@ -156,16 +160,17 @@ class CouncilService:
     ) -> tuple[VoteTotals, str]:
         if choice not in ("approve", "reject", "abstain"):
             raise ValueError("Invalid vote choice.")
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         totals: VoteTotals
         final_status: str
         event: CouncilEvent | None = None
         async with pool.acquire() as conn:
-            proposal = await self._gateway.fetch_proposal(conn, proposal_id=proposal_id)
+            c: ConnectionProtocol = conn
+            proposal = await self._gateway.fetch_proposal(c, proposal_id=proposal_id)
             if proposal is None:
                 raise RuntimeError("Proposal not found.")
             if proposal.status != "進行中":
-                totals = await self._compute_totals(conn, proposal_id, proposal)
+                totals = await self._compute_totals(c, proposal_id, proposal)
                 final_status = proposal.status
                 event = CouncilEvent(
                     guild_id=proposal.guild_id,
@@ -174,31 +179,31 @@ class CouncilService:
                     status=final_status,
                 )
             else:
-                snapshot = await self._gateway.fetch_snapshot(conn, proposal_id=proposal_id)
+                snapshot = await self._gateway.fetch_snapshot(c, proposal_id=proposal_id)
                 if voter_id not in snapshot:
                     raise PermissionDeniedError("Voter is not in the snapshot for this proposal.")
 
-                async with conn.transaction():
+                async with c.transaction():
                     await self._gateway.upsert_vote(
-                        conn,
+                        c,
                         proposal_id=proposal_id,
                         voter_id=voter_id,
                         choice=choice,
                     )
-                    totals = await self._compute_totals(conn, proposal_id, proposal)
+                    totals = await self._compute_totals(c, proposal_id, proposal)
                     final_status = "進行中"
 
                     # Passing threshold
                     if totals.approve >= proposal.threshold_t:
                         await self._gateway.mark_status(
-                            conn,
+                            c,
                             proposal_id=proposal_id,
                             status="已通過",
                         )
                         # Attempt execution immediately
-                        await self._attempt_execution(conn, proposal)
+                        await self._attempt_execution(c, proposal)
                         # Re-fetch status after execution
-                        updated = await self._gateway.fetch_proposal(conn, proposal_id=proposal_id)
+                        updated = await self._gateway.fetch_proposal(c, proposal_id=proposal_id)
                         if updated is not None:
                             final_status = updated.status
                         else:  # pragma: no cover - defensive fallback
@@ -207,7 +212,7 @@ class CouncilService:
                     # Early rejection: even if all remaining unvoted approve, cannot reach T
                     elif totals.approve + totals.remaining_unvoted < proposal.threshold_t:
                         await self._gateway.mark_status(
-                            conn,
+                            c,
                             proposal_id=proposal_id,
                             status="已否決",
                         )
@@ -224,12 +229,11 @@ class CouncilService:
                     status=final_status,
                 )
 
-        if event is not None:
-            await publish_council_event(event)
+        await publish_council_event(event)
         return totals, final_status
 
     async def _compute_totals(
-        self, connection: asyncpg.Connection, proposal_id: UUID, proposal: Proposal
+        self, connection: ConnectionProtocol, proposal_id: UUID, proposal: Proposal
     ) -> VoteTotals:
         tally: Tally = await self._gateway.fetch_tally(connection, proposal_id=proposal_id)
         remaining = max(0, proposal.snapshot_n - tally.total_voted)
@@ -242,7 +246,7 @@ class CouncilService:
             remaining_unvoted=remaining,
         )
 
-    async def _attempt_execution(self, connection: asyncpg.Connection, proposal: Proposal) -> None:
+    async def _attempt_execution(self, connection: ConnectionProtocol, proposal: Proposal) -> None:
         # Fetch config for council account
         cfg = await self._gateway.fetch_config(connection, guild_id=proposal.guild_id)
         if cfg is None:
@@ -311,25 +315,26 @@ class CouncilService:
 
     # --- Timeout & reminders ---
     async def expire_due_proposals(self) -> int:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         changed = 0
         events: list[CouncilEvent] = []
         async with pool.acquire() as conn:
-            for p in await self._gateway.list_due_proposals(conn):
-                totals = await self._compute_totals(conn, p.proposal_id, p)
+            c: ConnectionProtocol = conn
+            for p in await self._gateway.list_due_proposals(c):
+                totals = await self._compute_totals(c, p.proposal_id, p)
                 if totals.approve >= p.threshold_t:
                     # In case we crossed threshold but scheduler fired late, ensure execution
                     await self._gateway.mark_status(
-                        conn,
+                        c,
                         proposal_id=p.proposal_id,
                         status="已通過",
                     )
-                    await self._attempt_execution(conn, p)
-                    updated = await self._gateway.fetch_proposal(conn, proposal_id=p.proposal_id)
+                    await self._attempt_execution(c, p)
+                    updated = await self._gateway.fetch_proposal(c, proposal_id=p.proposal_id)
                     status = updated.status if updated is not None else "已通過"
                 else:
                     await self._gateway.mark_status(
-                        conn,
+                        c,
                         proposal_id=p.proposal_id,
                         status="已逾時",
                     )
@@ -348,42 +353,48 @@ class CouncilService:
         return changed
 
     async def list_unvoted_members(self, *, proposal_id: UUID) -> Sequence[int]:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            return await self._gateway.list_unvoted_members(conn, proposal_id=proposal_id)
+            c: ConnectionProtocol = conn
+            return await self._gateway.list_unvoted_members(c, proposal_id=proposal_id)
 
     async def mark_reminded(self, *, proposal_id: UUID) -> None:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            await self._gateway.mark_reminded(conn, proposal_id=proposal_id)
+            c: ConnectionProtocol = conn
+            await self._gateway.mark_reminded(c, proposal_id=proposal_id)
 
     # --- Export ---
     async def export_interval(
         self, *, guild_id: int, start: datetime, end: datetime
     ) -> list[dict[str, object]]:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
             return await self._gateway.export_interval(
-                conn,
+                c,
                 guild_id=guild_id,
                 start=start,
                 end=end,
             )
 
     async def get_snapshot(self, *, proposal_id: UUID) -> Sequence[int]:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            return await self._gateway.fetch_snapshot(conn, proposal_id=proposal_id)
+            c: ConnectionProtocol = conn
+            return await self._gateway.fetch_snapshot(c, proposal_id=proposal_id)
 
     async def get_votes_detail(self, *, proposal_id: UUID) -> Sequence[tuple[int, str]]:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            return await self._gateway.fetch_votes_detail(conn, proposal_id=proposal_id)
+            c: ConnectionProtocol = conn
+            return await self._gateway.fetch_votes_detail(c, proposal_id=proposal_id)
 
     async def get_proposal(self, *, proposal_id: UUID) -> Proposal | None:
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            return await self._gateway.fetch_proposal(conn, proposal_id=proposal_id)
+            c: ConnectionProtocol = conn
+            return await self._gateway.fetch_proposal(c, proposal_id=proposal_id)
 
     # --- Queries for UI ---
     async def list_active_proposals(self) -> Sequence[Proposal]:
@@ -392,7 +403,7 @@ class CouncilService:
         注意：Gateway 目前未以 guild 過濾，此方法回傳跨 guild 結果；
         呼叫端若需僅顯示特定 guild，請自行過濾 `p.guild_id`。
         """
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
             return await self._gateway.list_active_proposals(conn)
 

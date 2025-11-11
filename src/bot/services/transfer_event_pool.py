@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from datetime import datetime, timezone
+from typing import Any, Mapping, cast
 from uuid import UUID
 
 import asyncpg
@@ -14,6 +15,7 @@ from src.db.gateway.economy_pending_transfers import (
     PendingTransferGateway,
 )
 from src.db.gateway.economy_transfers import EconomyTransferGateway
+from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -24,11 +26,11 @@ class TransferEventPoolCoordinator:
     def __init__(
         self,
         *,
-        pool: asyncpg.Pool | None = None,
+        pool: PoolProtocol | None = None,
         pending_gateway: PendingTransferGateway | None = None,
         transfer_gateway: EconomyTransferGateway | None = None,
     ) -> None:
-        self._pool = pool
+        self._pool: PoolProtocol | None = pool
         self._pending_gateway = pending_gateway or PendingTransferGateway()
         self._transfer_gateway = transfer_gateway or EconomyTransferGateway()
         # Track check states: transfer_id -> {check_type: result}
@@ -45,7 +47,8 @@ class TransferEventPoolCoordinator:
 
         if self._pool is None:
             try:
-                self._pool = await db_pool.init_pool()
+                # 將 asyncpg.Pool 視為符合 PoolProtocol 的實體
+                self._pool = cast(PoolProtocol, await db_pool.init_pool())
             except (RuntimeError, ValueError):
                 # In unit tests, pool may not be available
                 # Skip initialization if DATABASE_URL is not set or invalid
@@ -135,10 +138,11 @@ class TransferEventPoolCoordinator:
 
         try:
             async with self._pool.acquire() as conn:
+                c: ConnectionProtocol = conn
                 # 以行鎖定的方式原子領取核准中的轉帳，避免並行重複執行
                 try:
-                    async with conn.transaction():
-                        row = await conn.fetchrow(
+                    async with c.transaction():
+                        row: Mapping[str, Any] | None = await c.fetchrow(
                             """
                             SELECT transfer_id, guild_id, initiator_id, target_id,
                                    amount, metadata, status
@@ -158,17 +162,19 @@ class TransferEventPoolCoordinator:
                             return
 
                         result = await self._transfer_gateway.transfer_currency(
-                            conn,
+                            c,
                             guild_id=row["guild_id"],
                             initiator_id=row["initiator_id"],
                             target_id=row["target_id"],
                             amount=row["amount"],
-                            metadata=dict(row["metadata"] or {}),
+                            metadata=dict(
+                                cast(Mapping[str, Any] | None, row.get("metadata")) or {}
+                            ),
                         )
 
                         # 標記完成
                         await self._pending_gateway.update_status(
-                            conn, transfer_id=transfer_id, new_status="completed"
+                            c, transfer_id=transfer_id, new_status="completed"
                         )
 
                         LOGGER.info(
@@ -185,7 +191,7 @@ class TransferEventPoolCoordinator:
                     # 失敗時標記為 rejected（在事務外最佳努力）
                     try:
                         await self._pending_gateway.update_status(
-                            conn, transfer_id=transfer_id, new_status="rejected"
+                            c, transfer_id=transfer_id, new_status="rejected"
                         )
                     except Exception:
                         LOGGER.exception(
@@ -208,8 +214,9 @@ class TransferEventPoolCoordinator:
 
         try:
             async with self._pool.acquire() as conn:
+                c: ConnectionProtocol = conn
                 pending = await self._pending_gateway.get_pending_transfer(
-                    conn, transfer_id=transfer_id
+                    c, transfer_id=transfer_id
                 )
                 if pending is None:
                     return
@@ -260,8 +267,8 @@ class TransferEventPoolCoordinator:
                 delay_seconds = min(2**pending.retry_count, 300)
 
                 # Increment retry count
-                async with conn.transaction():
-                    await conn.execute(
+                async with c.transaction():
+                    await c.execute(
                         """
                         UPDATE economy.pending_transfers
                         SET retry_count = retry_count + 1,
@@ -299,7 +306,7 @@ class TransferEventPoolCoordinator:
         self,
         transfer_id: UUID,
         *,
-        connection: asyncpg.Connection | None = None,
+        connection: ConnectionProtocol | None = None,
     ) -> None:
         """Retry all checks for a transfer with automatic retry on database errors."""
         # 允許在測試中傳入既有的交易連線，避免不同連線看不到未提交變更
@@ -308,18 +315,20 @@ class TransferEventPoolCoordinator:
 
         try:
             if connection is None:
-                async with self._pool.acquire() as conn:  # type: ignore[union-attr]
+                pool = self._pool
+                if pool is None:
+                    return
+                async with pool.acquire() as conn:
+                    c: ConnectionProtocol = conn
                     # Reset status to checking to allow checks to run
                     await self._pending_gateway.update_status(
-                        conn, transfer_id=transfer_id, new_status="checking"
+                        c, transfer_id=transfer_id, new_status="checking"
                     )
 
                     # Re-trigger all checks (each function returns void, so we use execute)
-                    await conn.execute("SELECT economy.fn_check_transfer_balance($1)", transfer_id)
-                    await conn.execute("SELECT economy.fn_check_transfer_cooldown($1)", transfer_id)
-                    await conn.execute(
-                        "SELECT economy.fn_check_transfer_daily_limit($1)", transfer_id
-                    )
+                    await c.execute("SELECT economy.fn_check_transfer_balance($1)", transfer_id)
+                    await c.execute("SELECT economy.fn_check_transfer_cooldown($1)", transfer_id)
+                    await c.execute("SELECT economy.fn_check_transfer_daily_limit($1)", transfer_id)
 
                     # Clear check state to allow fresh evaluation
                     if transfer_id in self._check_states:
@@ -368,7 +377,7 @@ class TransferEventPoolCoordinator:
             except Exception:
                 LOGGER.exception("transfer_event_pool.cleanup.error")
 
-    async def _cleanup_expired(self, *, connection: asyncpg.Connection | None = None) -> None:
+    async def _cleanup_expired(self, *, connection: ConnectionProtocol | None = None) -> None:
         """Clean up expired pending transfers."""
         if connection is None and self._pool is None:
             return
@@ -397,7 +406,7 @@ class TransferEventPoolCoordinator:
                 )
 
                 # 精準撈出剛才更新過的列以逐筆通知
-                rows = await conn.fetch(
+                rows: list[Mapping[str, Any]] = await conn.fetch(
                     """
                     SELECT transfer_id, guild_id, initiator_id, target_id, amount
                     FROM economy.pending_transfers

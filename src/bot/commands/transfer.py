@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, cast
 from uuid import UUID
 
 import discord
@@ -143,7 +143,7 @@ def build_transfer_command(
             try:
                 defer = getattr(interaction.response, "defer", None)
                 if callable(defer):
-                    await defer(ephemeral=True)
+                    await cast(Any, defer)(ephemeral=True)
             except Exception as exc:  # 防禦性：即使 defer 失敗也不終止流程
                 LOGGER.debug("bot.transfer.defer_failed", error=str(exc))
 
@@ -253,7 +253,8 @@ def build_transfer_command(
             message = _format_success_message(interaction.user, target, result, currency_config)
         await _respond(interaction, message)
 
-    return transfer
+    # Cast 以解決 Pylance 對 decorators 之回傳型別推導為 Unknown 的問題。
+    return cast(app_commands.Command[Any, Any, None], transfer)
 
 
 async def _respond(interaction: discord.Interaction, content: str) -> None:
@@ -270,9 +271,12 @@ async def _respond(interaction: discord.Interaction, content: str) -> None:
             is_done = False
         if is_done and hasattr(interaction, "edit_original_response"):
             await interaction.edit_original_response(content=content)
-            # 測試 stub 相容：標記為已送出
+            # 測試 stub 相容：標記為已送出（若 stub 支援）
             try:
-                interaction.response.sent = True
+                if hasattr(interaction.response, "sent"):
+                    # 以 setattr + cast(Any, ...) 動態設定測試 stub 旗標
+                    # 避免 Pylance 屬性存取診斷
+                    cast(Any, interaction.response).sent = True
             except Exception:
                 pass
         else:
@@ -309,7 +313,7 @@ def _format_success_message(
         f"✅ 已成功將 {result.amount:,} {currency_display} 轉給 {_mention_of(target)}。",
         f"👉 你目前的餘額為 {result.initiator_balance:,} {currency_display}。",
     ]
-    reason = result.metadata.get("reason") if isinstance(result.metadata, dict) else None
+    reason = result.metadata.get("reason")
     if reason:
         parts.append(f"📝 備註：{reason}")
     return "\n".join(parts)

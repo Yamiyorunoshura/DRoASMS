@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from typing import cast
+from typing import Any, cast
 from weakref import WeakKeyDictionary
 
 import asyncpg
@@ -24,7 +24,12 @@ class _PatchedConnection(asyncpg.Connection):  # type: ignore[misc]
     arguments. Return the last statement's status to preserve execute() contract.
     """
 
-    async def execute(self, query: str, *args: object) -> str:
+    async def execute(
+        self,
+        query: str,
+        *args: object,
+        timeout: float | None = None,  # noqa: ASYNC109
+    ) -> str:
         q = query.strip()
         # Heuristic: treat as multi-statement if contains a semicolon and positional
         # parameters (e.g. $1). Avoid splitting when no semicolon or it's a single stmt.
@@ -32,9 +37,17 @@ class _PatchedConnection(asyncpg.Connection):  # type: ignore[misc]
             statements = [s.strip() for s in q.split(";") if s.strip()]
             status: str | None = None
             for stmt in statements:
-                status = await super().execute(stmt, *args)
+                # 以 Any 呼叫父類別 execute，避免第三方型別資訊不完整導致 Unknown 診斷
+                _super: Any = super()
+                if timeout is None:
+                    status = await _super.execute(stmt, *args)
+                else:
+                    status = await _super.execute(stmt, *args, timeout=timeout)
             return status or ""
-        return cast(str, await super().execute(query, *args))
+        _super2: Any = super()
+        if timeout is None:
+            return cast(str, await _super2.execute(query, *args))
+        return cast(str, await _super2.execute(query, *args, timeout=timeout))
 
 
 _POOL_LOCKS: "WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = WeakKeyDictionary()
@@ -62,28 +75,32 @@ async def init_pool(config: PoolConfig | None = None) -> asyncpg.Pool:
         else:
             pool_config = config
 
-        kwargs: dict[str, object] = {
-            "dsn": pool_config.dsn,
-            "min_size": pool_config.min_size,
-            "max_size": pool_config.max_size,
-        }
-        if pool_config.timeout is not None:
-            kwargs["timeout"] = pool_config.timeout
-
-        pool = await asyncpg.create_pool(
+        _apg = cast(Any, asyncpg)
+        pool = await _apg.create_pool(
+            dsn=pool_config.dsn,
+            min_size=pool_config.min_size,
+            max_size=pool_config.max_size,
             init=_configure_connection,
             connection_class=_PatchedConnection,
-            **kwargs,
         )
         _POOLS[loop] = pool
         # Best-effort: ensure DB schema is migrated for tests/first-run environments.
         # Contract tests may run before dedicated DB test migrations; auto-upgrade here.
         try:
-            async with pool.acquire() as conn:
-                exists = await conn.fetchval(
-                    "SELECT to_regclass('economy.guild_member_balances') IS NOT NULL"
+            async with pool.acquire() as _conn:
+                conn = cast(asyncpg.Connection, _conn)
+                from typing import Any as _Any
+                from typing import cast as _cast
+
+                _conn_any = _cast(_Any, conn)
+                exists_obj = _cast(
+                    object | None,
+                    await _conn_any.fetchval(
+                        "SELECT to_regclass('economy.guild_member_balances') IS NOT NULL"
+                    ),
                 )
-                if not bool(exists):
+                exists: bool = bool(exists_obj)
+                if not exists:
                     # Attempt to run Alembic upgrade if available in PATH
                     LOGGER.info("db.pool.auto_migrate.start")
                     try:
@@ -139,14 +156,18 @@ def _get_pool_lock(loop: asyncio.AbstractEventLoop | None = None) -> asyncio.Loc
 
 
 async def _configure_connection(connection: asyncpg.Connection) -> None:
-    await connection.set_type_codec(
+    # cast to Any 以避免第三方套件型別提示不完整造成的 reportUnknownMemberType 警告
+    from typing import Any as _Any
+
+    _conn_any = cast(_Any, connection)
+    await _conn_any.set_type_codec(
         "json",
         schema="pg_catalog",
         encoder=json.dumps,
         decoder=json.loads,
         format="text",
     )
-    await connection.set_type_codec(
+    await _conn_any.set_type_codec(
         "jsonb",
         schema="pg_catalog",
         encoder=json.dumps,
@@ -158,7 +179,7 @@ async def _configure_connection(connection: asyncpg.Connection) -> None:
     if daily_limit:
         try:
             int(daily_limit)  # 驗證可解析為整數
-            await connection.execute(
+            await _conn_any.execute(
                 "SELECT set_config('app.transfer_daily_limit', $1, true)", daily_limit
             )
         except Exception as exc:  # 防禦性：不阻斷連線建立

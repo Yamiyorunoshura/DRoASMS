@@ -10,19 +10,23 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-from typing import Any, Set
+from typing import Any, Set, cast
 
-import asyncpg
 import structlog
 
 from src.bot.services.state_council_service import StateCouncilService
 from src.db.gateway.state_council_governance import StateCouncilGovernanceGateway
 from src.db.pool import get_pool
+from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
 
 # Global scheduler task reference
 _scheduler_task: asyncio.Task[None] | None = None
+
+# In-memory storage for auto-release settings (minimal viable implementation)
+# Format: {guild_id: {suspect_id: release_time}}
+_auto_release_settings: dict[int, dict[int, datetime]] = {}
 
 
 async def start_scheduler(client: Any) -> None:
@@ -41,7 +45,7 @@ async def start_scheduler(client: Any) -> None:
 
         while not client.is_closed():
             try:
-                pool = get_pool()
+                pool: PoolProtocol = cast(PoolProtocol, get_pool())
                 current_time = datetime.now(tz=timezone.utc)
 
                 async with pool.acquire() as conn:
@@ -50,16 +54,19 @@ async def start_scheduler(client: Any) -> None:
 
                     # Process periodic welfare disbursements
                     await _process_welfare_disbursements(
-                        conn, service, current_time, processed_welfare
+                        conn, gateway, service, current_time, processed_welfare
                     )
 
                     # Check monthly issuance limits
                     await _check_monthly_issuance_limits(
-                        conn, service, current_time, processed_issuance
+                        conn, gateway, current_time, processed_issuance
                     )
 
                     # Cleanup old records (optional)
                     await _cleanup_old_records(conn, gateway)
+
+                    # Process auto-release for suspects
+                    await _process_auto_release(conn, service, current_time, client)
 
                 # Sleep for 5 minutes before next check
                 await asyncio.sleep(300)
@@ -85,7 +92,8 @@ async def stop_scheduler() -> None:
 
 
 async def _process_welfare_disbursements(
-    conn: asyncpg.Connection,
+    conn: ConnectionProtocol,
+    gateway: StateCouncilGovernanceGateway,
     service: StateCouncilService,
     current_time: datetime,
     processed_welfare: Set[int],
@@ -93,7 +101,7 @@ async def _process_welfare_disbursements(
     """Process automatic welfare disbursements based on department configurations."""
     try:
         # Get all guilds with Internal Affairs department configuration
-        configs = await service._gateway.fetch_all_department_configs_with_welfare(conn)
+        configs = await gateway.fetch_all_department_configs_with_welfare(conn)
 
         for config in configs:
             if config.get("welfare_amount", 0) <= 0 or config.get("welfare_interval_hours", 0) <= 0:
@@ -122,8 +130,8 @@ async def _process_welfare_disbursements(
 
 
 async def _check_monthly_issuance_limits(
-    conn: asyncpg.Connection,
-    service: StateCouncilService,
+    conn: ConnectionProtocol,
+    gateway: StateCouncilGovernanceGateway,
     current_time: datetime,
     processed_issuance: Set[str],
 ) -> None:
@@ -135,14 +143,14 @@ async def _check_monthly_issuance_limits(
             return
 
         # Get all guilds with Central Bank configurations
-        configs = await service._gateway.fetch_all_department_configs_for_issuance(conn)
+        configs = await gateway.fetch_all_department_configs_for_issuance(conn)
 
         for config in configs:
             if config.get("max_issuance_per_month", 0) <= 0:
                 continue
 
             # Get current month's total issuance
-            current_total = await service._gateway.sum_monthly_issuance(
+            current_total = await gateway.sum_monthly_issuance(
                 conn, guild_id=config["guild_id"], month_period=current_month
             )
 
@@ -163,7 +171,7 @@ async def _check_monthly_issuance_limits(
 
 
 async def _cleanup_old_records(
-    conn: asyncpg.Connection, gateway: StateCouncilGovernanceGateway
+    conn: ConnectionProtocol, gateway: StateCouncilGovernanceGateway
 ) -> None:
     """Clean up old records to prevent database bloat (optional)."""
     try:
@@ -178,3 +186,136 @@ async def _cleanup_old_records(
 
     except Exception as exc:
         LOGGER.exception("state_council.scheduler.cleanup_error", error=str(exc))
+
+
+async def _process_auto_release(
+    conn: ConnectionProtocol, service: StateCouncilService, current_time: datetime, client: Any
+) -> None:
+    """Process automatic release of suspects based on in-memory settings."""
+    try:
+        global _auto_release_settings
+
+        # Check each guild's auto-release settings
+        for guild_id, suspects in list(_auto_release_settings.items()):
+            if not suspects:
+                continue
+
+            # Get guild config to check role IDs
+            try:
+                cfg = await service.get_config(guild_id=guild_id)
+                if not cfg.suspect_role_id or not cfg.citizen_role_id:
+                    continue
+            except Exception:
+                # Guild not configured, skip
+                continue
+
+            # Check each suspect's release time
+            for suspect_id, release_time in list(suspects.items()):
+                if release_time > current_time:
+                    continue  # Not time yet
+
+                # Time to release this suspect
+                try:
+                    # Get guild and member
+                    guild = client.get_guild(guild_id)
+                    if not guild:
+                        # Guild not found, remove from settings
+                        del suspects[suspect_id]
+                        continue
+
+                    member = guild.get_member(suspect_id)
+                    if not member:
+                        # Member not found, remove from settings
+                        del suspects[suspect_id]
+                        continue
+
+                    # Remove suspect role and add citizen role
+                    suspect_role = guild.get_role(cfg.suspect_role_id)
+                    citizen_role = guild.get_role(cfg.citizen_role_id)
+
+                    if suspect_role and suspect_role in member.roles:
+                        await member.remove_roles(suspect_role, reason="自動釋放")
+
+                    if citizen_role and citizen_role not in member.roles:
+                        await member.add_roles(citizen_role, reason="自動釋放")
+
+                    # Record identity action
+                    await service.record_identity_action(
+                        guild_id=guild_id,
+                        target_id=suspect_id,
+                        action="移除疑犯標記",
+                        reason="達到自動釋放時間",
+                        performed_by=0,  # System user
+                    )
+
+                    # Remove from auto-release settings
+                    del suspects[suspect_id]
+
+                    LOGGER.info(
+                        "state_council.scheduler.auto_release.completed",
+                        guild_id=guild_id,
+                        suspect_id=suspect_id,
+                        member_name=member.display_name,
+                    )
+
+                except Exception as exc:
+                    LOGGER.warning(
+                        "state_council.scheduler.auto_release.failed",
+                        guild_id=guild_id,
+                        suspect_id=suspect_id,
+                        error=str(exc),
+                    )
+                    # Remove from settings to avoid repeated failures
+                    del suspects[suspect_id]
+
+        # Clean up empty guild entries
+        _auto_release_settings = {
+            gid: suspects for gid, suspects in _auto_release_settings.items() if suspects
+        }
+
+        LOGGER.debug(
+            "state_council.scheduler.auto_release.checked",
+            total_guilds=len(_auto_release_settings),
+            total_suspects=sum(len(suspects) for suspects in _auto_release_settings.values()),
+        )
+
+    except Exception as exc:
+        LOGGER.exception("state_council.scheduler.auto_release_error", error=str(exc))
+
+
+def set_auto_release(guild_id: int, suspect_id: int, hours: int) -> None:
+    """Set auto-release time for a suspect (in-memory only)."""
+    global _auto_release_settings
+
+    release_time = datetime.now(tz=timezone.utc) + timedelta(hours=hours)
+
+    if guild_id not in _auto_release_settings:
+        _auto_release_settings[guild_id] = {}
+
+    _auto_release_settings[guild_id][suspect_id] = release_time
+
+    LOGGER.info(
+        "state_council.scheduler.auto_release.set",
+        guild_id=guild_id,
+        suspect_id=suspect_id,
+        hours=hours,
+        release_time=release_time,
+    )
+
+
+def cancel_auto_release(guild_id: int, suspect_id: int) -> None:
+    """Cancel auto-release for a suspect."""
+    global _auto_release_settings
+
+    if guild_id in _auto_release_settings and suspect_id in _auto_release_settings[guild_id]:
+        del _auto_release_settings[guild_id][suspect_id]
+
+        # Clean up empty guild entry
+        if not _auto_release_settings[guild_id]:
+            del _auto_release_settings[guild_id]
+
+        LOGGER.info(
+            "state_council.scheduler.auto_release.cancelled",
+            guild_id=guild_id,
+            suspect_id=suspect_id,
+        )

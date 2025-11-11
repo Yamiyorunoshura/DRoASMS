@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2025-11-11
+
+### 新增
+- **國土安全部嫌疑人管理功能**：新增 `/council suspects` 指令，提供完整的嫌疑人管理介面
+  - 支援查看所有嫌疑人（以嫌犯身分組成員為清單）
+  - 提供下拉選單進行單選/多選釋放
+  - 設定自動釋放時間（1-168小時）
+  - 完整的審計軌跡記錄
+- **統一JSON指令註冊表**：建立標準化的指令資訊管理系統
+  - 新增 `src/bot/commands/help_data/` 目錄結構
+  - 支援階層式指令結構（主指令/子指令）
+  - 優先從JSON註冊表讀取指令資訊，保持向後相容
+  - 新增主要指令的JSON註冊檔
+- **政府註冊表擴充**：增強政府組織結構管理
+  - 新增「常任理事會」作為最高決策機構
+  - 明確政府階層：常任理事會 → 國務院 → 各部門
+  - 新增政府階層查詢函數
+  - 更新 `departments.json` 支援新的組織結構
+- **自動釋放排程功能**：新增記憶體式自動釋放系統
+  - 整合至現有的 `state_council_scheduler.py`
+  - 支援設定1-168小時的自動釋放時間
+  - 最小實作（記憶體儲存，重啟後失效）
+
+### 修改
+- **help_collector.py**：調整優先順序，優先使用JSON註冊表
+- **StateCouncilService**：新增 `record_identity_action()` 方法
+- **DepartmentRegistry**：擴充支援政府階層結構
+- **state_council.py**：新增 suspects 子指令和 SuspectsManagementView
+
+### 測試
+- 新增 `test_help_collector_json.py` - 測試JSON指令註冊表功能
+- 新增 `test_suspects_management.py` - 測試嫌疑人管理功能
+- 新增 `test_department_registry_hierarchy.py` - 測試政府層次結構
+- 新增 `test_state_council_government_hierarchy.py` - 測試政府層次查詢
+
+### 注意
+- 自動釋放功能為最小實作，設定在機器人重啟後會失效
+- 所有變更保持向後相容性
+- 新的JSON註冊表系統不影響現有功能
+
 ## [0.13.1] - 2025-11-09
 
 ### Fixed

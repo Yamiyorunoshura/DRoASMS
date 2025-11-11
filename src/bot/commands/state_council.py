@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Self
+from typing import Any, Awaitable, Callable, cast
 
 import discord
 import structlog
@@ -217,7 +217,7 @@ def build_state_council_group(
         leader="要設定為國務院領袖的使用者（可選）",
         leader_role="要設定為國務院領袖的身分組（可選）",
     )
-    async def config_leader(
+    async def config_leader(  # pyright: ignore[reportUnusedFunction]
         interaction: discord.Interaction,
         leader: discord.Member | None = None,
         leader_role: discord.Role | None = None,
@@ -281,7 +281,7 @@ def build_state_council_group(
 
     @state_council.command(name="config_citizen_role", description="設定公民身分組")
     @app_commands.describe(role="要設定為公民身分組的身分組")
-    async def config_citizen_role(
+    async def config_citizen_role(  # pyright: ignore[reportUnusedFunction]
         interaction: discord.Interaction,
         role: discord.Role,
     ) -> None:
@@ -331,7 +331,7 @@ def build_state_council_group(
 
     @state_council.command(name="config_suspect_role", description="設定嫌犯身分組")
     @app_commands.describe(role="要設定為嫌犯身分組的身分組")
-    async def config_suspect_role(
+    async def config_suspect_role(  # pyright: ignore[reportUnusedFunction]
         interaction: discord.Interaction,
         role: discord.Role,
     ) -> None:
@@ -380,7 +380,9 @@ def build_state_council_group(
             )
 
     @state_council.command(name="panel", description="開啟國務院面板")
-    async def panel(interaction: discord.Interaction) -> None:
+    async def panel(  # pyright: ignore[reportUnusedFunction]
+        interaction: discord.Interaction,
+    ) -> None:
         if interaction.guild_id is None or interaction.guild is None:
             await _send_message_compat(
                 interaction, content="本指令需在伺服器中執行。", ephemeral=True
@@ -497,19 +499,119 @@ def build_state_council_group(
             user_id=interaction.user.id,
         )
 
+    @state_council.command(name="suspects", description="管理嫌疑人（僅限國土安全部）")
+    async def suspects(  # pyright: ignore[reportUnusedFunction]
+        interaction: discord.Interaction,
+    ) -> None:
+        if interaction.guild_id is None or interaction.guild is None:
+            await _send_message_compat(
+                interaction, content="本指令需在伺服器中執行。", ephemeral=True
+            )
+            return
+
+        # Check if state council is configured
+        try:
+            cfg = await service.get_config(guild_id=interaction.guild_id)
+        except StateCouncilNotConfiguredError:
+            await _send_message_compat(
+                interaction,
+                content="尚未完成國務院設定，請先執行 /state_council config_leader。",
+                ephemeral=True,
+            )
+            return
+        except Exception:
+            await _send_message_compat(
+                interaction,
+                content="尚未完成國務院設定，請先執行 /state_council config_leader。",
+                ephemeral=True,
+            )
+            return
+
+        # Check if user has homeland security department permission
+        user_roles = [role.id for role in getattr(interaction.user, "roles", [])]
+
+        # Check homeland security permission
+        has_permission = await service.check_department_permission(
+            guild_id=interaction.guild_id,
+            user_id=interaction.user.id,
+            department="國土安全部",
+            user_roles=user_roles,
+        )
+
+        if not has_permission:
+            await _send_message_compat(
+                interaction,
+                content="僅限國土安全部授權人員可管理嫌疑人。",
+                ephemeral=True,
+            )
+            return
+
+        # Check if suspect role is configured
+        if not cfg.suspect_role_id:
+            await _send_message_compat(
+                interaction,
+                content="尚未設定嫌犯身分組，請聯繫管理員設定。",
+                ephemeral=True,
+            )
+            return
+
+        # Get list of suspects (members with suspect role)
+        suspect_role = interaction.guild.get_role(cfg.suspect_role_id)
+        if not suspect_role:
+            await _send_message_compat(
+                interaction,
+                content="嫌犯身分組不存在，請聯繫管理員檢查設定。",
+                ephemeral=True,
+            )
+            return
+
+        suspects_list: list[dict[str, Any]] = []
+        for member in suspect_role.members:
+            suspects_list.append(
+                {
+                    "id": member.id,
+                    "name": member.display_name,
+                    "joined_at": member.joined_at,
+                }
+            )
+
+        if not suspects_list:
+            await _send_message_compat(
+                interaction,
+                content="目前沒有嫌疑人。",
+                ephemeral=True,
+            )
+            return
+
+        # Create suspects management view
+        view = SuspectsManagementView(
+            service=service,
+            guild=interaction.guild,
+            guild_id=interaction.guild_id,
+            author_id=interaction.user.id,
+            user_roles=user_roles,
+            suspects=suspects_list,
+            suspect_role_id=cfg.suspect_role_id,
+            citizen_role_id=cfg.citizen_role_id,
+        )
+
+        embed = await view.build_embed()
+        await _send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+
     # --- Compatibility shim for tests ---
     # discord.app_commands.Group 並未公開 children/type 屬性，但合約測試期望可取用。
     # 這裡在執行期為實例動態補上相容屬性：
     try:
         # 直接回傳 commands（直接子指令清單）
-        state_council.children = state_council.commands
+        # 以 setattr + cast(Any, ...) 動態補上屬性，避免靜態型別檢查誤報
+        cast(Any, state_council).children = state_council.commands
     except Exception:
         pass
     try:
         # 標示為 subcommand_group 以通過結構檢查
         from discord import AppCommandOptionType
 
-        state_council.type = AppCommandOptionType.subcommand_group
+        cast(Any, state_council).type = AppCommandOptionType.subcommand_group
     except Exception:
         pass
 
@@ -664,7 +766,7 @@ class StateCouncilPanelView(discord.ui.View):
                 discord.SelectOption(label=dept, value=dept, default=self.current_page == dept)
             )
 
-        class _NavSelect(discord.ui.Select[Self]):
+        class _NavSelect(discord.ui.Select[Any]):
             pass
 
         nav = _NavSelect(placeholder="選擇頁面…", options=options, row=0)
@@ -691,7 +793,7 @@ class StateCouncilPanelView(discord.ui.View):
             await self._add_department_actions()
 
         # 各頁通用：使用指引按鈕（置於最後一列）
-        help_btn: discord.ui.Button[Self] = discord.ui.Button(
+        help_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="使用指引",
             style=discord.ButtonStyle.secondary,
             custom_id="help_btn",
@@ -740,7 +842,7 @@ class StateCouncilPanelView(discord.ui.View):
 
     async def _add_overview_actions(self) -> None:
         # Transfer between departments button
-        transfer_btn: discord.ui.Button[Self] = discord.ui.Button(
+        transfer_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="部門轉帳",
             style=discord.ButtonStyle.primary,
             custom_id="transfer_dept",
@@ -750,7 +852,7 @@ class StateCouncilPanelView(discord.ui.View):
         self.add_item(transfer_btn)
 
         # 新增：部門 → 使用者 轉帳按鈕（所有部門頁皆顯示）
-        transfer_user_btn: discord.ui.Button[Self] = discord.ui.Button(
+        transfer_user_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="轉帳給使用者",
             style=discord.ButtonStyle.secondary,
             custom_id="transfer_user",
@@ -764,7 +866,7 @@ class StateCouncilPanelView(discord.ui.View):
             self.leader_role_id and self.leader_role_id in self.user_roles
         )
         if is_leader:
-            export_btn: discord.ui.Button[Self] = discord.ui.Button(
+            export_btn: discord.ui.Button[Any] = discord.ui.Button(
                 label="匯出資料",
                 style=discord.ButtonStyle.secondary,
                 custom_id="export_data",
@@ -775,7 +877,7 @@ class StateCouncilPanelView(discord.ui.View):
 
             # 領導人專屬：設定各部門領導身分組
             # 以「選擇要設定的部門」+「RoleSelect 指定身分組」實作
-            class _DeptSelect(discord.ui.Select[Self]):
+            class _DeptSelect(discord.ui.Select[Any]):
                 pass
 
             dept_options = [
@@ -806,7 +908,7 @@ class StateCouncilPanelView(discord.ui.View):
 
             # 角色挑選（僅在選擇了部門之後使用 callback 保存）
             # 使用 discord.ui.RoleSelect 讓操作者直接從伺服器身分組中挑選
-            class _RolePicker(discord.ui.RoleSelect[Self]):
+            class _RolePicker(discord.ui.RoleSelect[Any]):
                 pass
 
             role_picker = _RolePicker(
@@ -869,7 +971,7 @@ class StateCouncilPanelView(discord.ui.View):
         department = self.current_page
 
         # 每個部門頁面均提供「部門轉帳」快捷鍵
-        transfer_btn: discord.ui.Button[Self] = discord.ui.Button(
+        transfer_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="部門轉帳",
             style=discord.ButtonStyle.primary,
             custom_id="transfer_dept",
@@ -879,7 +981,7 @@ class StateCouncilPanelView(discord.ui.View):
         self.add_item(transfer_btn)
 
         # 部門 → 使用者 轉帳按鈕（所有部門頁皆顯示）
-        transfer_user_btn: discord.ui.Button[Self] = discord.ui.Button(
+        transfer_user_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="轉帳給使用者",
             style=discord.ButtonStyle.secondary,
             custom_id="transfer_user",
@@ -890,7 +992,7 @@ class StateCouncilPanelView(discord.ui.View):
 
         if department == "內政部":
             # Welfare disbursement
-            welfare_btn: discord.ui.Button[Self] = discord.ui.Button(
+            welfare_btn: discord.ui.Button[Any] = discord.ui.Button(
                 label="發放福利",
                 style=discord.ButtonStyle.success,
                 custom_id="welfare_disburse",
@@ -900,7 +1002,7 @@ class StateCouncilPanelView(discord.ui.View):
             self.add_item(welfare_btn)
 
             # Welfare settings
-            settings_btn: discord.ui.Button[Self] = discord.ui.Button(
+            settings_btn: discord.ui.Button[Any] = discord.ui.Button(
                 label="福利設定",
                 style=discord.ButtonStyle.secondary,
                 custom_id="welfare_settings",
@@ -911,7 +1013,7 @@ class StateCouncilPanelView(discord.ui.View):
 
         elif department == "財政部":
             # Tax collection
-            tax_btn: discord.ui.Button[Self] = discord.ui.Button(
+            tax_btn: discord.ui.Button[Any] = discord.ui.Button(
                 label="徵收稅款",
                 style=discord.ButtonStyle.success,
                 custom_id="tax_collect",
@@ -921,7 +1023,7 @@ class StateCouncilPanelView(discord.ui.View):
             self.add_item(tax_btn)
 
             # Tax settings
-            tax_settings_btn: discord.ui.Button[Self] = discord.ui.Button(
+            tax_settings_btn: discord.ui.Button[Any] = discord.ui.Button(
                 label="稅率設定",
                 style=discord.ButtonStyle.secondary,
                 custom_id="tax_settings",
@@ -932,7 +1034,7 @@ class StateCouncilPanelView(discord.ui.View):
 
         elif department == "國土安全部":
             # Arrest
-            arrest_btn: discord.ui.Button[Self] = discord.ui.Button(
+            arrest_btn: discord.ui.Button[Any] = discord.ui.Button(
                 label="逮捕人員",
                 style=discord.ButtonStyle.danger,
                 custom_id="arrest_user",
@@ -943,7 +1045,7 @@ class StateCouncilPanelView(discord.ui.View):
 
         elif department == "中央銀行":
             # Currency issuance
-            currency_btn: discord.ui.Button[Self] = discord.ui.Button(
+            currency_btn: discord.ui.Button[Any] = discord.ui.Button(
                 label="貨幣發行",
                 style=discord.ButtonStyle.success,
                 custom_id="currency_issue",
@@ -953,7 +1055,7 @@ class StateCouncilPanelView(discord.ui.View):
             self.add_item(currency_btn)
 
             # Issuance settings
-            currency_settings_btn: discord.ui.Button[Self] = discord.ui.Button(
+            currency_settings_btn: discord.ui.Button[Any] = discord.ui.Button(
                 label="發行設定",
                 style=discord.ButtonStyle.secondary,
                 custom_id="currency_settings",
@@ -1042,7 +1144,7 @@ class StateCouncilPanelView(discord.ui.View):
             return embed
 
         # Build leader description (supports both user-based and role-based leadership)
-        leader_parts = []
+        leader_parts: list[str] = []
         if summary.leader_id:
             leader_member = self.guild.get_member(summary.leader_id)
             if leader_member:
@@ -1244,9 +1346,7 @@ class StateCouncilPanelView(discord.ui.View):
             await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
-        if self.guild is None:
-            await _send_message_compat(interaction, content="無法取得伺服器資訊。", ephemeral=True)
-            return
+        # self.guild 於建立 View 時必定存在
 
         embed = discord.Embed(
             title="🔒 逮捕人員",
@@ -1304,16 +1404,16 @@ class InterdepartmentTransferModal(discord.ui.Modal, title="部門轉帳"):
         self.user_roles = user_roles
         self.preset_from_department = preset_from_department
 
-        # 僅在未預設來源部門時，才顯示可輸入的「來源部門」欄位
+        # 輸入欄位（顯式標註型別，避免 Pylance Unknown）
+        self.from_input: discord.ui.TextInput[Any] | None = None
         if not self.preset_from_department:
-            self.add_item(
-                discord.ui.TextInput(
-                    label="來源部門",
-                    placeholder="輸入來源部門（內政部/財政部/國土安全部/中央銀行）",
-                    required=True,
-                    style=discord.TextStyle.short,
-                )
+            self.from_input = discord.ui.TextInput(
+                label="來源部門",
+                placeholder="輸入來源部門（內政部/財政部/國土安全部/中央銀行）",
+                required=True,
+                style=discord.TextStyle.short,
             )
+            self.add_item(self.from_input)
 
         # 目標部門欄位：若已有來源部門，提示將從該部門轉出
         to_placeholder = (
@@ -1321,46 +1421,42 @@ class InterdepartmentTransferModal(discord.ui.Modal, title="部門轉帳"):
             if self.preset_from_department
             else "輸入目標部門（內政部/財政部/國土安全部/中央銀行）"
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="目標部門",
-                placeholder=to_placeholder,
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.to_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="目標部門",
+            placeholder=to_placeholder,
+            required=True,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="金額",
-                placeholder="輸入轉帳金額（數字）",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.amount_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="金額",
+            placeholder="輸入轉帳金額（數字）",
+            required=True,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="理由",
-                placeholder="輸入轉帳理由",
-                required=True,
-                style=discord.TextStyle.paragraph,
-            )
+        self.reason_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="理由",
+            placeholder="輸入轉帳理由",
+            required=True,
+            style=discord.TextStyle.paragraph,
         )
+        self.add_item(self.to_input)
+        self.add_item(self.amount_input)
+        self.add_item(self.reason_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
             # children 依是否有預設來源而不同：
             # - 有預設來源：依序為 [目標部門, 金額, 理由]
             # - 無預設來源：依序為 [來源部門, 目標部門, 金額, 理由]
-            idx = 0
             if self.preset_from_department:
                 from_dept = self.preset_from_department
             else:
-                from_dept = self.children[idx].value
-                idx += 1
+                assert self.from_input is not None
+                from_dept = str(self.from_input.value)
 
-            to_dept = self.children[idx].value
-            amount = int(self.children[idx + 1].value)
-            reason = self.children[idx + 2].value
+            to_dept = str(self.to_input.value)
+            amount = int(str(self.amount_input.value))
+            reason = str(self.reason_input.value)
 
             # 簡單正規化：移除空白
             from_dept = from_dept.strip()
@@ -1510,7 +1606,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
         # 來源部門下拉（僅在總覽時顯示）
         if self.source_department is None:
 
-            class _FromSelect(discord.ui.Select[Self]):
+            class _FromSelect(discord.ui.Select[Any]):
                 pass
 
             from_options = [discord.SelectOption(label=d, value=d) for d in self.departments]
@@ -1538,7 +1634,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
             self.add_item(from_select)
 
         # 目標部門下拉（排除來源部門）
-        class _ToSelect(discord.ui.Select[Self]):
+        class _ToSelect(discord.ui.Select[Any]):
             pass
 
         allowed_targets = [d for d in self.departments if d != self.source_department]
@@ -1564,7 +1660,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
         self.add_item(to_select)
 
         # 填寫金額與理由（Modal）
-        fill_btn: discord.ui.Button[Self] = discord.ui.Button(
+        fill_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="填寫金額與理由",
             style=discord.ButtonStyle.secondary,
             row=2,
@@ -1592,7 +1688,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
         self.add_item(fill_btn)
 
         # 送出轉帳
-        submit_btn: discord.ui.Button[Self] = discord.ui.Button(
+        submit_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="送出轉帳",
             style=discord.ButtonStyle.primary,
             disabled=not self._can_submit(),
@@ -1644,7 +1740,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
         self.add_item(submit_btn)
 
         # 取消/關閉
-        cancel_btn: discord.ui.Button[Self] = discord.ui.Button(
+        cancel_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="關閉",
             style=discord.ButtonStyle.secondary,
             row=2,
@@ -1789,7 +1885,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
         # 來源部門下拉（僅在總覽時顯示）
         if self.source_department is None:
 
-            class _FromSelect(discord.ui.Select[Self]):
+            class _FromSelect(discord.ui.Select[Any]):
                 pass
 
             from_options = [discord.SelectOption(label=d, value=d) for d in self.departments]
@@ -1814,7 +1910,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
             self.add_item(from_select)
 
         # 受款人設定（Modal）
-        set_recipient_btn: discord.ui.Button[Self] = discord.ui.Button(
+        set_recipient_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="設定受款人",
             style=discord.ButtonStyle.secondary,
             row=1,
@@ -1837,7 +1933,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
         self.add_item(set_recipient_btn)
 
         # 金額與理由（沿用既有 Modal）
-        fill_btn: discord.ui.Button[Self] = discord.ui.Button(
+        fill_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="填寫金額與理由",
             style=discord.ButtonStyle.secondary,
             row=1,
@@ -1863,7 +1959,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
         self.add_item(fill_btn)
 
         # 送出
-        submit_btn: discord.ui.Button[Self] = discord.ui.Button(
+        submit_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="送出轉帳",
             style=discord.ButtonStyle.primary,
             disabled=not self._can_submit(),
@@ -1912,7 +2008,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
         self.add_item(submit_btn)
 
         # 取消/關閉
-        cancel_btn: discord.ui.Button[Self] = discord.ui.Button(
+        cancel_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="關閉",
             style=discord.ButtonStyle.secondary,
             row=2,
@@ -1958,45 +2054,41 @@ class WelfareDisbursementModal(discord.ui.Modal, title="福利發放"):
         self.author_id = author_id
         self.user_roles = user_roles
 
-        self.add_item(
-            discord.ui.TextInput(
-                label="受款人",
-                placeholder="輸入受款人 @使用者 或使用者ID",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.recipient_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="受款人",
+            placeholder="輸入受款人 @使用者 或使用者ID",
+            required=True,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="金額",
-                placeholder="輸入發放金額（數字）",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.amount_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="金額",
+            placeholder="輸入發放金額（數字）",
+            required=True,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="類型",
-                placeholder="定期福利 或 特殊福利",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.type_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="類型",
+            placeholder="定期福利 或 特殊福利",
+            required=True,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="備註",
-                placeholder="輸入備註（可選）",
-                required=False,
-                style=discord.TextStyle.short,
-            )
+        self.reference_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="備註",
+            placeholder="輸入備註（可選）",
+            required=False,
+            style=discord.TextStyle.short,
         )
+        self.add_item(self.recipient_input)
+        self.add_item(self.amount_input)
+        self.add_item(self.type_input)
+        self.add_item(self.reference_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            recipient_input = self.children[0].value
-            amount = int(self.children[1].value)
-            disbursement_type = self.children[2].value
-            reference_id = self.children[3].value or None
+            recipient_input = str(self.recipient_input.value)
+            amount = int(str(self.amount_input.value))
+            disbursement_type = str(self.type_input.value)
+            _reference_id = str(self.reference_input.value).strip() or None
 
             # Parse recipient ID
             if recipient_input.startswith("<@") and recipient_input.endswith(">"):
@@ -2012,7 +2104,6 @@ class WelfareDisbursementModal(discord.ui.Modal, title="福利發放"):
                 recipient_id=recipient_id,
                 amount=amount,
                 disbursement_type=disbursement_type,
-                reference_id=reference_id,
             )
 
             await _send_message_compat(
@@ -2044,27 +2135,25 @@ class WelfareSettingsModal(discord.ui.Modal, title="福利設定"):
         self.author_id = author_id
         self.user_roles = user_roles
 
-        self.add_item(
-            discord.ui.TextInput(
-                label="福利金額",
-                placeholder="輸入定期福利金額（數字，0表示停用）",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.welfare_amount_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="福利金額",
+            placeholder="輸入定期福利金額（數字，0表示停用）",
+            required=True,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="發放間隔（小時）",
-                placeholder="輸入發放間隔小時數",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.interval_hours_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="發放間隔（小時）",
+            placeholder="輸入發放間隔小時數",
+            required=True,
+            style=discord.TextStyle.short,
         )
+        self.add_item(self.welfare_amount_input)
+        self.add_item(self.interval_hours_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            welfare_amount = int(self.children[0].value)
-            welfare_interval_hours = int(self.children[1].value)
+            welfare_amount = int(str(self.welfare_amount_input.value))
+            welfare_interval_hours = int(str(self.interval_hours_input.value))
 
             await self.service.update_department_config(
                 guild_id=self.guild_id,
@@ -2104,45 +2193,41 @@ class TaxCollectionModal(discord.ui.Modal, title="稅款徵收"):
         self.author_id = author_id
         self.user_roles = user_roles
 
-        self.add_item(
-            discord.ui.TextInput(
-                label="納稅人",
-                placeholder="輸入納稅人 @使用者 或使用者ID",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.taxpayer_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="納稅人",
+            placeholder="輸入納稅人 @使用者 或使用者ID",
+            required=True,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="應稅金額",
-                placeholder="輸入應稅金額（數字）",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.taxable_amount_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="應稅金額",
+            placeholder="輸入應稅金額（數字）",
+            required=True,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="稅率（%）",
-                placeholder="輸入稅率百分比",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.tax_rate_percent_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="稅率（%）",
+            placeholder="輸入稅率百分比",
+            required=True,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="評定期間",
-                placeholder="例如：2024-01",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.assessment_period_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="評定期間",
+            placeholder="例如：2024-01",
+            required=True,
+            style=discord.TextStyle.short,
         )
+        self.add_item(self.taxpayer_input)
+        self.add_item(self.taxable_amount_input)
+        self.add_item(self.tax_rate_percent_input)
+        self.add_item(self.assessment_period_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            taxpayer_input = self.children[0].value
-            taxable_amount = int(self.children[1].value)
-            tax_rate_percent = int(self.children[2].value)
-            assessment_period = self.children[3].value
+            taxpayer_input = str(self.taxpayer_input.value)
+            taxable_amount = int(str(self.taxable_amount_input.value))
+            tax_rate_percent = int(str(self.tax_rate_percent_input.value))
+            assessment_period = str(self.assessment_period_input.value)
 
             # Parse taxpayer ID
             if taxpayer_input.startswith("<@") and taxpayer_input.endswith(">"):
@@ -2192,27 +2277,25 @@ class TaxSettingsModal(discord.ui.Modal, title="稅率設定"):
         self.author_id = author_id
         self.user_roles = user_roles
 
-        self.add_item(
-            discord.ui.TextInput(
-                label="稅率基礎",
-                placeholder="輸入稅率基礎金額（數字，0表示停用）",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.tax_rate_basis_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="稅率基礎",
+            placeholder="輸入稅率基礎金額（數字，0表示停用）",
+            required=True,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="稅率（%）",
-                placeholder="輸入稅率百分比",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.tax_rate_percent_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="稅率（%）",
+            placeholder="輸入稅率百分比",
+            required=True,
+            style=discord.TextStyle.short,
         )
+        self.add_item(self.tax_rate_basis_input)
+        self.add_item(self.tax_rate_percent_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            tax_rate_basis = int(self.children[0].value)
-            tax_rate_percent = int(self.children[1].value)
+            tax_rate_basis = int(str(self.tax_rate_basis_input.value))
+            tax_rate_percent = int(str(self.tax_rate_percent_input.value))
 
             await self.service.update_department_config(
                 guild_id=self.guild_id,
@@ -2260,18 +2343,17 @@ class ArrestReasonModal(discord.ui.Modal, title="逮捕原因"):
         self.user_roles = user_roles
         self.target_id = target_id
 
-        self.add_item(
-            discord.ui.TextInput(
-                label="逮捕原因",
-                placeholder="輸入逮捕原因（必填）",
-                required=True,
-                style=discord.TextStyle.paragraph,
-            )
+        self.reason_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="逮捕原因",
+            placeholder="輸入逮捕原因（必填）",
+            required=True,
+            style=discord.TextStyle.paragraph,
         )
+        self.add_item(self.reason_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            reason = self.children[0].value.strip()
+            reason = str(self.reason_input.value).strip()
             if not reason:
                 await _send_message_compat(
                     interaction, content="❌ 逮捕原因不能為空。", ephemeral=True
@@ -2299,23 +2381,23 @@ class ArrestReasonModal(discord.ui.Modal, title="逮捕原因"):
 
             target_mention = (
                 target_member.mention
-                if getattr(target_member, "mention", None)
+                if target_member and getattr(target_member, "mention", None)
                 else f"<@{self.target_id}>"
             )
 
             # 依實際結果描述是否成功移除/賦予
             try:
-                cfg = await self.service.get_config(self.guild_id)
-                citizen_role = (
-                    self.guild.get_role(cfg.citizen_role_id)
-                    if hasattr(self.guild, "get_role")
-                    else None
-                )
-                suspect_role = (
-                    self.guild.get_role(cfg.suspect_role_id)
-                    if hasattr(self.guild, "get_role")
-                    else None
-                )
+                cfg = await self.service.get_config(guild_id=self.guild_id)
+                citizen_role = None
+                if hasattr(self.guild, "get_role"):
+                    _cid = getattr(cfg, "citizen_role_id", None)
+                    if isinstance(_cid, int):
+                        citizen_role = self.guild.get_role(_cid)
+                suspect_role = None
+                if hasattr(self.guild, "get_role"):
+                    _sid = getattr(cfg, "suspect_role_id", None)
+                    if isinstance(_sid, int):
+                        suspect_role = self.guild.get_role(_sid)
                 roles = list(getattr(target_member, "roles", []) or [])
                 has_suspect = bool(suspect_role in roles) if suspect_role else False
                 has_citizen = bool(citizen_role in roles) if citizen_role else False
@@ -2379,7 +2461,7 @@ class ArrestSelectView(discord.ui.View):
         self.user_roles = user_roles
 
         # 以物件方式建立 UserSelect（避免某些 discord.py 版本沒有 ui.user_select decorator）
-        self._user_select: object = discord.ui.UserSelect(
+        self._user_select: discord.ui.UserSelect[Any] = discord.ui.UserSelect(
             placeholder="選擇要逮捕的使用者", min_values=1, max_values=1
         )
 
@@ -2427,36 +2509,33 @@ class IdentityManagementModal(discord.ui.Modal, title="身分管理"):
         self.author_id = author_id
         self.user_roles = user_roles
 
-        self.add_item(
-            discord.ui.TextInput(
-                label="目標使用者",
-                placeholder="輸入目標使用者 @使用者 或使用者ID",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.target_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="目標使用者",
+            placeholder="輸入目標使用者 @使用者 或使用者ID",
+            required=True,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="操作類型",
-                placeholder="移除公民身分 / 標記疑犯 / 移除疑犯標記",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.action_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="操作類型",
+            placeholder="移除公民身分 / 標記疑犯 / 移除疑犯標記",
+            required=True,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="理由",
-                placeholder="輸入操作理由（可選）",
-                required=False,
-                style=discord.TextStyle.paragraph,
-            )
+        self.reason_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="理由",
+            placeholder="輸入操作理由（可選）",
+            required=False,
+            style=discord.TextStyle.paragraph,
         )
+        self.add_item(self.target_input)
+        self.add_item(self.action_input)
+        self.add_item(self.reason_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            target_input = self.children[0].value
-            action = self.children[1].value
-            reason = self.children[2].value or None
+            target_input = str(self.target_input.value)
+            action = str(self.action_input.value)
+            reason = str(self.reason_input.value).strip() or None
 
             # Parse target ID
             if target_input.startswith("<@") and target_input.endswith(">"):
@@ -2510,36 +2589,33 @@ class CurrencyIssuanceModal(discord.ui.Modal, title="貨幣發行"):
         self.author_id = author_id
         self.user_roles = user_roles
 
-        self.add_item(
-            discord.ui.TextInput(
-                label="發行金額",
-                placeholder="輸入發行金額（數字）",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.amount_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="發行金額",
+            placeholder="輸入發行金額（數字）",
+            required=True,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="發行理由",
-                placeholder="輸入發行理由",
-                required=True,
-                style=discord.TextStyle.paragraph,
-            )
+        self.reason_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="發行理由",
+            placeholder="輸入發行理由",
+            required=True,
+            style=discord.TextStyle.paragraph,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="評估月份",
-                placeholder="例如：2024-01",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.month_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="評估月份",
+            placeholder="例如：2024-01",
+            required=True,
+            style=discord.TextStyle.short,
         )
+        self.add_item(self.amount_input)
+        self.add_item(self.reason_input)
+        self.add_item(self.month_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            amount = int(self.children[0].value)
-            reason = self.children[1].value
-            month_period = self.children[2].value
+            amount = int(str(self.amount_input.value))
+            reason = str(self.reason_input.value)
+            month_period = str(self.month_input.value)
 
             await self.service.issue_currency(
                 guild_id=self.guild_id,
@@ -2586,18 +2662,17 @@ class CurrencySettingsModal(discord.ui.Modal, title="貨幣發行設定"):
         self.author_id = author_id
         self.user_roles = user_roles
 
-        self.add_item(
-            discord.ui.TextInput(
-                label="每月發行上限",
-                placeholder="輸入每月最大發行量（數字，0表示無限制）",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.max_issuance_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="每月發行上限",
+            placeholder="輸入每月最大發行量（數字，0表示無限制）",
+            required=True,
+            style=discord.TextStyle.short,
         )
+        self.add_item(self.max_issuance_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            max_issuance_per_month = int(self.children[0].value)
+            max_issuance_per_month = int(str(self.max_issuance_input.value))
 
             await self.service.update_department_config(
                 guild_id=self.guild_id,
@@ -2628,48 +2703,44 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
         self.service = service
         self.guild_id = guild_id
 
-        self.add_item(
-            discord.ui.TextInput(
-                label="匯出格式",
-                placeholder="JSON 或 CSV",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.format_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="匯出格式",
+            placeholder="JSON 或 CSV",
+            required=True,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="匯出類型",
-                placeholder="all/welfare/tax/identity/currency/transfers",
-                required=True,
-                style=discord.TextStyle.short,
-            )
+        self.type_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="匯出類型",
+            placeholder="all/welfare/tax/identity/currency/transfers",
+            required=True,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="開始日期 (可選)",
-                placeholder="YYYY-MM-DD",
-                required=False,
-                style=discord.TextStyle.short,
-            )
+        self.start_date_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="開始日期 (可選)",
+            placeholder="YYYY-MM-DD",
+            required=False,
+            style=discord.TextStyle.short,
         )
-        self.add_item(
-            discord.ui.TextInput(
-                label="結束日期 (可選)",
-                placeholder="YYYY-MM-DD",
-                required=False,
-                style=discord.TextStyle.short,
-            )
+        self.end_date_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="結束日期 (可選)",
+            placeholder="YYYY-MM-DD",
+            required=False,
+            style=discord.TextStyle.short,
         )
+        self.add_item(self.format_input)
+        self.add_item(self.type_input)
+        self.add_item(self.start_date_input)
+        self.add_item(self.end_date_input)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
             import io
             from datetime import datetime
 
-            format_type = self.children[0].value.upper()
-            export_type = self.children[1].value.lower()
-            start_date = self.children[2].value.strip() or None
-            end_date = self.children[3].value.strip() or None
+            format_type = str(self.format_input.value).upper()
+            export_type = str(self.type_input.value).lower()
+            start_date = str(self.start_date_input.value).strip() or None
+            end_date = str(self.end_date_input.value).strip() or None
 
             if format_type not in ["JSON", "CSV"]:
                 raise ValueError("格式必須是 JSON 或 CSV")
@@ -2728,10 +2799,12 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
     ) -> dict[str, Any]:
         """Collect data based on export type."""
         from src.db.pool import get_pool
+        from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
-        pool = get_pool()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
-            gateway = self.service._gateway
+            c: ConnectionProtocol = conn
+            gateway = self.service._gateway  # pyright: ignore[reportPrivateUsage]
 
             data: dict[str, Any] = {
                 "metadata": {
@@ -2746,7 +2819,7 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
 
             if export_type == "all" or export_type == "welfare":
                 welfare_records = await gateway.fetch_welfare_disbursements(
-                    conn, guild_id=self.guild_id, limit=10000
+                    c, guild_id=self.guild_id, limit=10000
                 )
                 if start_dt or end_dt:
                     welfare_records = [
@@ -2777,7 +2850,7 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
 
             if export_type == "all" or export_type == "tax":
                 tax_records = await gateway.fetch_tax_records(
-                    conn, guild_id=self.guild_id, limit=10000
+                    c, guild_id=self.guild_id, limit=10000
                 )
                 if start_dt or end_dt:
                     tax_records = [
@@ -2810,13 +2883,13 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
 
             if export_type == "all" or export_type == "identity":
                 identity_records = await gateway.fetch_identity_records(
-                    conn, guild_id=self.guild_id, limit=10000
+                    c, guild_id=self.guild_id, limit=10000
                 )
                 if start_dt or end_dt:
                     identity_records = [
                         r
                         for r in identity_records
-                        if isinstance(r.performed_at, datetime)
+                        if (getattr(r, "performed_at", None) is not None)
                         and (not start_dt or r.performed_at >= start_dt)
                         and (not end_dt or r.performed_at <= end_dt)
                     ]
@@ -2831,7 +2904,7 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
                             "performed_by": r.performed_by,
                             "performed_at": (
                                 r.performed_at.isoformat()
-                                if isinstance(r.performed_at, datetime)
+                                if getattr(r, "performed_at", None) is not None
                                 else ""
                             ),
                         }
@@ -2841,16 +2914,20 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
 
             if export_type == "all" or export_type == "currency":
                 currency_records = await gateway.fetch_currency_issuances(
-                    conn, guild_id=self.guild_id, limit=10000
+                    c, guild_id=self.guild_id, limit=10000
                 )
                 if start_dt or end_dt:
-                    currency_records = [
-                        r
-                        for r in currency_records
-                        if isinstance(r.issued_at, datetime)
-                        and (not start_dt or r.issued_at >= start_dt)
-                        and (not end_dt or r.issued_at <= end_dt)
-                    ]
+                    _filtered: list[Any] = []
+                    for r in currency_records:
+                        iat = getattr(r, "issued_at", None)
+                        if iat is None:
+                            continue
+                        if start_dt and iat < start_dt:
+                            continue
+                        if end_dt and iat > end_dt:
+                            continue
+                        _filtered.append(r)
+                    currency_records = _filtered
                 data["records"].extend(
                     [
                         {
@@ -2870,13 +2947,13 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
 
             if export_type == "all" or export_type == "transfers":
                 transfer_records = await gateway.fetch_interdepartment_transfers(
-                    conn, guild_id=self.guild_id, limit=10000
+                    c, guild_id=self.guild_id, limit=10000
                 )
                 if start_dt or end_dt:
                     transfer_records = [
                         r
                         for r in transfer_records
-                        if isinstance(r.transferred_at, datetime)
+                        if (getattr(r, "transferred_at", None) is not None)
                         and (not start_dt or r.transferred_at >= start_dt)
                         and (not end_dt or r.transferred_at <= end_dt)
                     ]
@@ -2892,7 +2969,7 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
                             "performed_by": r.performed_by,
                             "transferred_at": (
                                 r.transferred_at.isoformat()
-                                if isinstance(r.transferred_at, datetime)
+                                if getattr(r, "transferred_at", None) is not None
                                 else ""
                             ),
                         }
@@ -3126,6 +3203,323 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
                 writer.writerow(["無記錄"])
 
         return output.getvalue()
+
+
+# --- Suspects Management View ---
+
+
+class SuspectsManagementView(discord.ui.View):
+    """View for managing suspects (release, set auto-release time)."""
+
+    def __init__(
+        self,
+        *,
+        service: StateCouncilService,
+        guild: discord.Guild,
+        guild_id: int,
+        author_id: int,
+        user_roles: list[int],
+        suspects: list[dict[str, Any]],
+        suspect_role_id: int,
+        citizen_role_id: int | None = None,
+    ) -> None:
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.service = service
+        self.guild = guild
+        self.guild_id = guild_id
+        self.author_id = author_id
+        self.user_roles = user_roles
+        self.suspects = suspects
+        self.suspect_role_id = suspect_role_id
+        self.citizen_role_id = citizen_role_id
+        self.selected_suspects: list[int] = []
+        self.auto_release_hours: int = 24  # Default 24 hours
+
+        # Add select menu for suspects
+        self.add_suspect_select_menu()
+
+        # Add auto-release time selector
+        self.add_auto_release_select()
+
+        # Add action buttons
+        self.add_action_buttons()
+
+    def add_suspect_select_menu(self) -> None:
+        """Add select menu for choosing suspects to release."""
+        options: list[discord.SelectOption] = []
+        for suspect in self.suspects:
+            member = self.guild.get_member(suspect["id"])
+            if member:
+                label = f"{member.display_name}"
+                description = f"加入時間: {suspect['joined_at'].strftime('%Y-%m-%d %H:%M') if suspect['joined_at'] else '未知'}"
+                options.append(
+                    discord.SelectOption(
+                        label=label,
+                        description=description,
+                        value=str(suspect["id"]),
+                    )
+                )
+
+        if not options:
+            options.append(
+                discord.SelectOption(
+                    label="無嫌疑人",
+                    description="目前沒有嫌疑人",
+                    value="none",
+                )
+            )
+
+        select: discord.ui.Select[Any] = discord.ui.Select(
+            placeholder="選擇要釋放的嫌疑人（可多選）",
+            min_values=1,
+            max_values=min(len(options), 25),  # Discord limit
+            options=options,
+        )
+        if not self.suspects:
+            select.disabled = True
+        select.callback = self.on_suspect_select
+        self.add_item(select)
+
+    def add_auto_release_select(self) -> None:
+        """Add select menu for auto-release time."""
+        time_options = [
+            (1, "1小時"),
+            (6, "6小時"),
+            (12, "12小時"),
+            (24, "1天"),
+            (48, "2天"),
+            (72, "3天"),
+            (168, "1週"),
+        ]
+
+        options: list[discord.SelectOption] = []
+        for hours, label in time_options:
+            description = f"嫌疑人將在 {hours} 小時後自動釋放"
+            options.append(
+                discord.SelectOption(
+                    label=label,
+                    description=description,
+                    value=str(hours),
+                )
+            )
+
+        select: discord.ui.Select[Any] = discord.ui.Select(
+            placeholder="設定自動釋放時間",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+        select.callback = self.on_auto_release_select
+        self.add_item(select)
+
+    def add_action_buttons(self) -> None:
+        """Add action buttons (release, cancel)."""
+        # Release button
+        release_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="釋放選中嫌疑人",
+            style=discord.ButtonStyle.danger,
+            emoji="🔓",
+        )
+        release_btn.callback = self.on_release
+        self.add_item(release_btn)
+
+        # Cancel button
+        cancel_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="取消",
+            style=discord.ButtonStyle.secondary,
+        )
+        cancel_btn.callback = self.on_cancel
+        self.add_item(cancel_btn)
+
+    async def build_embed(self) -> discord.Embed:
+        """Build embed showing current suspects and controls."""
+        embed = discord.Embed(
+            title="🔒 嫌疑人管理",
+            description=f"目前嫌疑人數量: {len(self.suspects)}\n自動釋放時間: {self.auto_release_hours} 小時",
+            color=discord.Color.red(),
+        )
+
+        if self.selected_suspects:
+            selected_names: list[str] = []
+            for suspect_id in self.selected_suspects:
+                member = self.guild.get_member(suspect_id)
+                if member:
+                    selected_names.append(member.display_name)
+            embed.add_field(
+                name="已選擇釋放",
+                value=", ".join(selected_names),
+                inline=False,
+            )
+
+        embed.set_footer(text="注意: 自動釋放設定在機器人重啟後會失效（最小實作）")
+        return embed
+
+    async def on_suspect_select(self, interaction: discord.Interaction) -> None:
+        """Handle suspect selection."""
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("僅限面板開啟者可操作。", ephemeral=True)
+            return
+
+        # Get selected values
+        if not interaction.data:
+            await interaction.response.send_message("無效的互動資料", ephemeral=True)
+            return
+        vals_raw = interaction.data.get("values") if interaction.data else None
+        vals: list[str] = []
+        raw_list = vals_raw if isinstance(vals_raw, list) else []
+        for item in raw_list:
+            if isinstance(item, str):
+                vals.append(item)
+        self.selected_suspects = [int(val) for val in vals if val != "none"]
+
+        # Update embed
+        embed = await self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def on_auto_release_select(self, interaction: discord.Interaction) -> None:
+        """Handle auto-release time selection."""
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("僅限面板開啟者可操作。", ephemeral=True)
+            return
+
+        # Get selected value
+        if not interaction.data:
+            await interaction.response.send_message("無效的互動資料", ephemeral=True)
+            return
+        vals_raw = interaction.data.get("values")
+        vals: list[str] = []
+        raw_list = vals_raw if isinstance(vals_raw, list) else []
+        for item in raw_list:
+            if isinstance(item, str):
+                vals.append(item)
+        if not vals:
+            await interaction.response.send_message("無效的選擇。", ephemeral=True)
+            return
+        self.auto_release_hours = int(vals[0])
+
+        # Update embed
+        embed = await self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def on_release(self, interaction: discord.Interaction) -> None:
+        """Handle release button click."""
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("僅限面板開啟者可操作。", ephemeral=True)
+            return
+
+        if not self.selected_suspects:
+            await interaction.response.send_message("請先選擇要釋放的嫌疑人。", ephemeral=True)
+            return
+
+        try:
+            # Release selected suspects
+            released_count = 0
+            failed_count = 0
+            failed_names: list[str] = []
+
+            for suspect_id in self.selected_suspects:
+                member = self.guild.get_member(suspect_id)
+                if not member:
+                    failed_count += 1
+                    continue
+
+                try:
+                    # Remove suspect role
+                    if self.suspect_role_id in [role.id for role in member.roles]:
+                        suspect_role = self.guild.get_role(self.suspect_role_id)
+                        if suspect_role:
+                            await member.remove_roles(suspect_role)
+
+                    # Restore citizen role if configured
+                    if self.citizen_role_id:
+                        citizen_role = self.guild.get_role(self.citizen_role_id)
+                        if citizen_role and citizen_role not in member.roles:
+                            await member.add_roles(citizen_role)
+
+                    # Record identity action
+                    await self.service.record_identity_action(
+                        guild_id=self.guild_id,
+                        target_id=suspect_id,
+                        action="移除疑犯標記",
+                        reason=f"由 {interaction.user.display_name} 釋放（自動釋放設定: {self.auto_release_hours}小時）",
+                        performed_by=interaction.user.id,
+                    )
+
+                    # Set auto-release if configured
+                    if self.auto_release_hours > 0:
+                        try:
+                            from src.bot.services.state_council_scheduler import set_auto_release
+
+                            set_auto_release(self.guild_id, suspect_id, self.auto_release_hours)
+                        except Exception as sched_exc:
+                            LOGGER.warning(
+                                "suspects.auto_release.set_failed",
+                                guild_id=self.guild_id,
+                                suspect_id=suspect_id,
+                                hours=self.auto_release_hours,
+                                error=str(sched_exc),
+                            )
+
+                    released_count += 1
+
+                except Exception as exc:
+                    LOGGER.warning(
+                        "suspects.release.failed",
+                        guild_id=self.guild_id,
+                        suspect_id=suspect_id,
+                        error=str(exc),
+                    )
+                    failed_count += 1
+                    failed_names.append(member.display_name)
+
+            # Update suspects list
+            self.suspects = [s for s in self.suspects if s["id"] not in self.selected_suspects]
+            self.selected_suspects = []
+
+            # Show result
+            result_msg = f"✅ 釋放完成！成功釋放 {released_count} 人"
+            if failed_count > 0:
+                result_msg += f"，失敗 {failed_count} 人"
+                if failed_names:
+                    result_msg += f": {', '.join(failed_names)}"
+
+            # Update view
+            self.clear_items()
+            self.add_suspect_select_menu()
+            self.add_auto_release_select()
+            self.add_action_buttons()
+
+            # Update embed
+            embed = await self.build_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+
+            # Send result message
+            await interaction.followup.send(content=result_msg, ephemeral=True)
+
+        except Exception as exc:
+            LOGGER.exception("suspects.release.error", error=str(exc))
+            await interaction.response.send_message("❌ 釋放失敗，請稍後再試。", ephemeral=True)
+
+    async def on_cancel(self, interaction: discord.Interaction) -> None:
+        """Handle cancel button click."""
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("僅限面板開啟者可操作。", ephemeral=True)
+            return
+
+        # Disable all components
+        from typing import cast
+
+        for item in self.children:
+            if hasattr(item, "disabled"):
+                cast(Any, item).disabled = True
+
+        embed = discord.Embed(
+            title="🔒 嫌疑人管理",
+            description="操作已取消",
+            color=discord.Color.greyple(),
+        )
+
+        await interaction.response.edit_message(embed=embed, view=self)
 
 
 # --- Background Scheduler Integration ---

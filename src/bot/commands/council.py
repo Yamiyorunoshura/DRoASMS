@@ -4,7 +4,7 @@ import asyncio
 import csv
 import io
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, cast
 from uuid import UUID
 
 import discord
@@ -19,12 +19,28 @@ from src.bot.services.council_service import (
     PermissionDeniedError,
 )
 from src.bot.services.department_registry import get_registry
+from src.bot.ui.council_paginator import CouncilProposalPaginator
 from src.db.pool import get_pool
 from src.infra.di.container import DependencyContainer
 from src.infra.events.council_events import CouncilEvent
 from src.infra.events.council_events import subscribe as subscribe_council_events
 
 LOGGER = structlog.get_logger(__name__)
+
+
+# 針對 Discord Interaction 的 values 解析做統一型別收斂，
+# 以免 Pylance 在嚴格模式下將 comprehension 內的變數判為 Unknown。
+def _extract_select_values(interaction: discord.Interaction) -> list[str]:
+    data = cast(dict[str, Any], interaction.data or {})
+    raw = data.get("values")
+    if not isinstance(raw, list):
+        return []
+    vals: list[str] = []
+    # 已由 isinstance 確認為 list，移除冗餘 cast
+    for item in raw:
+        if isinstance(item, str):
+            vals.append(item)
+    return vals
 
 
 def get_help_data() -> dict[str, HelpData]:
@@ -87,7 +103,9 @@ def build_council_group(service: CouncilService) -> app_commands.Group:
 
     @council.command(name="config_role", description="設定常任理事身分組（角色）")
     @app_commands.describe(role="Discord 角色，將作為理事名冊來源")
-    async def config_role(interaction: discord.Interaction, role: discord.Role) -> None:
+    async def config_role(  # pyright: ignore[reportUnusedFunction]
+        interaction: discord.Interaction, role: discord.Role
+    ) -> None:
         if interaction.guild_id is None or interaction.guild is None:
             await interaction.response.send_message("本指令需在伺服器中執行。", ephemeral=True)
             return
@@ -109,7 +127,9 @@ def build_council_group(service: CouncilService) -> app_commands.Group:
     # 依規範：移除與面板重疊之撤案/建案/匯出斜線指令（保留 panel/config_role）
 
     @council.command(name="panel", description="開啟理事會面板（建案/投票/撤案/匯出）")
-    async def panel(interaction: discord.Interaction) -> None:
+    async def panel(  # pyright: ignore[reportUnusedFunction]
+        interaction: discord.Interaction,
+    ) -> None:
         # 僅允許在伺服器使用
         if interaction.guild_id is None or interaction.guild is None:
             await interaction.response.send_message("本指令需在伺服器中執行。", ephemeral=True)
@@ -316,13 +336,16 @@ def _install_background_scheduler(client: discord.Client, service: CouncilServic
         while not client.is_closed():
             try:
                 # 先抓取逾時候選，供結束後廣播使用
-                pool = get_pool()
+                from src.infra.types.db import ConnectionProtocol, PoolProtocol
+
+                pool: PoolProtocol = cast(PoolProtocol, get_pool())
                 due_before: list[UUID] = []
                 async with pool.acquire() as conn:
                     from src.db.gateway.council_governance import CouncilGovernanceGateway
 
                     gw = CouncilGovernanceGateway()
-                    for p in await gw.list_due_proposals(conn):
+                    c: ConnectionProtocol = conn
+                    for p in await gw.list_due_proposals(c):
                         due_before.append(p.proposal_id)
 
                 # Expire due proposals (timeout or execute if reached threshold unseen)
@@ -335,7 +358,8 @@ def _install_background_scheduler(client: discord.Client, service: CouncilServic
                     from src.db.gateway.council_governance import CouncilGovernanceGateway
 
                     gw = CouncilGovernanceGateway()
-                    for p in await gw.list_reminder_candidates(conn):
+                    c2: ConnectionProtocol = conn
+                    for p in await gw.list_reminder_candidates(c2):
                         unvoted = await service.list_unvoted_members(proposal_id=p.proposal_id)
                         # Try DM only unvoted members
                         guild = client.get_guild(p.guild_id)
@@ -357,7 +381,7 @@ def _install_background_scheduler(client: discord.Client, service: CouncilServic
                                         )
                                     except Exception:
                                         pass
-                        await gw.mark_reminded(conn, proposal_id=p.proposal_id)
+                        await gw.mark_reminded(c2, proposal_id=p.proposal_id)
 
                 # 廣播剛結束的提案結果（逾時或已執行/失敗），避免重複
                 for pid in due_before:
@@ -414,6 +438,7 @@ class CouncilPanelView(discord.ui.View):
         self._message: discord.Message | None = None
         self._unsubscribe: Callable[[], Awaitable[None]] | None = None
         self._update_lock = asyncio.Lock()
+        self._paginator: CouncilProposalPaginator | None = None
 
         # 元件：建案、提案選擇、匯出
         self._propose_btn: discord.ui.Button[Any] = discord.ui.Button(
@@ -422,6 +447,14 @@ class CouncilPanelView(discord.ui.View):
         )
         self._propose_btn.callback = self._on_click_propose
         self.add_item(self._propose_btn)
+
+        # 查看所有提案按鈕（使用新的分頁系統）
+        self._view_all_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="📋 查看所有提案",
+            style=discord.ButtonStyle.secondary,
+        )
+        self._view_all_btn.callback = self._on_click_view_all_proposals
+        self.add_item(self._view_all_btn)
 
         self._export_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="匯出資料",
@@ -537,15 +570,32 @@ class CouncilPanelView(discord.ui.View):
                 pass
 
     async def refresh_options(self) -> None:
-        """以最近 N=10 筆進行中提案刷新選單。"""
+        """以最近進行中提案刷新選單（使用新的分頁系統）。"""
         try:
             active = await self.service.list_active_proposals()
-            # 僅顯示本 guild，最近 10 筆（依 created_at 降冪）
+            # 僅顯示本 guild 的進行中提案（依 created_at 降冪）
             items = [p for p in active if p.guild_id == self.guild.id and p.status == "進行中"]
             items.sort(key=lambda p: p.created_at, reverse=True)
-            items = items[:10]
+
+            # 更新分頁器
+            if hasattr(self, "_paginator") and self._paginator:
+                await self._paginator.refresh_items(items)
+            else:
+                # 初始化分頁器
+                from src.bot.ui.council_paginator import CouncilProposalPaginator
+
+                self._paginator = CouncilProposalPaginator(
+                    proposals=items,
+                    author_id=self.author_id,
+                    guild=self.guild,
+                )
+                # 設置即時更新回調
+                self._paginator.set_update_callback(self._on_pagination_update)
+
+            # 維持向後相容：仍然更新傳統選單（但限制為最近 10 筆）
+            recent_items = items[:10]
             options: list[discord.SelectOption] = []
-            for p in items:
+            for p in recent_items:
                 label = _format_proposal_title(p)
                 desc = _format_proposal_desc(p)
                 options.append(
@@ -667,6 +717,64 @@ class CouncilPanelView(discord.ui.View):
                     error=str(exc),
                 )
 
+            # 同時更新分頁器以保持即時更新
+            if hasattr(self, "_paginator") and self._paginator:
+                try:
+                    # 分頁器會透過回調自動更新數據
+                    await self._paginator.refresh_items(
+                        [
+                            p
+                            for p in await self.service.list_active_proposals()
+                            if p.guild_id == self.guild.id and p.status == "進行中"
+                        ]
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    LOGGER.warning(
+                        "council.panel.paginator_update.failed",
+                        guild_id=self.guild.id,
+                        error=str(exc),
+                    )
+
+    async def _on_pagination_update(self) -> None:
+        """分頁器更新回調，用於即時更新。"""
+        # 當分頁器需要更新時，重新載入提案數據
+        await self.refresh_options()
+
+    async def _on_click_view_all_proposals(self, interaction: discord.Interaction) -> None:
+        """查看所有提案的分頁列表。"""
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("僅限面板開啟者操作。", ephemeral=True)
+            return
+
+        if not hasattr(self, "_paginator") or not self._paginator:
+            await interaction.response.send_message(
+                "分頁器尚未初始化，請稍後再試。",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            # 創建分頁訊息
+            embed = self._paginator.create_embed(0)
+            view = self._paginator.create_view()
+
+            await interaction.response.send_message(
+                embed=embed,
+                view=view,
+                ephemeral=True,
+            )
+        except Exception as exc:
+            LOGGER.exception(
+                "council.panel.view_all_proposals.error",
+                guild_id=self.guild.id,
+                user_id=interaction.user.id,
+                error=str(exc),
+            )
+            await interaction.response.send_message(
+                "顯示提案列表時發生錯誤，請稍後再試。",
+                ephemeral=True,
+            )
+
     async def _cleanup_subscription(self) -> None:
         if self._unsubscribe is None:
             self._message = None
@@ -746,7 +854,8 @@ class DepartmentSelectView(discord.ui.View):
         self.service = service
         self.guild = guild
         registry = get_registry()
-        departments = registry.list_all()
+        # 僅列出部門等級（排除常任理事會與國務院），避免出現不支援的收款目標。
+        departments = registry.get_by_level("department")
 
         # Create select menu with departments
         options: list[discord.SelectOption] = []
@@ -776,11 +885,11 @@ class DepartmentSelectView(discord.ui.View):
         if not interaction.data:
             await interaction.response.send_message("請選擇一個部門。", ephemeral=True)
             return
-        values = interaction.data.get("values")
-        if not values or not isinstance(values, list) or len(values) == 0:
+        values = _extract_select_values(interaction)
+        if not values:
             await interaction.response.send_message("請選擇一個部門。", ephemeral=True)
             return
-        selected_id: str | None = values[0] if isinstance(values[0], str) else None
+        selected_id: str | None = values[0]
         if not selected_id:
             await interaction.response.send_message("請選擇一個部門。", ephemeral=True)
             return
@@ -824,11 +933,11 @@ class UserSelectView(discord.ui.View):
         if not interaction.data:
             await interaction.response.send_message("請選擇一個使用者。", ephemeral=True)
             return
-        values = interaction.data.get("values")
-        if not values or not isinstance(values, list) or len(values) == 0:
+        values = _extract_select_values(interaction)
+        if not values:
             await interaction.response.send_message("請選擇一個使用者。", ephemeral=True)
             return
-        selected_id: str | None = values[0] if isinstance(values[0], str) else None
+        selected_id: str | None = values[0]
         if not selected_id:
             await interaction.response.send_message("請選擇一個使用者。", ephemeral=True)
             return
@@ -1373,7 +1482,7 @@ async def _broadcast_result(
     snapshot = await service.get_snapshot(proposal_id=proposal_id)
     votes = await service.get_votes_detail(proposal_id=proposal_id)
     vote_map = dict(votes)
-    lines = []
+    lines: list[str] = []
     for uid in snapshot:
         choice_str = vote_map.get(uid, "未投")
         lines.append(f"<@{uid}> → {choice_str}")
@@ -1408,12 +1517,15 @@ async def _broadcast_result(
 
 async def _register_persistent_views(client: discord.Client, service: CouncilService) -> None:
     """在啟動後註冊所有進行中提案的 persistent VotingView。"""
-    pool = get_pool()
+    from src.infra.types.db import ConnectionProtocol, PoolProtocol
+
+    pool: PoolProtocol = cast(PoolProtocol, get_pool())
     async with pool.acquire() as conn:
         from src.db.gateway.council_governance import CouncilGovernanceGateway
 
         gw = CouncilGovernanceGateway()
-        active = await gw.list_active_proposals(conn)
+        c: ConnectionProtocol = conn
+        active = await gw.list_active_proposals(c)
         for p in active:
             try:
                 client.add_view(VotingView(proposal_id=p.proposal_id, service=service))

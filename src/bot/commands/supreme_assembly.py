@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, cast
 from uuid import UUID
 
 import discord
@@ -28,8 +28,24 @@ from src.infra.events.supreme_assembly_events import (
 from src.infra.events.supreme_assembly_events import (
     subscribe as subscribe_supreme_assembly_events,
 )
+from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
+
+
+# 針對 Discord Interaction 的 values 解析做統一型別收斂，
+# 以免 Pylance 在嚴格模式下將 comprehension 內的 v 判為 Unknown。
+def _extract_select_values(interaction: discord.Interaction) -> list[str]:
+    data = cast(dict[str, Any], interaction.data or {})
+    raw = data.get("values")
+    if not isinstance(raw, list):
+        return []
+    vals: list[str] = []
+    raw_list = raw if isinstance(raw, list) else []
+    for item in raw_list:
+        if isinstance(item, str):
+            vals.append(item)
+    return vals
 
 
 def get_help_data() -> dict[str, HelpData]:
@@ -217,7 +233,9 @@ def build_supreme_assembly_group(
             await interaction.response.send_message("設定失敗，請稍後再試。", ephemeral=True)
 
     @supreme_assembly.command(name="panel", description="開啟最高人民會議面板（表決/投票/傳召）")
-    async def panel(interaction: discord.Interaction) -> None:
+    async def panel(
+        interaction: discord.Interaction,
+    ) -> None:
         # 僅允許在伺服器使用
         if interaction.guild_id is None or interaction.guild is None:
             await interaction.response.send_message("本指令需在伺服器中執行。", ephemeral=True)
@@ -285,6 +303,12 @@ def build_supreme_assembly_group(
             user_id=interaction.user.id,
         )
 
+    # 型別標註：觸發對已裝飾之指令物件的存取，避免 Pylance 誤判未使用函式
+    _ = (
+        cast(app_commands.Command[Any, Any, None], config_speaker_role),
+        cast(app_commands.Command[Any, Any, None], config_member_role),
+        cast(app_commands.Command[Any, Any, None], panel),
+    )
     return supreme_assembly
 
 
@@ -317,6 +341,7 @@ class SupremeAssemblyPanelView(discord.ui.View):
         self._message: discord.Message | None = None
         self._unsubscribe: Callable[[], Awaitable[None]] | None = None
         self._update_lock = asyncio.Lock()
+        self._paginator: Any | None = None  # 分頁器屬性
 
         # 元件：轉帳、發起表決（僅議長）、傳召（僅議長）、使用指引
         self._transfer_btn: discord.ui.Button[Any] = discord.ui.Button(
@@ -347,6 +372,14 @@ class SupremeAssemblyPanelView(discord.ui.View):
         )
         self._help_btn.callback = self._on_click_help
         self.add_item(self._help_btn)
+
+        # 查看所有提案按鈕（使用新的分頁系統）
+        self._view_all_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="📋 查看所有提案",
+            style=discord.ButtonStyle.secondary,
+        )
+        self._view_all_btn.callback = self._on_click_view_all_proposals
+        self.add_item(self._view_all_btn)
 
         self._select: discord.ui.Select[Any] = discord.ui.Select(
             placeholder="選擇進行中表決提案以投票",
@@ -448,16 +481,71 @@ class SupremeAssemblyPanelView(discord.ui.View):
             except Exception:
                 pass
 
+    async def _on_pagination_update(self) -> None:
+        """分頁器更新回調，用於即時更新。"""
+        # 當分頁器需要更新時，重新載入提案數據
+        await self.refresh_options()
+
+    async def _on_click_view_all_proposals(self, interaction: discord.Interaction) -> None:
+        """查看所有提案的分頁列表。"""
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("僅限面板開啟者操作。", ephemeral=True)
+            return
+
+        if not hasattr(self, "_paginator") or not self._paginator:
+            await interaction.response.send_message(
+                "分頁器尚未初始化，請稍後再試。",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            # 創建分頁訊息
+            embed = self._paginator.create_embed(0)
+            view = self._paginator.create_view()
+
+            await interaction.response.send_message(
+                embed=embed,
+                view=view,
+                ephemeral=True,
+            )
+        except Exception as exc:
+            LOGGER.exception(
+                "supreme_assembly.panel.view_all_proposals.error",
+                error=str(exc),
+            )
+            await interaction.response.send_message(
+                "顯示提案列表時發生錯誤，請稍後再試。",
+                ephemeral=True,
+            )
+
     async def refresh_options(self) -> None:
-        """以最近 N=10 筆進行中提案刷新選單。"""
+        """以最近進行中提案刷新選單（使用新的分頁系統）。"""
         try:
             active = await self.service.list_active_proposals(guild_id=self.guild.id)
-            # 僅顯示本 guild，最近 10 筆（依 created_at 降冪）
+            # 僅顯示本 guild 的進行中提案（依 created_at 降冪）
             items = [p for p in active if p.status == "進行中"]
             items.sort(key=lambda p: p.created_at, reverse=True)
-            items = items[:10]
+
+            # 更新分頁器
+            if hasattr(self, "_paginator") and self._paginator:
+                await self._paginator.refresh_items(items)
+            else:
+                # 初始化分頁器
+                from src.bot.ui.supreme_assembly_paginator import SupremeAssemblyProposalPaginator
+
+                self._paginator = SupremeAssemblyProposalPaginator(
+                    proposals=items,
+                    author_id=self.author_id,
+                    guild=self.guild,
+                )
+                # 設置即時更新回調
+                self._paginator.set_update_callback(self._on_pagination_update)
+
+            # 維持向後相容：仍然更新傳統選單（但限制為最近 10 筆）
+            recent_items = items[:10]
             options: list[discord.SelectOption] = []
-            for p in items:
+            for p in recent_items:
                 label = _format_proposal_title(p)
                 desc = _format_proposal_desc(p)
                 options.append(
@@ -521,7 +609,8 @@ class SupremeAssemblyPanelView(discord.ui.View):
 
     async def _on_select_proposal(self, interaction: discord.Interaction) -> None:
         # 直接讀取選擇值
-        pid_str = self._select.values[0] if self._select.values else None
+        raw_values = self._select.values
+        pid_str = raw_values[0] if raw_values else None
         if pid_str in (None, "none"):
             await interaction.response.send_message("沒有可操作的提案。", ephemeral=True)
             return
@@ -692,11 +781,11 @@ class SupremeAssemblyTransferTypeSelectionView(discord.ui.View):
         if not interaction.data:
             await interaction.response.send_message("請選擇一個轉帳類型。", ephemeral=True)
             return
-        values = interaction.data.get("values")
-        if not values or not isinstance(values, list) or len(values) == 0:
+        values = _extract_select_values(interaction)
+        if not values:
             await interaction.response.send_message("請選擇一個轉帳類型。", ephemeral=True)
             return
-        selected_type: str | None = values[0] if isinstance(values[0], str) else None
+        selected_type: str | None = values[0] if values else None
         if not selected_type:
             await interaction.response.send_message("請選擇一個轉帳類型。", ephemeral=True)
             return
@@ -742,11 +831,11 @@ class SupremeAssemblyUserSelectView(discord.ui.View):
         if not interaction.data:
             await interaction.response.send_message("請選擇一個使用者。", ephemeral=True)
             return
-        values = interaction.data.get("values")
-        if not values or not isinstance(values, list) or len(values) == 0:
+        values = _extract_select_values(interaction)
+        if not values:
             await interaction.response.send_message("請選擇一個使用者。", ephemeral=True)
             return
-        selected_id: str | None = values[0] if isinstance(values[0], str) else None
+        selected_id: str | None = values[0] if values else None
         if not selected_id:
             await interaction.response.send_message("請選擇一個使用者。", ephemeral=True)
             return
@@ -772,7 +861,8 @@ class SupremeAssemblyDepartmentSelectView(discord.ui.View):
         self.service = service
         self.guild = guild
         registry = get_registry()
-        departments = registry.list_all()
+        # 僅列出一般部門，排除常任理事會與國務院，避免與下方專屬選項重複。
+        departments = registry.get_by_level("department")
 
         options: list[discord.SelectOption] = []
         for dept in departments:
@@ -801,11 +891,11 @@ class SupremeAssemblyDepartmentSelectView(discord.ui.View):
         if not interaction.data:
             await interaction.response.send_message("請選擇一個部門。", ephemeral=True)
             return
-        values = interaction.data.get("values")
-        if not values or not isinstance(values, list) or len(values) == 0:
+        values = _extract_select_values(interaction)
+        if not values:
             await interaction.response.send_message("請選擇一個部門。", ephemeral=True)
             return
-        selected_id: str | None = values[0] if isinstance(values[0], str) else None
+        selected_id: str | None = values[0] if values else None
         if not selected_id:
             await interaction.response.send_message("請選擇一個部門。", ephemeral=True)
             return
@@ -1188,7 +1278,7 @@ async def _broadcast_result(
     snapshot = await service.get_snapshot(proposal_id=proposal_id)
     votes = await service.get_votes_detail(proposal_id=proposal_id)
     vote_map = dict(votes)
-    lines = []
+    lines: list[str] = []
     for uid in snapshot:
         choice_str = vote_map.get(uid, "未投")
         if choice_str == "approve":
@@ -1245,7 +1335,8 @@ class SummonTypeSelectionView(discord.ui.View):
     async def select_member(
         self, interaction: discord.Interaction, button: discord.ui.Button[Any]
     ) -> None:
-        view = SummonMemberSelectView(service=self.service, guild=self.guild)
+        # 預先載入議員清單以正確顯示下拉式選單
+        view = await SummonMemberSelectView.build(service=self.service, guild=self.guild)
         await interaction.response.send_message("請選擇要傳召的議員：", view=view, ephemeral=True)
 
     @discord.ui.button(
@@ -1269,54 +1360,59 @@ class SummonMemberSelectView(discord.ui.View):
         self.service = service
         self.guild = guild
 
-        # Load members synchronously in __init__
-        # Note: This is a limitation - we can't await in __init__
-        # The select will be populated when the view is first shown
-        self._members_loaded = False
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        """Load members when view is first shown."""
-        if not self._members_loaded:
-            try:
-                cfg_obj = await self.service.get_config(guild_id=self.guild.id)
-                role = self.guild.get_role(cfg_obj.member_role_id)
-                if role:
-                    members = role.members
-                    options: list[discord.SelectOption] = []
-                    for m in members[:25]:  # Discord limit
-                        options.append(
-                            discord.SelectOption(
-                                label=m.display_name,
-                                value=str(m.id),
-                                description=f"議員：{m.name}",
-                            )
+    @classmethod
+    async def build(
+        cls, *, service: SupremeAssemblyService, guild: discord.Guild
+    ) -> "SummonMemberSelectView":
+        """Async builder that preloads member options so the select shows immediately."""
+        self = cls(service=service, guild=guild)
+        try:
+            cfg_obj = await service.get_config(guild_id=guild.id)
+            role = guild.get_role(cfg_obj.member_role_id)
+            if role:
+                members = role.members
+                options: list[discord.SelectOption] = []
+                for m in members[:25]:  # Discord limit
+                    options.append(
+                        discord.SelectOption(
+                            label=m.display_name,
+                            value=str(m.id),
+                            description=f"議員：{m.name}",
                         )
-                    if options:
-                        # Clear existing items and add select
-                        self.clear_items()
-                        select: discord.ui.Select[Any] = discord.ui.Select(
-                            placeholder="選擇議員",
-                            options=options,
-                            min_values=1,
-                            max_values=1,
-                        )
-                        select.callback = self._on_select
-                        self.add_item(select)
-                    self._members_loaded = True
-            except Exception:
-                pass
-        result = await super().interaction_check(interaction)
-        return bool(result)
+                    )
+                if options:
+                    select: discord.ui.Select[Any] = discord.ui.Select(
+                        placeholder="選擇議員",
+                        options=options,
+                        min_values=1,
+                        max_values=1,
+                    )
+                    select.callback = self._on_select
+                    self.add_item(select)
+                else:
+                    # 無成員時顯示停用的下拉，避免出現空白視圖
+                    disabled_select: discord.ui.Select[Any] = discord.ui.Select(
+                        placeholder="目前沒有可傳召的議員（請確認設定）",
+                        options=[discord.SelectOption(label="無可選項", value="none")],
+                        min_values=1,
+                        max_values=1,
+                    )
+                    disabled_select.disabled = True
+                    self.add_item(disabled_select)
+        except Exception:
+            # 靜默失敗：保持無項目，讓上層以訊息提示
+            pass
+        return self
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
         if not interaction.data:
             await interaction.response.send_message("請選擇一個議員。", ephemeral=True)
             return
-        values = interaction.data.get("values")
-        if not values or not isinstance(values, list) or len(values) == 0:
+        values = _extract_select_values(interaction)
+        if not values:
             await interaction.response.send_message("請選擇一個議員。", ephemeral=True)
             return
-        selected_id: str | None = values[0] if isinstance(values[0], str) else None
+        selected_id: str | None = values[0] if values else None
         if not selected_id:
             await interaction.response.send_message("請選擇一個議員。", ephemeral=True)
             return
@@ -1365,7 +1461,8 @@ class SummonOfficialSelectView(discord.ui.View):
         self.service = service
         self.guild = guild
         registry = get_registry()
-        departments = registry.list_all()
+        # 僅提供部門等級選擇，不含常任理事會與國務院。
+        departments = registry.get_by_level("department")
 
         # Create options for department leaders
         options: list[discord.SelectOption] = []
@@ -1410,11 +1507,11 @@ class SummonOfficialSelectView(discord.ui.View):
         if not interaction.data:
             await interaction.response.send_message("請選擇一個官員。", ephemeral=True)
             return
-        values = interaction.data.get("values")
-        if not values or not isinstance(values, list) or len(values) == 0:
+        values = _extract_select_values(interaction)
+        if not values:
             await interaction.response.send_message("請選擇一個官員。", ephemeral=True)
             return
-        selected_value: str | None = values[0] if isinstance(values[0], str) else None
+        selected_value: str | None = values[0] if values else None
         if not selected_value:
             await interaction.response.send_message("請選擇一個官員。", ephemeral=True)
             return
@@ -1442,10 +1539,11 @@ class SummonOfficialSelectView(discord.ui.View):
                     from src.db.pool import get_pool as _get_pool
 
                     gw = StateCouncilGovernanceGateway()
-                    pool = _get_pool()
+                    pool: PoolProtocol = cast(PoolProtocol, _get_pool())
                     async with pool.acquire() as conn:
+                        c: ConnectionProtocol = conn
                         cfg = await gw.fetch_department_config(
-                            conn, guild_id=self.guild.id, department=dept.name
+                            c, guild_id=self.guild.id, department=dept.name
                         )
                     if cfg and cfg.role_id:
                         role = self.guild.get_role(int(cfg.role_id))
@@ -1463,9 +1561,10 @@ class SummonOfficialSelectView(discord.ui.View):
                 from src.db.pool import get_pool as _get_pool
 
                 gw = StateCouncilGovernanceGateway()
-                pool = _get_pool()
-                async with pool.acquire() as conn:
-                    sc_cfg = await gw.fetch_state_council_config(conn, guild_id=self.guild.id)
+                pool2: PoolProtocol = cast(PoolProtocol, _get_pool())
+                async with pool2.acquire() as conn:
+                    c2: ConnectionProtocol = conn
+                    sc_cfg = await gw.fetch_state_council_config(c2, guild_id=self.guild.id)
                 if sc_cfg:
                     if sc_cfg.leader_id:
                         member = self.guild.get_member(int(sc_cfg.leader_id))
@@ -1474,8 +1573,7 @@ class SummonOfficialSelectView(discord.ui.View):
                         else:
                             try:
                                 user = await interaction.client.fetch_user(int(sc_cfg.leader_id))
-                                if user is not None:
-                                    recipients.append(user)
+                                recipients.append(user)
                             except Exception:
                                 pass
                     if not recipients and sc_cfg.leader_role_id:
@@ -1484,8 +1582,8 @@ class SummonOfficialSelectView(discord.ui.View):
                             recipients.extend(role.members)
 
             elif selected_value == "permanent_council":
-                # Show multi-select view for permanent council members
-                view = SummonPermanentCouncilView(
+                # 顯示常任理事會成員多選，下拉選單需預先載入
+                view = await SummonPermanentCouncilView.build(
                     service=self.service, guild=self.guild, original_view=self
                 )
                 await interaction.response.send_message(
@@ -1569,68 +1667,72 @@ class SummonPermanentCouncilView(discord.ui.View):
         self.guild = guild
         self.original_view = original_view
 
-        # Load permanent council members
-        from src.db.gateway.council_governance import CouncilGovernanceGateway
-        from src.db.pool import get_pool as _get_pool
+    @classmethod
+    async def build(
+        cls,
+        *,
+        service: SupremeAssemblyService,
+        guild: discord.Guild,
+        original_view: SummonOfficialSelectView,
+    ) -> "SummonPermanentCouncilView":
+        """Async builder that preloads permanent council member options for multi-select."""
+        self = cls(service=service, guild=guild, original_view=original_view)
+        try:
+            # 讀取理事會角色設定
+            from src.db.gateway.council_governance import CouncilGovernanceGateway
+            from src.db.pool import get_pool as _get_pool
 
-        council_gw: CouncilGovernanceGateway = CouncilGovernanceGateway()
-        pool = _get_pool()
-
-        # We need to load members asynchronously, so we'll do it in interaction_check
-        self._members_loaded = False
-        self._council_role_id: int | None = None
-
-        # Store reference for async loading
-        self._council_gw = council_gw
-        self._pool = pool
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        """Load members when view is first shown."""
-        if not self._members_loaded:
-            try:
-                async with self._pool.acquire() as conn:
-                    c_cfg = await self._council_gw.fetch_config(conn, guild_id=self.guild.id)
-                if c_cfg:
-                    self._council_role_id = int(c_cfg.council_role_id)
-                    role = self.guild.get_role(self._council_role_id)
-                    if role:
-                        members = role.members
-                        options: list[discord.SelectOption] = []
-                        for m in members[:25]:  # Discord limit
-                            options.append(
-                                discord.SelectOption(
-                                    label=m.display_name,
-                                    value=str(m.id),
-                                    description=f"常任理事：{m.name}",
-                                )
+            council_gw: CouncilGovernanceGateway = CouncilGovernanceGateway()
+            pool: PoolProtocol = cast(PoolProtocol, _get_pool())
+            async with pool.acquire() as conn:
+                c: ConnectionProtocol = conn
+                c_cfg = await council_gw.fetch_config(c, guild_id=guild.id)
+            if c_cfg:
+                council_role_id = int(c_cfg.council_role_id)
+                role = guild.get_role(council_role_id)
+                if role:
+                    members = role.members
+                    options: list[discord.SelectOption] = []
+                    for m in members[:25]:  # Discord limit
+                        options.append(
+                            discord.SelectOption(
+                                label=m.display_name,
+                                value=str(m.id),
+                                description=f"常任理事：{m.name}",
                             )
-                        if options:
-                            # Clear existing items and add select
-                            self.clear_items()
-                            select: discord.ui.Select[Any] = discord.ui.Select(
-                                placeholder="選擇常任理事會成員（可多選）",
-                                options=options,
-                                min_values=1,
-                                max_values=min(len(options), 25),  # Support multi-select
-                            )
-                            select.callback = self._on_select
-                            self.add_item(select)
-                        self._members_loaded = True
-            except Exception:
-                pass
-        result = await super().interaction_check(interaction)
-        return bool(result)
+                        )
+                    if options:
+                        select: discord.ui.Select[Any] = discord.ui.Select(
+                            placeholder="選擇常任理事會成員（可多選）",
+                            options=options,
+                            min_values=1,
+                            max_values=min(len(options), 25),
+                        )
+                        select.callback = self._on_select
+                        self.add_item(select)
+                    else:
+                        disabled_select: discord.ui.Select[Any] = discord.ui.Select(
+                            placeholder="目前沒有可傳召的常任理事（請確認設定）",
+                            options=[discord.SelectOption(label="無可選項", value="none")],
+                            min_values=1,
+                            max_values=1,
+                        )
+                        disabled_select.disabled = True
+                        self.add_item(disabled_select)
+        except Exception:
+            # 靜默失敗，保持空白視圖讓上層訊息提示
+            pass
+        return self
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
         if not interaction.data:
             await interaction.response.send_message("請選擇至少一個常任理事。", ephemeral=True)
             return
-        values = interaction.data.get("values")
-        if not values or not isinstance(values, list) or len(values) == 0:
+        values = _extract_select_values(interaction)
+        if not values:
             await interaction.response.send_message("請選擇至少一個常任理事。", ephemeral=True)
             return
-
-        selected_ids = [int(v) for v in values if isinstance(v, str) and v.isdigit()]
+        selected_ids = [int(v) for v in values if v.isdigit()]
 
         if not selected_ids:
             await interaction.response.send_message("請選擇至少一個常任理事。", ephemeral=True)
@@ -1764,15 +1866,16 @@ def _install_background_scheduler(client: discord.Client, service: SupremeAssemb
         while not client.is_closed():
             try:
                 # Get due proposals before expiration
-                pool = get_pool()
+                pool: PoolProtocol = cast(PoolProtocol, get_pool())
                 due_before: list[UUID] = []
                 async with pool.acquire() as conn:
+                    c: ConnectionProtocol = conn
                     from src.db.gateway.supreme_assembly_governance import (
                         SupremeAssemblyGovernanceGateway,
                     )
 
                     gw = SupremeAssemblyGovernanceGateway()
-                    for p in await gw.list_due_proposals(conn):
+                    for p in await gw.list_due_proposals(c):
                         due_before.append(p.proposal_id)
 
                 # Expire due proposals
@@ -1782,6 +1885,7 @@ def _install_background_scheduler(client: discord.Client, service: SupremeAssemb
 
                 # Send T-24h reminders to non-voters
                 async with pool.acquire() as conn:
+                    c2: ConnectionProtocol = conn
                     from src.db.gateway.supreme_assembly_governance import (
                         SupremeAssemblyGovernanceGateway,
                     )
@@ -1789,7 +1893,7 @@ def _install_background_scheduler(client: discord.Client, service: SupremeAssemb
                     gw = SupremeAssemblyGovernanceGateway()
                     # Note: This assumes a similar method exists in the gateway
                     # You may need to implement reminder_candidates method
-                    for p in await gw.list_due_proposals(conn):
+                    for p in await gw.list_due_proposals(c2):
                         # Check if reminder needed (24h before deadline)
                         from datetime import datetime, timezone
 
@@ -1853,12 +1957,13 @@ async def _register_persistent_views(
     client: discord.Client, service: SupremeAssemblyService
 ) -> None:
     """Register persistent views for active proposals."""
-    pool = get_pool()
+    pool: PoolProtocol = cast(PoolProtocol, get_pool())
     async with pool.acquire() as conn:
+        c: ConnectionProtocol = conn
         from src.db.gateway.supreme_assembly_governance import SupremeAssemblyGovernanceGateway
 
         gw = SupremeAssemblyGovernanceGateway()
-        active = await gw.list_active_proposals(conn)
+        active = await gw.list_active_proposals(c)
         for p in active:
             try:
                 client.add_view(

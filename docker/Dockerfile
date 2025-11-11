@@ -9,7 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates build-essential \
+    && apt-get install -y --no-install-recommends ca-certificates build-essential git \
     && rm -rf /var/lib/apt/lists/*
 
 FROM base AS runtime
@@ -44,6 +44,9 @@ ENV PYTHONPATH="/app/build/mypyc_out:/app"
 # 入口腳本
 COPY docker/bin/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+
+# 確保非 root 用戶可以讀取所有檔案
+RUN chown -R 65532:65532 /app
 
 USER 65532:65532
 

@@ -7,6 +7,8 @@ from uuid import UUID
 
 import asyncpg
 
+from src.infra.types.db import ConnectionProtocol
+
 
 @dataclass(frozen=True, slots=True)
 class PendingTransfer:
@@ -53,7 +55,7 @@ class PendingTransferGateway:
 
     async def create_pending_transfer(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         initiator_id: int,
@@ -82,7 +84,7 @@ class PendingTransferGateway:
 
     async def get_pending_transfer(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         transfer_id: UUID,
     ) -> PendingTransfer | None:
@@ -95,7 +97,7 @@ class PendingTransferGateway:
 
     async def list_pending_transfers(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         guild_id: int,
         status: str | None = None,
@@ -109,7 +111,7 @@ class PendingTransferGateway:
 
     async def update_status(
         self,
-        connection: asyncpg.Connection,
+        connection: ConnectionProtocol,
         *,
         transfer_id: UUID,
         new_status: str,

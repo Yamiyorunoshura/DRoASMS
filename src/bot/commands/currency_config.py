@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import discord
 import structlog
@@ -151,7 +151,9 @@ def build_currency_config_command(
                 ephemeral=True,
             )
 
-    return currency_config
+    # Pylance 在嚴格模式下無法從 decorators 推導泛型參數，導致回傳型別含 Unknown。
+    # 以顯式 cast 告知其為 app_commands.Command。
+    return cast(app_commands.Command[Any, Any, None], currency_config)
 
 
 __all__ = ["build_currency_config_command", "get_help_data", "register"]
