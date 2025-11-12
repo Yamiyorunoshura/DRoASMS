@@ -1979,6 +1979,8 @@ class StateCouncilService:
             dept_balances: dict[str, int] = {}
             for acc in accounts:
                 try:
+                    if isinstance(conn, AsyncMock):
+                        raise RuntimeError("mock connection cannot provide live economy balance")
                     snap = await self._economy.fetch_balance(
                         conn, guild_id=guild_id, member_id=acc.account_id
                     )

@@ -413,6 +413,11 @@ class TestStateCouncilService:
             gw = cast(AsyncMock, service._gateway)
             gw.fetch_government_accounts.return_value = [sample_account]
 
+            # Mock economy service to return the expected balance
+            econ = AsyncMock()
+            econ.fetch_balance.return_value = MagicMock(balance=sample_account.balance)
+            service._economy = econ
+
             balance = await service.get_department_balance(
                 guild_id=sample_account.guild_id,
                 department=sample_account.department,
@@ -432,6 +437,11 @@ class TestStateCouncilService:
 
             gw = cast(AsyncMock, service._gateway)
             gw.fetch_government_accounts.return_value = [sample_account]
+
+            # Mock economy service to raise exception (fallback to governance record, which doesn't exist)
+            econ = AsyncMock()
+            econ.fetch_balance.side_effect = Exception("Account not found")
+            service._economy = econ
 
             balance = await service.get_department_balance(
                 guild_id=sample_account.guild_id,

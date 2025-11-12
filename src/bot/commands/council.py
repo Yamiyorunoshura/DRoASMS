@@ -12,6 +12,12 @@ import structlog
 from discord import app_commands
 
 from src.bot.commands.help_data import HelpData
+from src.bot.commands.state_council import (
+    _edit_message_compat as _edit_message_compat,
+)
+from src.bot.commands.state_council import (
+    _send_message_compat as _send_message_compat,
+)
 from src.bot.services.balance_service import BalanceService
 from src.bot.services.council_service import (
     CouncilService,
@@ -107,22 +113,29 @@ def build_council_group(service: CouncilService) -> app_commands.Group:
         interaction: discord.Interaction, role: discord.Role
     ) -> None:
         if interaction.guild_id is None or interaction.guild is None:
-            await interaction.response.send_message("本指令需在伺服器中執行。", ephemeral=True)
+            await _send_message_compat(
+                interaction, content="本指令需在伺服器中執行。", ephemeral=True
+            )
             return
         # Require admin/manage_guild
         perms = getattr(interaction.user, "guild_permissions", None)
         if not perms or not (perms.administrator or perms.manage_guild):
-            await interaction.response.send_message("需要管理員或管理伺服器權限。", ephemeral=True)
+            await _send_message_compat(
+                interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
+            )
             return
         try:
             cfg = await service.set_config(guild_id=interaction.guild_id, council_role_id=role.id)
-            await interaction.response.send_message(
-                f"已設定理事角色：{role.mention}（帳戶ID {cfg.council_account_member_id}）",
+            await _send_message_compat(
+                interaction,
+                content=f"已設定理事角色：{role.mention}（帳戶ID {cfg.council_account_member_id}）",
                 ephemeral=True,
             )
         except Exception as exc:  # pragma: no cover - unexpected
             LOGGER.exception("council.config_role.error", error=str(exc))
-            await interaction.response.send_message("設定失敗，請稍後再試。", ephemeral=True)
+            await _send_message_compat(
+                interaction, content="設定失敗，請稍後再試。", ephemeral=True
+            )
 
     # 依規範：移除與面板重疊之撤案/建案/匯出斜線指令（保留 panel/config_role）
 
@@ -132,14 +145,17 @@ def build_council_group(service: CouncilService) -> app_commands.Group:
     ) -> None:
         # 僅允許在伺服器使用
         if interaction.guild_id is None or interaction.guild is None:
-            await interaction.response.send_message("本指令需在伺服器中執行。", ephemeral=True)
+            await _send_message_compat(
+                interaction, content="本指令需在伺服器中執行。", ephemeral=True
+            )
             return
         # 檢查是否完成治理設定
         try:
             cfg = await service.get_config(guild_id=interaction.guild_id)
         except GovernanceNotConfiguredError:
-            await interaction.response.send_message(
-                "尚未完成治理設定，請先執行 /council config_role。",
+            await _send_message_compat(
+                interaction,
+                content="尚未完成治理設定，請先執行 /council config_role。",
                 ephemeral=True,
             )
             return
@@ -148,7 +164,7 @@ def build_council_group(service: CouncilService) -> app_commands.Group:
         if role is None or (
             isinstance(interaction.user, discord.Member) and role not in interaction.user.roles
         ):
-            await interaction.response.send_message("僅限理事可開啟面板。", ephemeral=True)
+            await _send_message_compat(interaction, content="僅限理事可開啟面板。", ephemeral=True)
             return
 
         view = CouncilPanelView(
@@ -159,11 +175,7 @@ def build_council_group(service: CouncilService) -> app_commands.Group:
         )
         await view.refresh_options()
         embed = await view.build_summary_embed()
-        await interaction.response.send_message(
-            embed=embed,
-            view=view,
-            ephemeral=True,
-        )
+        await _send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
         try:
             message = await interaction.original_response()
             await view.bind_message(message)
@@ -410,7 +422,11 @@ def _install_background_scheduler(client: discord.Client, service: CouncilServic
                 LOGGER.exception("council.scheduler.error", error=str(exc))
             await asyncio.sleep(60)
 
-    _scheduler_task = asyncio.create_task(_runner(), name="council-scheduler")
+    try:
+        _scheduler_task = asyncio.create_task(_runner(), name="council-scheduler")
+    except RuntimeError:
+        # 沒有運行的事件循環，通常在測試環境中
+        pass
 
 
 __all__ = ["get_help_data", "register"]

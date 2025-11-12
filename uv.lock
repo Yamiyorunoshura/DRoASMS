@@ -348,13 +348,14 @@ source = { git = "https://github.com/Seniatical/dpy-paginator/#fbba1f3ca5141b827
 
 [[package]]
 name = "droasms-bot"
-version = "0.13.1"
+version = "0.14.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
     { name = "discord-py" },
     { name = "dpy-paginator" },
+    { name = "mypy-extensions" },
     { name = "psycopg2-binary" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -393,6 +394,7 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.30.0,<0.31.0" },
     { name = "discord-py", specifier = ">=2.4.0,<3.0.0" },
     { name = "dpy-paginator", git = "https://github.com/Seniatical/dpy-paginator/" },
+    { name = "mypy-extensions", specifier = ">=1.0.0,<2.0.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.11" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },

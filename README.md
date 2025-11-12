@@ -57,6 +57,16 @@ uv sync
 #   python3 -m venv .venv && source .venv/bin/activate && pip install -e .
 ```
 
+## 統一編譯器工作流程
+
+1. `make unified-migrate-dry-run`／`make unified-migrate`：預覽並寫入 `[tool.unified-compiler]`，同時於 `backup/config_migration/` 保存備份。
+2. `make unified-compile`：實際編譯所有模組，並產生 `build/unified/compile_report.json` 與性能快照。
+3. `make unified-compile-test`：僅執行兼容性/性能測試，方便在 CI 或本地驗證配置。
+4. `make unified-status`：輸出最近一次編譯的耗時、成功率與輸出 `.so` 數量。
+5. `make unified-refresh-baseline`：在確認結果穩定後刷新性能基線；若監控偵測退化，`scripts/compile_modules.py` 會以非零碼結束以阻擋合併。
+
+完整遷移指南與性能監控說明請參考 `docs/unified-compiler-guide.md`。
+
 ## 環境設定
 複製 `.env.example` 產生 `.env` 檔案，填入必要的 Discord 憑證與設定（括號內為預設）：
 

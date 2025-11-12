@@ -7,6 +7,7 @@ from uuid import UUID
 
 import structlog
 
+from src.bot.services.transfer_service import TransferService
 from src.db.gateway.supreme_assembly_governance import (
     Proposal,
     Summon,
@@ -53,8 +54,16 @@ class SupremeAssemblyService:
         self,
         *,
         gateway: SupremeAssemblyGovernanceGateway | None = None,
+        transfer_service: TransferService | None = None,
     ) -> None:
         self._gateway = gateway or SupremeAssemblyGovernanceGateway()
+        # 延後建立 TransferService，以避免於同步情境（如命令註冊測試）中強制要求事件迴圈
+        self._transfer: TransferService | None = transfer_service
+
+    def _get_transfer_service(self) -> TransferService:
+        if self._transfer is None:
+            self._transfer = TransferService(get_pool())
+        return self._transfer
 
     # --- Configuration ---
     @staticmethod

@@ -13,6 +13,7 @@
  build/
  *.egg-info/
  htmlcov/
+ htmlcov_council/
  coverage/
  .coverage
 
@@ -25,13 +26,22 @@
  .DS_Store
  .vscode/
  .idea/
+ .codex/
+ .cursor/
+ .claude/
+ .specify/
 
  # Node (if present)
  node_modules/
 
- # Project docs/tests not needed in image
- tests/
- specs/
+ backup/
+ docs/
+ openspec/
+ typings/
+
+# Project docs not needed in image
+tests/
+specs/
 
  # Docker files themselves
  Dockerfile*

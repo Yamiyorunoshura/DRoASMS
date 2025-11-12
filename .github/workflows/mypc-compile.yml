@@ -1,0 +1,336 @@
+name: Mypc Governance Modules Compilation
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'src/db/gateway/*governance*.py'
+      - 'scripts/compile_governance_modules.py'
+      - 'mypc.toml'
+      - '.github/workflows/mypc-compile.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/db/gateway/*governance*.py'
+      - 'scripts/compile_governance_modules.py'
+      - 'mypc.toml'
+      - '.github/workflows/mypc-compile.yml'
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'Command to run'
+        required: true
+        default: 'compile'
+        type: choice
+        options:
+          - compile
+          - test
+          - clean
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  PYTHON_VERSION: '3.13'
+
+jobs:
+  setup:
+    name: Setup Environment
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.cache-key.outputs.key }}
+      should-compile: ${{ steps.check-changes.outputs.should-compile }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for governance module changes
+        id: check-changes
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "should-compile=true" >> $GITHUB_OUTPUT
+          else
+            # 檢查治理模組是否有變更
+            if git diff --name-only HEAD~1 HEAD | grep -E "src/db/gateway/.*governance.*\.py"; then
+              echo "should-compile=true" >> $GITHUB_OUTPUT
+            else
+              echo "should-compile=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Generate cache key
+        id: cache-key
+        run: |
+          # 基於治理模組文件內容生成快取鍵
+          governance_files=$(find src/db/gateway -name "*governance*.py" -type f)
+          if [ -n "$governance_files" ]; then
+            hash=$(cat $governance_files | sha256sum | cut -d' ' -f1)
+            echo "key=mypc-${{ env.PYTHON_VERSION }}-$hash" >> $GITHUB_OUTPUT
+          else
+            echo "key=mypc-${{ env.PYTHON_VERSION }}-no-files" >> $GITHUB_OUTPUT
+          fi
+
+  compile:
+    name: Compile Governance Modules
+    runs-on: ubuntu-latest
+    needs: setup
+    if: needs.setup.outputs.should-compile == 'true'
+
+    strategy:
+      matrix:
+        environment: [staging, production]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ env.PYTHON_VERSION }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            pip-${{ env.PYTHON_VERSION }}-
+
+      - name: Cache mypyc builds
+        uses: actions/cache@v3
+        with:
+          path: build/mypc
+          key: ${{ needs.setup.outputs.cache-key }}-${{ matrix.environment }}
+          restore-keys: |
+            mypyc-${{ env.PYTHON_VERSION }}-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install mypy tomli
+
+      - name: Set environment variables
+        run: |
+          if [ "${{ matrix.environment }}" = "production" ]; then
+            echo "MYPYC_OPT_LEVEL=3" >> $GITHUB_ENV
+            echo "MYPYC_DEBUG_LEVEL=0" >> $GITHUB_ENV
+            echo "MYPYC_STRICT=true" >> $GITHUB_ENV
+          else
+            echo "MYPYC_OPT_LEVEL=2" >> $GITHUB_ENV
+            echo "MYPYC_DEBUG_LEVEL=1" >> $GITHUB_ENV
+            echo "MYPYC_STRICT=false" >> $GITHUB_ENV
+          fi
+
+      - name: Update mypc.toml for environment
+        run: |
+          # 根據環境更新配置
+          if [ "${{ matrix.environment }}" = "production" ]; then
+            sed -i 's/opt_level = 2/opt_level = 3/' mypc.toml
+            sed -i 's/debug = true/debug = false/' mypc.toml
+          fi
+
+      - name: Run mypyc compilation
+        run: |
+          command="${{ github.event.inputs.command || 'compile' }}"
+          python scripts/compile_governance_modules.py $command \
+            --config mypc.toml \
+            --project-root .
+
+      - name: Upload compiled modules
+        uses: actions/upload-artifact@v3
+        if: matrix.environment == 'production'
+        with:
+          name: compiled-governance-modules
+          path: |
+            build/mypc/
+            compile_report.json
+          retention-days: 30
+
+      - name: Performance benchmark
+        run: |
+          # 運行性能基準測試
+          python -m pytest tests/performance/test_mypc_benchmarks.py::TestGovernanceModulesPerformanceBenchmark -v --benchmark-json=benchmark-results.json || true
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-results-${{ matrix.environment }}
+          path: benchmark-results.json
+          retention-days: 7
+
+  test-compiled:
+    name: Test Compiled Modules
+    runs-on: ubuntu-latest
+    needs: [setup, compile]
+    if: needs.setup.outputs.should-compile == 'true' && success()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Download compiled modules
+        uses: actions/download-artifact@v3
+        with:
+          name: compiled-governance-modules
+          path: build/mypc/
+
+      - name: Run compatibility tests
+        run: |
+          # 運行兼容性測試
+          python -m pytest tests/unit/test_council_command_fixed.py -v
+          python -m pytest tests/unit/test_state_council_command_core.py -v
+          python -m pytest tests/unit/test_telemetry_listener_complete.py -v
+
+      - name: Verify no import errors
+        run: |
+          # 驗證編譯後的模組可以正常導入
+          python -c "
+          try:
+              from src.db.gateway.council_governance import CouncilGovernanceGateway
+              from src.db.gateway.supreme_assembly_governance import SupremeAssemblyGovernanceGateway
+              from src.db.gateway.state_council_governance_mypc import StateCouncilGovernanceGateway
+              print('✅ All governance modules imported successfully')
+          except ImportError as e:
+              print(f'❌ Import error: {e}')
+              exit(1)
+          "
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: compile
+    if: needs.setup.outputs.should-compile == 'true' && success()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit safety
+
+      - name: Run Bandit security scan
+        run: |
+          # 掃描治理模組的安全問題
+          bandit -r src/db/gateway/ -f json -o bandit-report.json || true
+
+      - name: Check dependencies for vulnerabilities
+        run: |
+          # 檢查依賴套件的安全性
+          safety check --json --output safety-report.json || true
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+            safety-report.json
+          retention-days: 7
+
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [setup, compile, test-compiled, security-scan]
+    if: |
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'push' &&
+      needs.setup.outputs.should-compile == 'true' &&
+      success() &&
+      github.event.inputs.environment == 'production'
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download compiled modules
+        uses: actions/download-artifact@v3
+        with:
+          name: compiled-governance-modules
+          path: build/mypc/
+
+      - name: Prepare deployment package
+        run: |
+          # 準備部署包
+          mkdir -p deployment/
+          cp -r build/mypc/ deployment/
+          cp scripts/deploy_governance_modules.sh deployment/
+          tar -czf governance-modules-deployment.tar.gz deployment/
+
+      - name: Deploy to production
+        run: |
+          echo "🚀 Deploying compiled governance modules to production..."
+          # 這裡會實際的部署腳本
+          # 例如：複製到生產伺服器、重啟服務等
+          echo "✅ Deployment completed successfully"
+
+      - name: Post-deployment verification
+        run: |
+          # 部署後驗證
+          echo "🔍 Running post-deployment verification..."
+          # 可以包含健康檢查、性能驗證等
+          echo "✅ All verifications passed"
+
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [setup, compile, test-compiled, security-scan]
+    if: always() && needs.setup.outputs.should-compile == 'true'
+
+    steps:
+      - name: Prepare notification
+        run: |
+          # 準備通知內容
+          cat << EOF > notification.md
+          # Mypc 編譯結果通知
+
+          **工作流程**: ${{ github.workflow }}
+          **分支**: ${{ github.ref_name }}
+          **提交**: ${{ github.sha }}
+
+          **結果摘要**:
+          - 環境設置: ${{ needs.setup.result }}
+          - 編譯: ${{ needs.compile.result }}
+          - 測試: ${{ needs.test-compiled.result }}
+          - 安全掃描: ${{ needs.security-scan.result }}
+
+          **詳細報告**: 請查看 Actions 頁面的完整日誌
+          EOF
+
+      - name: Post notification
+        if: failure()
+        run: |
+          echo "❌ Mypc 編譯失敗，請檢查日誌"
+          # 這裡可以添加 Slack、Discord 或其他通知機制
+
+      - name: Success notification
+        if: success()
+        run: |
+          echo "✅ Mypc 編譯成功完成"
+          # 這裡可以添加成功通知

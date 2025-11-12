@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2025-11-12
+
+### 新增
+- **統一編譯器系統（Unified Compiler）**：實現 mypyc 與 mypc 編譯後端的統一管理
+  - 支援經濟模組使用 mypyc 編譯，治理模組使用 mypc 編譯
+  - 新增 `scripts/compile_modules.py` 統一編譯腳本，支援自動依賴解析與並行編譯
+  - 新增 `scripts/migrate_unified_config.py` 配置遷移工具
+  - 支援編譯效能監控、基準測試與回滾機制
+  - 新增完整的統一編譯器指南（`docs/unified-compiler-guide.md`）
+- **Mypc 治理模組編譯支援**：新增治理模組的 mypc 編譯後端
+  - 治理模組包含 `council_governance`、`supreme_assembly_governance`、`state_council_governance_mypc`
+  - 新增 `scripts/compile_governance_modules.py` 與 `scripts/deploy_governance_modules.sh`
+  - GitHub Actions 工作流程 `.github/workflows/mypc-compile.yml` 支援自動編譯
+- **效能測試基礎設施**：新增完整的效能監控與基準測試框架
+  - `tests/performance/test_mypc_benchmarks.py`：mypc 編譯模組的效能基準測試
+  - `tests/performance/test_mypyc_benchmarks.py`：mypyc 編譯模組的效能基準測試
+  - `tests/scripts/test_performance_monitor.py`：效能監控工具測試
+- **開發者入門指南**：新增 `docs/developer-onboarding.md` 提供完整的開發環境設定指南
+- **單元測試擴充**：
+  - `test_council_command.py`：理事會指令單元測試
+  - `test_state_council_command_core.py`：國務院指令核心功能測試
+  - `test_supreme_assembly_command.py`：最高人民會議指令測試
+  - `test_telemetry_listener_complete.py`：遙測監聽器完整測試
+- **編譯模組備份機制**：在 `backup/` 目錄下儲存 Python 原始版本，用於對比測試
+
+### 修改
+- **pyproject.toml**：
+  - 新增統一編譯器配置區段 `[tool.unified-compiler]`
+  - 擴充 mypyc 配置支援經濟與治理模組
+  - 新增統一編譯器的測試、部署、監控配置
+- **Makefile**：
+  - 新增統一編譯相關命令：`unified-migrate`、`unified-compile`、`unified-compile-test`、`unified-status` 等
+  - 整合 mypc 編譯流程到現有建置系統
+- **Docker 建置優化**：更新 Dockerfile 支援統一編譯器的多階段建置
+- **服務層改進**：更新 `state_council_service.py` 與 `supreme_assembly_service.py` 以支援編譯後模組
+
+### 注意
+- 統一編譯器預設使用 mypyc 作為經濟模組後端，mypc 作為治理模組後端
+- 編譯過程包含完整的錯誤處理與回滾機制
+- 所有變更保持向後相容性，未編譯的 Python 版本仍可正常運行
+- 效能監控與基準測試支援持續效能追蹤
+
 ## [0.14.0] - 2025-11-11
 
 ### 新增

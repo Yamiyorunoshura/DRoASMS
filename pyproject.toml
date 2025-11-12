@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "droasms-bot"
-version = "0.14.0"
+version = "0.15.0"
 description = "Discord bot economy foundations."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -19,6 +19,7 @@ dependencies = [
     "SQLAlchemy>=2.0.30,<3.0.0",
     "structlog>=24.1.0,<25.0.0",
     "python-dotenv>=1.0.1,<2.0.0",
+    "mypy-extensions>=1.0.0,<2.0.0",
     "psycopg2-binary>=2.9.11",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
@@ -98,12 +99,6 @@ pythonVersion = "3.13"
 typeCheckingMode = "strict"
 reportMissingImports = "none"
 reportMissingTypeStubs = "none"
-reportUnnecessaryTypeIgnoreComment = "warning"
-venvPath = "."
-venv = ".venv"
-executionEnvironments = [
-  { root = ".", extraPaths = ["src"] }
-]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
@@ -111,11 +106,15 @@ addopts = "-ra --cov=src --cov-report=html --cov-report=term --cov-report=term-m
 testpaths = ["tests"]
 markers = [
     "performance: Performance and load tests for NFR validation",
+    "unit: Unit tests",
+    "asyncio: Async tests",
     "integration: Integration tests that require Docker/Discord; gated by RUN_DISCORD_INTEGRATION_TESTS",
     "timeout: Test timeout marker for pytest-timeout plugin",
 ]
 # 並行測試設定：使用 pytest-xdist，透過命令列參數 -n auto 或 -n N 控制
 # pytest-xdist 不支援在配置檔案中設定 n_workers，需在命令列指定
+
+[tool.pytest-timeout]
 timeout = 300
 timeout_method = "thread"
 
@@ -221,9 +220,10 @@ exclude_lines = [
 
 # 預先配置 mypyc（未在本變更中啟用實際編譯，僅提供基本設定以利未來優化）
 [tool.mypyc]
-# 僅針對經濟模塊啟用 mypyc 編譯（漸進式導入）
+# 經濟模塊 + 治理模塊啟用 mypyc 編譯（漸進式導入）
 # 如需擴大範圍，請更新此清單。
 targets = [
+    # 經濟模塊
     "src/bot/services/adjustment_service.py",
     "src/bot/services/transfer_service.py",
     "src/bot/services/balance_service.py",
@@ -234,6 +234,10 @@ targets = [
     "src/db/gateway/economy_queries.py",
     "src/db/gateway/economy_pending_transfers.py",
     "src/db/gateway/economy_configuration.py",
+    # 治理模塊（Phase 2 新增）
+    "src/db/gateway/council_governance.py",
+    "src/db/gateway/supreme_assembly_governance.py",
+    "src/db/gateway/state_council_governance_mypc.py",
 ]
 
 # 編譯選項（預設在本地開發可輕量化，CI/生產可視需要調高）
@@ -244,3 +248,155 @@ log_trace = false
 
 # 排除測試與遷移腳本
 exclude = ["tests", "src/db/migrations", "alembic"]
+
+# 治理模塊專用 mypyc 配置
+[tool.mypyc.governance]
+# 針對治理模塊的特定編譯選項
+opt_level = 3
+debug_level = 0  # 生產環境不包含調試符號
+strict_dunder_typing = true
+log_trace = false
+
+# 治理模塊特有目標
+governance_targets = [
+    "src/db/gateway/council_governance.py",
+    "src/db/gateway/supreme_assembly_governance.py",
+    "src/db/gateway/state_council_governance_mypc.py",
+]
+
+# 統一編譯器配置 - 整合 mypyc 和 mypc 配置
+[tool.unified-compiler]
+# 預設編譯後端 ("mypyc" 或 "mypc")
+default_backend = "mypyc"
+
+# 編譯優化級別 (0-3)
+opt_level = 3
+
+# 是否包含調試符號
+debug = false
+
+# 是否顯示編譯警告
+show_warnings = true
+
+# 並行編譯工作進程數量 (0 表示自動檢測)
+parallel_jobs = 0
+
+# 編譯器選項
+cflags = ["-O3", "-march=native"]
+
+# 模組配置
+[tool.unified-compiler.modules]
+# 經濟模組 - 使用 mypyc 編譯器
+economy_modules = [
+    "src.bot.services.adjustment_service",
+    "src.bot.services.transfer_service",
+    "src.bot.services.balance_service",
+    "src.bot.services.transfer_event_pool",
+    "src.bot.services.currency_config_service",
+    "src.db.gateway.economy_adjustments",
+    "src.db.gateway.economy_transfers",
+    "src.db.gateway.economy_queries",
+    "src.db.gateway.economy_pending_transfers",
+    "src.db.gateway.economy_configuration",
+]
+
+# 治理模組 - 使用 mypc 編譯器
+governance_modules = [
+    "src.db.gateway.council_governance",
+    "src.db.gateway.supreme_assembly_governance",
+    "src.db.gateway.state_council_governance_mypc",
+]
+
+# 排除的模組
+exclude_modules = [
+    # 保留原始版本用於對比測試
+    "src.db.gateway.state_council_governance",
+]
+
+# 編譯後端配置
+[tool.unified-compiler.backends.mypyc]
+# mypyc 特定配置
+opt_level = 3
+debug_level = 1
+strict_dunder_typing = false
+log_trace = false
+strip_asserts = true
+
+[tool.unified-compiler.backends.mypc]
+# mypc 特定配置
+opt_level = 2
+debug_level = 0
+strict_dunder_typing = true
+log_trace = false
+
+# 性能目標
+[tool.unified-compiler.performance]
+# 目標性能提升倍數 (相對於純 Python)
+target_speedup = 5.0
+
+# 記憶體使用目標 (相對於純 Python)
+memory_efficiency = 0.8
+
+# 啟動時間目標 (毫秒)
+startup_time_target = 100
+
+# 輸出配置
+[tool.unified-compiler.output]
+# 編譯後模組的輸出目錄
+build_dir = "build/unified"
+
+# 是否保留中間文件
+keep_intermediate = false
+
+# 是否生成性能報告
+generate_profile = true
+
+# 輸出日誌級別
+log_level = "INFO"
+
+# 測試配置
+[tool.unified-compiler.testing]
+# 編譯後是否自動運行測試
+auto_test = true
+
+# 性能基準測試
+benchmark_tests = [
+    "tests/performance/test_mypc_benchmarks.py",
+]
+
+# 兼容性測試
+compatibility_tests = [
+    "tests/unit/test_council_governance.py",
+    "tests/unit/test_supreme_assembly_governance.py",
+    "tests/unit/test_state_council_service.py",
+]
+
+# 部署配置
+[tool.unified-compiler.deployment]
+# 生產環境部署策略
+strategy = "gradual"
+
+# 是否保留 Python 版本作為備份
+keep_python_fallback = true
+
+# 回滾條件 (如果性能下降超過此百分比，則回滾)
+rollback_threshold = 20
+
+# 監控配置
+[tool.unified-compiler.monitoring]
+# 是否啟用性能監控
+enable_monitoring = true
+
+# 性能基準檔案與回歸閾值
+baseline_file = "build/unified/perf_baseline.json"
+regression_threshold_percent = 5.0
+
+# 監控指標
+metrics = [
+    "compile_time_seconds",
+    "success_rate",
+    "peak_memory_mb",
+]
+
+# 警告閾值（絕對值/百分比）
+alert_thresholds = { compile_time_percent = 10.0, success_rate_percent = 2.0, peak_memory_mb = 2048.0 }

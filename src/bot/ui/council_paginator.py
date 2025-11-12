@@ -6,6 +6,7 @@ from typing import Any, Sequence
 
 import discord
 
+from src.bot.commands.state_council import _send_message_compat as _send_msg_compat
 from src.bot.services.department_registry import get_registry
 from src.bot.ui.paginator import EmbedPaginator
 
@@ -277,7 +278,7 @@ class CouncilProposalPaginator(EmbedPaginator):
     async def _on_first_page(self, interaction: discord.Interaction) -> None:
         """處理第一頁按鈕點擊。"""
         if self.author_id and interaction.user.id != self.author_id:
-            await interaction.response.send_message("僅限面板開啟者操作。", ephemeral=True)
+            await _send_msg_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
         if self.current_page != 0:
@@ -287,7 +288,7 @@ class CouncilProposalPaginator(EmbedPaginator):
     async def _on_last_page(self, interaction: discord.Interaction) -> None:
         """處理最後一頁按鈕點擊。"""
         if self.author_id and interaction.user.id != self.author_id:
-            await interaction.response.send_message("僅限面板開啟者操作。", ephemeral=True)
+            await _send_msg_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
         if self.current_page != self.total_pages - 1:
