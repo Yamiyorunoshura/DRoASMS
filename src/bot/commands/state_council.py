@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from datetime import datetime
-from typing import Any, Awaitable, Callable, cast
+import math
+from datetime import datetime, timezone
+from typing import Any, Awaitable, Callable, Literal, Sequence, cast
 
 import discord
 import structlog
@@ -20,6 +21,8 @@ from src.bot.services.state_council_service import (
     PermissionDeniedError,
     StateCouncilNotConfiguredError,
     StateCouncilService,
+    SuspectProfile,
+    SuspectReleaseResult,
 )
 from src.infra.di.container import DependencyContainer
 from src.infra.events.state_council_events import (
@@ -137,15 +140,6 @@ def get_help_data() -> dict[str, HelpData]:
             "permissions": [],
             "examples": ["/state_council panel"],
             "tags": ["面板", "操作"],
-        },
-        "state_council suspects": {
-            "name": "state_council suspects",
-            "description": "查看嫌犯列表。僅限國務院領袖使用。",
-            "category": "governance",
-            "parameters": [],
-            "permissions": [],
-            "examples": ["/state_council suspects"],
-            "tags": ["嫌犯", "列表"],
         },
     }
 
@@ -562,105 +556,6 @@ def build_state_council_group(
             guild_id=interaction.guild_id,
             user_id=interaction.user.id,
         )
-
-    @state_council.command(name="suspects", description="管理嫌疑人（僅限國土安全部）")
-    async def suspects(  # pyright: ignore[reportUnusedFunction]
-        interaction: discord.Interaction,
-    ) -> None:
-        if interaction.guild_id is None or interaction.guild is None:
-            await _send_message_compat(
-                interaction, content="本指令需在伺服器中執行。", ephemeral=True
-            )
-            return
-
-        # Check if state council is configured
-        try:
-            cfg = await service.get_config(guild_id=interaction.guild_id)
-        except StateCouncilNotConfiguredError:
-            await _send_message_compat(
-                interaction,
-                content="尚未完成國務院設定，請先執行 /state_council config_leader。",
-                ephemeral=True,
-            )
-            return
-        except Exception:
-            await _send_message_compat(
-                interaction,
-                content="尚未完成國務院設定，請先執行 /state_council config_leader。",
-                ephemeral=True,
-            )
-            return
-
-        # Check if user has homeland security department permission
-        user_roles = [role.id for role in getattr(interaction.user, "roles", [])]
-
-        # Check homeland security permission
-        has_permission = await service.check_department_permission(
-            guild_id=interaction.guild_id,
-            user_id=interaction.user.id,
-            department="國土安全部",
-            user_roles=user_roles,
-        )
-
-        if not has_permission:
-            await _send_message_compat(
-                interaction,
-                content="僅限國土安全部授權人員可管理嫌疑人。",
-                ephemeral=True,
-            )
-            return
-
-        # Check if suspect role is configured
-        if not cfg.suspect_role_id:
-            await _send_message_compat(
-                interaction,
-                content="尚未設定嫌犯身分組，請聯繫管理員設定。",
-                ephemeral=True,
-            )
-            return
-
-        # Get list of suspects (members with suspect role)
-        suspect_role = interaction.guild.get_role(cfg.suspect_role_id)
-        if not suspect_role:
-            await _send_message_compat(
-                interaction,
-                content="嫌犯身分組不存在，請聯繫管理員檢查設定。",
-                ephemeral=True,
-            )
-            return
-
-        suspects_list: list[dict[str, Any]] = []
-        for member in suspect_role.members:
-            suspects_list.append(
-                {
-                    "id": member.id,
-                    "name": member.display_name,
-                    "joined_at": member.joined_at,
-                }
-            )
-
-        if not suspects_list:
-            await _send_message_compat(
-                interaction,
-                content="目前沒有嫌疑人。",
-                ephemeral=True,
-            )
-            return
-
-        # Create suspects management view
-        view = SuspectsManagementView(
-            service=service,
-            guild=interaction.guild,
-            guild_id=interaction.guild_id,
-            author_id=interaction.user.id,
-            user_roles=user_roles,
-            suspects=suspects_list,
-            suspect_role_id=cfg.suspect_role_id,
-            citizen_role_id=cfg.citizen_role_id,
-        )
-
-        embed = await view.build_embed()
-        await _send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
 
     # --- Compatibility shim for tests ---
     # discord.app_commands.Group 並未公開 children/type 屬性，但合約測試期望可取用。
@@ -1107,6 +1002,16 @@ class StateCouncilPanelView(discord.ui.View):
             arrest_btn.callback = self._arrest_callback
             self.add_item(arrest_btn)
 
+            # Suspects Management
+            suspects_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label="嫌犯管理",
+                style=discord.ButtonStyle.secondary,
+                custom_id="suspects_management",
+                row=2,
+            )
+            suspects_btn.callback = self._suspects_management_callback
+            self.add_item(suspects_btn)
+
         elif department == "中央銀行":
             # Currency issuance
             currency_btn: discord.ui.Button[Any] = discord.ui.Button(
@@ -1164,6 +1069,7 @@ class StateCouncilPanelView(discord.ui.View):
             title = "🛡️ 使用指引｜國土安全部"
             bullets = [
                 "• 逮捕人員：從下拉選單選擇目標使用者，填寫逮捕原因，系統會自動移除公民身分組並掛上嫌犯身分組。",
+                "• 嫌犯管理：查看、管理嫌犯列表，可批量釋放嫌犯或設定自動釋放時間。",
                 "• 權限：僅授權人員可執行；所有操作皆留痕。",
                 "• 部門轉帳：來源自目前頁面，僅在需跨部門費用時使用。",
                 "• 轉帳給使用者：來源自目前頁面，向指定使用者撥款（含本人）。",
@@ -1425,6 +1331,37 @@ class StateCouncilPanelView(discord.ui.View):
             user_roles=self.user_roles,
         )
         await _send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+
+    async def _suspects_management_callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+
+        view = HomelandSecuritySuspectsPanelView(
+            service=self.service,
+            guild=self.guild,
+            guild_id=self.guild_id,
+            author_id=self.author_id,
+            user_roles=self.user_roles,
+        )
+
+        try:
+            await view.prepare()
+            embed = view.build_embed()
+        except Exception as exc:
+            await _send_message_compat(
+                interaction,
+                content=f"載入嫌疑人面板失敗：{exc}",
+                ephemeral=True,
+            )
+            return
+
+        await _send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        try:
+            msg = await interaction.original_response()
+            view.set_message(msg)
+        except Exception:
+            pass
 
     async def _currency_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
@@ -3269,12 +3206,10 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
         return output.getvalue()
 
 
-# --- Suspects Management View ---
+# --- Homeland Security Suspects Panel ---
 
 
-class SuspectsManagementView(discord.ui.View):
-    """View for managing suspects (release, set auto-release time)."""
-
+class HomelandSecuritySuspectsPanelView(discord.ui.View):
     def __init__(
         self,
         *,
@@ -3282,308 +3217,531 @@ class SuspectsManagementView(discord.ui.View):
         guild: discord.Guild,
         guild_id: int,
         author_id: int,
-        user_roles: list[int],
-        suspects: list[dict[str, Any]],
-        suspect_role_id: int,
-        citizen_role_id: int | None = None,
+        user_roles: Sequence[int],
+        page_size: int = 10,
     ) -> None:
-        super().__init__(timeout=300)  # 5 minute timeout
+        super().__init__(timeout=600)
         self.service = service
         self.guild = guild
         self.guild_id = guild_id
         self.author_id = author_id
-        self.user_roles = user_roles
-        self.suspects = suspects
-        self.suspect_role_id = suspect_role_id
-        self.citizen_role_id = citizen_role_id
-        self.selected_suspects: list[int] = []
-        self.auto_release_hours: int = 24  # Default 24 hours
+        self.user_roles = list(user_roles)
+        self.page_size = max(5, page_size)
+        self.current_page = 0
+        self.search_keyword: str | None = None
+        self._suspects: list[SuspectProfile] = []
+        self._selected_ids: set[int] = set()
+        self._message: discord.Message | None = None
+        self._error_message: str | None = None
 
-        # Add select menu for suspects
-        self.add_suspect_select_menu()
+    async def prepare(self) -> None:
+        await self.reload()
 
-        # Add auto-release time selector
-        self.add_auto_release_select()
+    async def reload(self) -> None:
+        try:
+            self._suspects = await self.service.list_suspects(
+                guild=self.guild,
+                guild_id=self.guild_id,
+                search=self.search_keyword,
+            )
+            self._error_message = None
+        except Exception as exc:
+            self._suspects = []
+            self._error_message = str(exc)
+        self._sanitize_state()
+        self._refresh_components()
 
-        # Add action buttons
-        self.add_action_buttons()
+    def set_message(self, message: discord.Message) -> None:
+        self._message = message
 
-    def add_suspect_select_menu(self) -> None:
-        """Add select menu for choosing suspects to release."""
+    def _sanitize_state(self) -> None:
+        total_pages = self.total_pages
+        if self.current_page >= total_pages:
+            self.current_page = max(total_pages - 1, 0)
+        valid_ids = {profile.member_id for profile in self._suspects}
+        self._selected_ids &= valid_ids
+
+    @property
+    def total_pages(self) -> int:
+        if not self._suspects:
+            return 1
+        return max(1, math.ceil(len(self._suspects) / self.page_size))
+
+    def _current_page_profiles(self) -> list[SuspectProfile]:
+        start = self.current_page * self.page_size
+        end = start + self.page_size
+        return self._suspects[start:end]
+
+    def _refresh_components(self) -> None:
+        self.clear_items()
+        self._add_select_menu()
+        self._add_navigation_buttons()
+        self._add_action_buttons()
+
+    def _add_select_menu(self) -> None:
         options: list[discord.SelectOption] = []
-        for suspect in self.suspects:
-            member = self.guild.get_member(suspect["id"])
-            if member:
-                label = f"{member.display_name}"
-                description = f"加入時間: {suspect['joined_at'].strftime('%Y-%m-%d %H:%M') if suspect['joined_at'] else '未知'}"
-                options.append(
-                    discord.SelectOption(
-                        label=label,
-                        description=description,
-                        value=str(suspect["id"]),
-                    )
+        for profile in self._current_page_profiles():
+            description = self._format_select_description(profile)
+            options.append(
+                discord.SelectOption(
+                    label=profile.display_name[:95],
+                    description=description[:95] if description else None,
+                    value=str(profile.member_id),
                 )
+            )
 
         if not options:
-            options.append(
-                discord.SelectOption(
-                    label="無嫌疑人",
-                    description="目前沒有嫌疑人",
-                    value="none",
-                )
+            select: discord.ui.Select["HomelandSecuritySuspectsPanelView"] = discord.ui.Select(
+                placeholder="目前沒有嫌疑人",
+                min_values=1,
+                max_values=1,
+                options=[
+                    discord.SelectOption(
+                        label="等待新的逮捕紀錄",
+                        description="目前沒有嫌疑人",
+                        value="none",
+                    )
+                ],
+                row=0,
             )
-
-        select: discord.ui.Select[Any] = discord.ui.Select(
-            placeholder="選擇要釋放的嫌疑人（可多選）",
-            min_values=1,
-            max_values=min(len(options), 25),  # Discord limit
-            options=options,
-        )
-        if not self.suspects:
             select.disabled = True
-        select.callback = self.on_suspect_select
-        self.add_item(select)
-
-    def add_auto_release_select(self) -> None:
-        """Add select menu for auto-release time."""
-        time_options = [
-            (1, "1小時"),
-            (6, "6小時"),
-            (12, "12小時"),
-            (24, "1天"),
-            (48, "2天"),
-            (72, "3天"),
-            (168, "1週"),
-        ]
-
-        options: list[discord.SelectOption] = []
-        for hours, label in time_options:
-            description = f"嫌疑人將在 {hours} 小時後自動釋放"
-            options.append(
-                discord.SelectOption(
-                    label=label,
-                    description=description,
-                    value=str(hours),
-                )
+        else:
+            max_values = min(len(options), 25)
+            select = discord.ui.Select(
+                placeholder="選擇要操作的嫌疑人（可多選）",
+                min_values=1,
+                max_values=max_values,
+                options=options,
+                row=0,
             )
-
-        select: discord.ui.Select[Any] = discord.ui.Select(
-            placeholder="設定自動釋放時間",
-            min_values=1,
-            max_values=1,
-            options=options,
-        )
-        select.callback = self.on_auto_release_select
+        select.callback = self._on_select
         self.add_item(select)
 
-    def add_action_buttons(self) -> None:
-        """Add action buttons (release, cancel)."""
-        # Release button
-        release_btn: discord.ui.Button[Any] = discord.ui.Button(
+    def _add_navigation_buttons(self) -> None:
+        prev_btn: discord.ui.Button["HomelandSecuritySuspectsPanelView"] = discord.ui.Button(
+            label="上一頁",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        prev_btn.disabled = self.current_page == 0
+        prev_btn.callback = self._on_prev_page
+        self.add_item(prev_btn)
+
+        next_btn: discord.ui.Button["HomelandSecuritySuspectsPanelView"] = discord.ui.Button(
+            label="下一頁",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        next_btn.disabled = (self.current_page + 1) >= self.total_pages
+        next_btn.callback = self._on_next_page
+        self.add_item(next_btn)
+
+        refresh_btn: discord.ui.Button["HomelandSecuritySuspectsPanelView"] = discord.ui.Button(
+            label="重新整理",
+            style=discord.ButtonStyle.primary,
+            row=1,
+        )
+        refresh_btn.callback = self._on_refresh
+        self.add_item(refresh_btn)
+
+    def _add_action_buttons(self) -> None:
+        release_btn: discord.ui.Button["HomelandSecuritySuspectsPanelView"] = discord.ui.Button(
             label="釋放選中嫌疑人",
             style=discord.ButtonStyle.danger,
             emoji="🔓",
+            row=2,
         )
-        release_btn.callback = self.on_release
+        release_btn.callback = self._open_release_modal
         self.add_item(release_btn)
 
-        # Cancel button
-        cancel_btn: discord.ui.Button[Any] = discord.ui.Button(
-            label="取消",
-            style=discord.ButtonStyle.secondary,
+        auto_selected_btn: discord.ui.Button["HomelandSecuritySuspectsPanelView"] = (
+            discord.ui.Button(
+                label="設定選中自動釋放",
+                style=discord.ButtonStyle.secondary,
+                emoji="⏱️",
+                row=2,
+            )
         )
-        cancel_btn.callback = self.on_cancel
-        self.add_item(cancel_btn)
+        auto_selected_btn.callback = self._start_auto_release_selected
+        self.add_item(auto_selected_btn)
 
-    async def build_embed(self) -> discord.Embed:
-        """Build embed showing current suspects and controls."""
+        auto_all_btn: discord.ui.Button["HomelandSecuritySuspectsPanelView"] = discord.ui.Button(
+            label="全部自動釋放",
+            style=discord.ButtonStyle.secondary,
+            emoji="🕒",
+            row=2,
+        )
+        auto_all_btn.callback = self._start_auto_release_all
+        self.add_item(auto_all_btn)
+
+        search_btn: discord.ui.Button["HomelandSecuritySuspectsPanelView"] = discord.ui.Button(
+            label="搜尋",
+            style=discord.ButtonStyle.success,
+            row=3,
+        )
+        search_btn.callback = self._open_search_modal
+        self.add_item(search_btn)
+
+        reset_btn: discord.ui.Button["HomelandSecuritySuspectsPanelView"] = discord.ui.Button(
+            label="清除搜尋",
+            style=discord.ButtonStyle.secondary,
+            row=3,
+        )
+        reset_btn.callback = self._on_reset_search
+        self.add_item(reset_btn)
+
+        audit_btn: discord.ui.Button["HomelandSecuritySuspectsPanelView"] = discord.ui.Button(
+            label="查看審計記錄",
+            style=discord.ButtonStyle.secondary,
+            row=3,
+        )
+        audit_btn.callback = self._show_audit_log
+        self.add_item(audit_btn)
+
+        close_btn: discord.ui.Button["HomelandSecuritySuspectsPanelView"] = discord.ui.Button(
+            label="關閉面板",
+            style=discord.ButtonStyle.gray,
+            row=4,
+        )
+        close_btn.callback = self._on_close
+        self.add_item(close_btn)
+
+    def _format_select_description(self, profile: SuspectProfile) -> str:
+        arrested = self._format_timestamp(profile.arrested_at)
+        auto_release = self._format_auto_release(profile)
+        return f"逮捕: {arrested} | 自動釋放: {auto_release}"
+
+    def _format_timestamp(self, value: datetime | None) -> str:
+        if value is None:
+            return "未知"
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    def _format_auto_release(self, profile: SuspectProfile) -> str:
+        if profile.auto_release_at is None:
+            return "未設定"
+        remaining = profile.auto_release_at - datetime.now(timezone.utc)
+        if remaining.total_seconds() <= 0:
+            return "排程中"
+        hours = int(remaining.total_seconds() // 3600)
+        minutes = int((remaining.total_seconds() % 3600) // 60)
+        return f"{hours}小時{minutes:02d}分後"
+
+    def build_embed(self) -> discord.Embed:
+        description = [
+            f"目前嫌疑人：{len(self._suspects)} 人",
+            f"已選擇：{len(self._selected_ids)} 人",
+            f"頁面：{self.current_page + 1}/{self.total_pages}",
+        ]
         embed = discord.Embed(
-            title="🔒 嫌疑人管理",
-            description=f"目前嫌疑人數量: {len(self.suspects)}\n自動釋放時間: {self.auto_release_hours} 小時",
+            title="🛡️ 國土安全部｜嫌疑人管理",
+            description="\n".join(description),
             color=discord.Color.red(),
         )
 
-        if self.selected_suspects:
-            selected_names: list[str] = []
-            for suspect_id in self.selected_suspects:
-                member = self.guild.get_member(suspect_id)
-                if member:
-                    selected_names.append(member.display_name)
+        if self.search_keyword:
             embed.add_field(
-                name="已選擇釋放",
-                value=", ".join(selected_names),
+                name="搜尋過濾",
+                value=f"`{self.search_keyword}`",
                 inline=False,
             )
 
-        embed.set_footer(text="注意: 自動釋放設定在機器人重啟後會失效（最小實作）")
+        if self._error_message:
+            embed.add_field(name="狀態", value=f"⚠️ {self._error_message}", inline=False)
+        elif not self._suspects:
+            embed.add_field(name="狀態", value="目前沒有嫌疑人。", inline=False)
+        else:
+            lines: list[str] = []
+            start_index = self.current_page * self.page_size
+            for offset, profile in enumerate(self._current_page_profiles(), start=1):
+                idx = start_index + offset
+                base = (
+                    f"{idx}. {profile.display_name}｜逮捕 {self._format_timestamp(profile.arrested_at)}"
+                    f"｜自動釋放 {self._format_auto_release(profile)}"
+                )
+                lines.append(base)
+                if profile.arrest_reason:
+                    lines.append(f" └ 理由：{profile.arrest_reason}")
+            embed.add_field(name="嫌疑人列表", value="\n".join(lines), inline=False)
+
+        embed.set_footer(text="支援搜尋、分頁、批次釋放與自動釋放設定")
         return embed
 
-    async def on_suspect_select(self, interaction: discord.Interaction) -> None:
-        """Handle suspect selection."""
+    async def _ensure_author(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
-            await interaction.response.send_message("僅限面板開啟者可操作。", ephemeral=True)
+            await interaction.response.send_message("僅限面板開啟者操作。", ephemeral=True)
+            return False
+        return True
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        if not await self._ensure_author(interaction):
             return
+        data: dict[str, Any] = cast(dict[str, Any], interaction.data or {})
+        values = data.get("values") or []
+        selected: set[int] = set()
+        for raw in values if isinstance(values, (list, tuple, set)) else []:
+            try:
+                selected.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+        self._selected_ids = selected
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
 
-        # Get selected values
-        if not interaction.data:
-            await interaction.response.send_message("無效的互動資料", ephemeral=True)
+    async def _on_prev_page(self, interaction: discord.Interaction) -> None:
+        if not await self._ensure_author(interaction):
             return
-        vals_raw = interaction.data.get("values") if interaction.data else None
-        vals: list[str] = []
-        raw_list = vals_raw if isinstance(vals_raw, list) else []
-        for item in raw_list:
-            if isinstance(item, str):
-                vals.append(item)
-        self.selected_suspects = [int(val) for val in vals if val != "none"]
-
-        # Update embed
-        embed = await self.build_embed()
-        await interaction.response.edit_message(embed=embed, view=self)
-
-    async def on_auto_release_select(self, interaction: discord.Interaction) -> None:
-        """Handle auto-release time selection."""
-        if interaction.user.id != self.author_id:
-            await interaction.response.send_message("僅限面板開啟者可操作。", ephemeral=True)
+        if self.current_page == 0:
+            await interaction.response.send_message("已在第一頁。", ephemeral=True)
             return
+        self.current_page -= 1
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
 
-        # Get selected value
-        if not interaction.data:
-            await interaction.response.send_message("無效的互動資料", ephemeral=True)
+    async def _on_next_page(self, interaction: discord.Interaction) -> None:
+        if not await self._ensure_author(interaction):
             return
-        vals_raw = interaction.data.get("values")
-        vals: list[str] = []
-        raw_list = vals_raw if isinstance(vals_raw, list) else []
-        for item in raw_list:
-            if isinstance(item, str):
-                vals.append(item)
-        if not vals:
-            await interaction.response.send_message("無效的選擇。", ephemeral=True)
+        if (self.current_page + 1) >= self.total_pages:
+            await interaction.response.send_message("已在最後一頁。", ephemeral=True)
             return
-        self.auto_release_hours = int(vals[0])
+        self.current_page += 1
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
 
-        # Update embed
-        embed = await self.build_embed()
-        await interaction.response.edit_message(embed=embed, view=self)
-
-    async def on_release(self, interaction: discord.Interaction) -> None:
-        """Handle release button click."""
-        if interaction.user.id != self.author_id:
-            await interaction.response.send_message("僅限面板開啟者可操作。", ephemeral=True)
+    async def _on_refresh(self, interaction: discord.Interaction) -> None:
+        if not await self._ensure_author(interaction):
             return
+        await interaction.response.defer(ephemeral=True)
+        await self.reload()
+        await self._push_update()
+        await interaction.followup.send("已重新載入嫌疑人列表。", ephemeral=True)
 
-        if not self.selected_suspects:
+    async def _open_release_modal(self, interaction: discord.Interaction) -> None:
+        if not await self._ensure_author(interaction):
+            return
+        if not self._selected_ids:
             await interaction.response.send_message("請先選擇要釋放的嫌疑人。", ephemeral=True)
             return
+        await interaction.response.send_modal(SuspectReleaseModal(panel=self))
 
-        try:
-            # Release selected suspects
-            released_count = 0
-            failed_count = 0
-            failed_names: list[str] = []
-
-            for suspect_id in self.selected_suspects:
-                member = self.guild.get_member(suspect_id)
-                if not member:
-                    failed_count += 1
-                    continue
-
-                try:
-                    # Remove suspect role
-                    if self.suspect_role_id in [role.id for role in member.roles]:
-                        suspect_role = self.guild.get_role(self.suspect_role_id)
-                        if suspect_role:
-                            await member.remove_roles(suspect_role)
-
-                    # Restore citizen role if configured
-                    if self.citizen_role_id:
-                        citizen_role = self.guild.get_role(self.citizen_role_id)
-                        if citizen_role and citizen_role not in member.roles:
-                            await member.add_roles(citizen_role)
-
-                    # Record identity action
-                    await self.service.record_identity_action(
-                        guild_id=self.guild_id,
-                        target_id=suspect_id,
-                        action="移除疑犯標記",
-                        reason=f"由 {interaction.user.display_name} 釋放（自動釋放設定: {self.auto_release_hours}小時）",
-                        performed_by=interaction.user.id,
-                    )
-
-                    # Set auto-release if configured
-                    if self.auto_release_hours > 0:
-                        try:
-                            from src.bot.services.state_council_scheduler import set_auto_release
-
-                            set_auto_release(self.guild_id, suspect_id, self.auto_release_hours)
-                        except Exception as sched_exc:
-                            LOGGER.warning(
-                                "suspects.auto_release.set_failed",
-                                guild_id=self.guild_id,
-                                suspect_id=suspect_id,
-                                hours=self.auto_release_hours,
-                                error=str(sched_exc),
-                            )
-
-                    released_count += 1
-
-                except Exception as exc:
-                    LOGGER.warning(
-                        "suspects.release.failed",
-                        guild_id=self.guild_id,
-                        suspect_id=suspect_id,
-                        error=str(exc),
-                    )
-                    failed_count += 1
-                    failed_names.append(member.display_name)
-
-            # Update suspects list
-            self.suspects = [s for s in self.suspects if s["id"] not in self.selected_suspects]
-            self.selected_suspects = []
-
-            # Show result
-            result_msg = f"✅ 釋放完成！成功釋放 {released_count} 人"
-            if failed_count > 0:
-                result_msg += f"，失敗 {failed_count} 人"
-                if failed_names:
-                    result_msg += f": {', '.join(failed_names)}"
-
-            # Update view
-            self.clear_items()
-            self.add_suspect_select_menu()
-            self.add_auto_release_select()
-            self.add_action_buttons()
-
-            # Update embed
-            embed = await self.build_embed()
-            await interaction.response.edit_message(embed=embed, view=self)
-
-            # Send result message
-            await interaction.followup.send(content=result_msg, ephemeral=True)
-
-        except Exception as exc:
-            LOGGER.exception("suspects.release.error", error=str(exc))
-            await interaction.response.send_message("❌ 釋放失敗，請稍後再試。", ephemeral=True)
-
-    async def on_cancel(self, interaction: discord.Interaction) -> None:
-        """Handle cancel button click."""
-        if interaction.user.id != self.author_id:
-            await interaction.response.send_message("僅限面板開啟者可操作。", ephemeral=True)
+    async def _open_auto_release_modal(
+        self,
+        interaction: discord.Interaction,
+        *,
+        scope: Literal["selected", "all"],
+    ) -> None:
+        if not await self._ensure_author(interaction):
             return
+        target_pool = (
+            self._selected_ids if scope == "selected" else {p.member_id for p in self._suspects}
+        )
+        if not target_pool:
+            await interaction.response.send_message("沒有可設定的嫌疑人。", ephemeral=True)
+            return
+        await interaction.response.send_modal(SuspectAutoReleaseModal(panel=self, scope=scope))
 
-        # Disable all components
-        from typing import cast
+    async def _start_auto_release_selected(self, interaction: discord.Interaction) -> None:
+        await self._open_auto_release_modal(interaction, scope="selected")
 
-        for item in self.children:
-            if hasattr(item, "disabled"):
-                cast(Any, item).disabled = True
+    async def _start_auto_release_all(self, interaction: discord.Interaction) -> None:
+        await self._open_auto_release_modal(interaction, scope="all")
 
+    async def _open_search_modal(self, interaction: discord.Interaction) -> None:
+        if not await self._ensure_author(interaction):
+            return
+        await interaction.response.send_modal(SuspectSearchModal(panel=self))
+
+    async def _on_reset_search(self, interaction: discord.Interaction) -> None:
+        if not await self._ensure_author(interaction):
+            return
+        self.search_keyword = None
+        self.current_page = 0
+        await interaction.response.defer(ephemeral=True)
+        await self.reload()
+        await self._push_update()
+        await interaction.followup.send("已清除搜尋條件。", ephemeral=True)
+
+    async def _show_audit_log(self, interaction: discord.Interaction) -> None:
+        if not await self._ensure_author(interaction):
+            return
+        records = await self.service.fetch_identity_audit_log(guild_id=self.guild_id, limit=10)
+        if not records:
+            await interaction.response.send_message("目前沒有審計記錄。", ephemeral=True)
+            return
+        lines = []
+        for record in records:
+            timestamp = self._format_timestamp(record.performed_at)
+            lines.append(
+                f"• {timestamp}｜目標 {record.target_id}｜{record.action}｜{record.reason or '—'}"
+            )
         embed = discord.Embed(
-            title="🔒 嫌疑人管理",
-            description="操作已取消",
-            color=discord.Color.greyple(),
+            title="嫌疑人審計記錄",
+            description="\n".join(lines[:10]),
+            color=discord.Color.blue(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    async def _on_close(self, interaction: discord.Interaction) -> None:
+        if not await self._ensure_author(interaction):
+            return
+        for item in self.children:
+            item.disabled = True
+        embed = self.build_embed()
+        embed.set_footer(text="面板已關閉")
+        await interaction.response.edit_message(embed=embed, view=self)
+        self.stop()
+
+    async def handle_release(self, interaction: discord.Interaction, reason: str | None) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            results = await self.service.release_suspects(
+                guild=self.guild,
+                guild_id=self.guild_id,
+                department="國土安全部",
+                user_id=self.author_id,
+                user_roles=self.user_roles,
+                suspect_ids=list(self._selected_ids),
+                reason=reason,
+            )
+        except Exception as exc:
+            await interaction.followup.send(f"釋放失敗：{exc}", ephemeral=True)
+            return
+        self._selected_ids.clear()
+        await self.reload()
+        await self._push_update()
+        summary = self._summarize_release(results)
+        await interaction.followup.send(summary, ephemeral=True)
+
+    async def handle_auto_release(
+        self,
+        interaction: discord.Interaction,
+        *,
+        hours: int,
+        scope: Literal["selected", "all"],
+    ) -> None:
+        target_ids = (
+            list(self._selected_ids)
+            if scope == "selected"
+            else [profile.member_id for profile in self._suspects]
+        )
+        if not target_ids:
+            await interaction.response.send_message("沒有可設定的嫌疑人。", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            scheduled = await self.service.schedule_auto_release(
+                guild=self.guild,
+                guild_id=self.guild_id,
+                department="國土安全部",
+                user_id=self.author_id,
+                user_roles=self.user_roles,
+                suspect_ids=target_ids,
+                hours=hours,
+            )
+        except Exception as exc:
+            await interaction.followup.send(f"設定失敗：{exc}", ephemeral=True)
+            return
+        if scope == "selected":
+            self._selected_ids.clear()
+        await self.reload()
+        await self._push_update()
+        await interaction.followup.send(
+            f"已為 {len(scheduled)} 名嫌疑人設定 {hours} 小時自動釋放。",
+            ephemeral=True,
         )
 
-        await interaction.response.edit_message(embed=embed, view=self)
+    async def apply_search(self, interaction: discord.Interaction, keyword: str | None) -> None:
+        await interaction.response.defer(ephemeral=True)
+        self.search_keyword = keyword or None
+        self.current_page = 0
+        await self.reload()
+        await self._push_update()
+        message = "已清除搜尋條件。" if not keyword else f"搜尋條件：`{keyword}`"
+        await interaction.followup.send(message, ephemeral=True)
+
+    async def _push_update(self) -> None:
+        if not self._message:
+            return
+        self._refresh_components()
+        await self._message.edit(embed=self.build_embed(), view=self)
+
+    def _summarize_release(self, results: Sequence[SuspectReleaseResult]) -> str:
+        released = sum(1 for item in results if item.released)
+        failed = len(results) - released
+        parts = [f"成功釋放 {released} 人"]
+        if failed:
+            errors = [item for item in results if not item.released]
+            failed_names = ", ".join(filter(None, (item.display_name for item in errors)))
+            parts.append(f"失敗 {failed} 人{f'：{failed_names}' if failed_names else ''}")
+        return "；".join(parts)
+
+    async def on_timeout(self) -> None:
+        if not self._message:
+            return
+        for item in self.children:
+            item.disabled = True
+        embed = self.build_embed()
+        embed.set_footer(text="面板已逾時，請重新開啟。")
+        try:
+            await self._message.edit(embed=embed, view=self)
+        except Exception:
+            pass
+        self.stop()
+
+
+class SuspectReleaseModal(discord.ui.Modal, title="釋放嫌疑人"):
+    def __init__(self, panel: HomelandSecuritySuspectsPanelView) -> None:
+        super().__init__(title="釋放嫌疑人")
+        self.panel = panel
+        self.reason_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="釋放理由（可選）",
+            placeholder="預設為『面板釋放』",
+            required=False,
+            style=discord.TextStyle.paragraph,
+        )
+        self.add_item(self.reason_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        reason = str(self.reason_input.value).strip() or None
+        await self.panel.handle_release(interaction, reason)
+
+
+class SuspectAutoReleaseModal(discord.ui.Modal, title="設定自動釋放"):
+    def __init__(
+        self,
+        panel: HomelandSecuritySuspectsPanelView,
+        *,
+        scope: Literal["selected", "all"],
+    ) -> None:
+        super().__init__(title="設定自動釋放")
+        self.panel = panel
+        self.scope = scope
+        self.hours_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="自動釋放時限（小時）",
+            placeholder="輸入 1-168 的整數",
+            required=True,
+        )
+        self.add_item(self.hours_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            hours = int(str(self.hours_input.value).strip())
+        except ValueError:
+            await interaction.response.send_message("請輸入有效的整數時數。", ephemeral=True)
+            return
+        await self.panel.handle_auto_release(interaction, hours=hours, scope=self.scope)
+
+
+class SuspectSearchModal(discord.ui.Modal, title="搜尋嫌疑人"):
+    def __init__(self, panel: HomelandSecuritySuspectsPanelView) -> None:
+        super().__init__(title="搜尋嫌疑人")
+        self.panel = panel
+        self.keyword_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="關鍵字",
+            placeholder="輸入成員名稱片段，留空代表全部",
+            required=False,
+        )
+        self.add_item(self.keyword_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        keyword = str(self.keyword_input.value).strip() or None
+        await self.panel.apply_search(interaction, keyword)
 
 
 # --- Background Scheduler Integration ---

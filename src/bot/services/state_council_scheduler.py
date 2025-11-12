@@ -9,6 +9,7 @@ This module handles automated tasks such as:
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Set, cast
 
@@ -24,9 +25,37 @@ LOGGER = structlog.get_logger(__name__)
 # Global scheduler task reference
 _scheduler_task: asyncio.Task[None] | None = None
 
+
+@dataclass(slots=True)
+class AutoReleaseJob:
+    guild_id: int
+    suspect_id: int
+    release_at: datetime
+    hours: int
+    scheduled_by: int
+    scheduled_at: datetime
+
+
 # In-memory storage for auto-release settings (minimal viable implementation)
-# Format: {guild_id: {suspect_id: release_time}}
-_auto_release_settings: dict[int, dict[int, datetime]] = {}
+# Format: {guild_id: {suspect_id: AutoReleaseJob}}
+_auto_release_settings: dict[int, dict[int, AutoReleaseJob]] = {}
+
+
+def get_auto_release_jobs_for_guild(guild_id: int) -> dict[int, AutoReleaseJob]:
+    """Return a shallow copy of scheduled auto-release jobs for a guild."""
+
+    return dict(_auto_release_settings.get(guild_id, {}))
+
+
+def get_all_auto_release_jobs() -> dict[int, dict[int, AutoReleaseJob]]:
+    """Return copy of all scheduled jobs (primarily for diagnostics/tests)."""
+
+    return {gid: dict(jobs) for gid, jobs in _auto_release_settings.items()}
+
+
+def _cleanup_empty_guild_entries() -> None:
+    global _auto_release_settings
+    _auto_release_settings = {gid: jobs for gid, jobs in _auto_release_settings.items() if jobs}
 
 
 async def start_scheduler(client: Any) -> None:
@@ -196,82 +225,75 @@ async def _process_auto_release(
         global _auto_release_settings
 
         # Check each guild's auto-release settings
-        for guild_id, suspects in list(_auto_release_settings.items()):
-            if not suspects:
+        for guild_id, jobs in list(_auto_release_settings.items()):
+            if not jobs:
                 continue
 
-            # Get guild config to check role IDs
-            try:
-                cfg = await service.get_config(guild_id=guild_id)
-                if not cfg.suspect_role_id or not cfg.citizen_role_id:
-                    continue
-            except Exception:
-                # Guild not configured, skip
+            ready_jobs = [job for job in jobs.values() if job.release_at <= current_time]
+            if not ready_jobs:
                 continue
 
-            # Check each suspect's release time
-            for suspect_id, release_time in list(suspects.items()):
-                if release_time > current_time:
-                    continue  # Not time yet
+            guild = client.get_guild(guild_id)
+            if not guild:
+                for job in ready_jobs:
+                    jobs.pop(job.suspect_id, None)
+                continue
 
-                # Time to release this suspect
+            suspect_ids = [job.suspect_id for job in ready_jobs]
+            operator_id = ready_jobs[0].scheduled_by
+            if not operator_id:
                 try:
-                    # Get guild and member
-                    guild = client.get_guild(guild_id)
-                    if not guild:
-                        # Guild not found, remove from settings
-                        del suspects[suspect_id]
-                        continue
+                    operator_id = getattr(getattr(client, "user", None), "id", 0)
+                except Exception:
+                    operator_id = 0
 
-                    member = guild.get_member(suspect_id)
-                    if not member:
-                        # Member not found, remove from settings
-                        del suspects[suspect_id]
-                        continue
+            try:
+                results = await service.release_suspects(
+                    guild=guild,
+                    guild_id=guild_id,
+                    department="國土安全部",
+                    user_id=operator_id,
+                    user_roles=[],
+                    suspect_ids=suspect_ids,
+                    reason="達到自動釋放時間",
+                    audit_source="auto-release",
+                    skip_permission=True,
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    "state_council.scheduler.auto_release.failed_batch",
+                    guild_id=guild_id,
+                    suspect_ids=suspect_ids,
+                    error=str(exc),
+                )
+                for job in ready_jobs:
+                    jobs.pop(job.suspect_id, None)
+                continue
 
-                    # Remove suspect role and add citizen role
-                    suspect_role = guild.get_role(cfg.suspect_role_id)
-                    citizen_role = guild.get_role(cfg.citizen_role_id)
+            for job in ready_jobs:
+                jobs.pop(job.suspect_id, None)
 
-                    if suspect_role and suspect_role in member.roles:
-                        await member.remove_roles(suspect_role, reason="自動釋放")
-
-                    if citizen_role and citizen_role not in member.roles:
-                        await member.add_roles(citizen_role, reason="自動釋放")
-
-                    # Record identity action
-                    await service.record_identity_action(
-                        guild_id=guild_id,
-                        target_id=suspect_id,
-                        action="移除疑犯標記",
-                        reason="達到自動釋放時間",
-                        performed_by=0,  # System user
-                    )
-
-                    # Remove from auto-release settings
-                    del suspects[suspect_id]
-
+            # Log per-result outcomes for observability
+            for result in results:
+                suspect_id = getattr(result, "suspect_id", None)
+                released = bool(getattr(result, "released", False))
+                display_name = getattr(result, "display_name", None)
+                if released:
                     LOGGER.info(
                         "state_council.scheduler.auto_release.completed",
                         guild_id=guild_id,
                         suspect_id=suspect_id,
-                        member_name=member.display_name,
+                        member_name=display_name,
                     )
-
-                except Exception as exc:
+                else:
                     LOGGER.warning(
                         "state_council.scheduler.auto_release.failed",
                         guild_id=guild_id,
                         suspect_id=suspect_id,
-                        error=str(exc),
+                        error=getattr(result, "error", "unknown"),
                     )
-                    # Remove from settings to avoid repeated failures
-                    del suspects[suspect_id]
 
-        # Clean up empty guild entries
-        _auto_release_settings = {
-            gid: suspects for gid, suspects in _auto_release_settings.items() if suspects
-        }
+        _cleanup_empty_guild_entries()
 
         LOGGER.debug(
             "state_council.scheduler.auto_release.checked",
@@ -283,39 +305,58 @@ async def _process_auto_release(
         LOGGER.exception("state_council.scheduler.auto_release_error", error=str(exc))
 
 
-def set_auto_release(guild_id: int, suspect_id: int, hours: int) -> None:
+def set_auto_release(
+    guild_id: int, suspect_id: int, hours: int, *, scheduled_by: int
+) -> AutoReleaseJob:
     """Set auto-release time for a suspect (in-memory only)."""
+
     global _auto_release_settings
 
-    release_time = datetime.now(tz=timezone.utc) + timedelta(hours=hours)
+    normalized_hours = max(1, min(168, int(hours)))
+    now = datetime.now(tz=timezone.utc)
+    release_time = now + timedelta(hours=normalized_hours)
+
+    job = AutoReleaseJob(
+        guild_id=guild_id,
+        suspect_id=suspect_id,
+        release_at=release_time,
+        hours=normalized_hours,
+        scheduled_by=scheduled_by,
+        scheduled_at=now,
+    )
 
     if guild_id not in _auto_release_settings:
         _auto_release_settings[guild_id] = {}
 
-    _auto_release_settings[guild_id][suspect_id] = release_time
+    _auto_release_settings[guild_id][suspect_id] = job
 
     LOGGER.info(
         "state_council.scheduler.auto_release.set",
         guild_id=guild_id,
         suspect_id=suspect_id,
-        hours=hours,
+        hours=normalized_hours,
         release_time=release_time,
+        scheduled_by=scheduled_by,
     )
+
+    return job
 
 
 def cancel_auto_release(guild_id: int, suspect_id: int) -> None:
     """Cancel auto-release for a suspect."""
+
     global _auto_release_settings
 
-    if guild_id in _auto_release_settings and suspect_id in _auto_release_settings[guild_id]:
-        del _auto_release_settings[guild_id][suspect_id]
+    jobs = _auto_release_settings.get(guild_id)
+    if not jobs or suspect_id not in jobs:
+        return
 
-        # Clean up empty guild entry
-        if not _auto_release_settings[guild_id]:
-            del _auto_release_settings[guild_id]
+    del jobs[suspect_id]
+    if not jobs:
+        del _auto_release_settings[guild_id]
 
-        LOGGER.info(
-            "state_council.scheduler.auto_release.cancelled",
-            guild_id=guild_id,
-            suspect_id=suspect_id,
-        )
+    LOGGER.info(
+        "state_council.scheduler.auto_release.cancelled",
+        guild_id=guild_id,
+        suspect_id=suspect_id,
+    )

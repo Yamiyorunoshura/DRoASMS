@@ -70,6 +70,26 @@ class StateCouncilSummary:
     recent_transfers: Sequence[InterdepartmentTransfer]
 
 
+@dataclass(frozen=True, slots=True)
+class SuspectProfile:
+    member_id: int
+    display_name: str
+    joined_at: datetime | None
+    arrested_at: datetime | None
+    arrest_reason: str | None
+    auto_release_at: datetime | None
+    auto_release_hours: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class SuspectReleaseResult:
+    suspect_id: int
+    display_name: str | None
+    released: bool
+    reason: str | None = None
+    error: str | None = None
+
+
 class StateCouncilService:
     """Coordinates state council governance operations and business rules."""
 
@@ -93,6 +113,46 @@ class StateCouncilService:
         self._economy = EconomyQueryGateway()
         # 政府註冊表
         self._department_registry = department_registry or DepartmentRegistry()
+
+    def _get_auto_release_jobs(self, guild_id: int) -> dict[int, Any]:
+        """Fetch in-memory auto-release metadata without importing at module load."""
+
+        try:
+            from src.bot.services.state_council_scheduler import (
+                get_auto_release_jobs_for_guild,
+            )
+
+            return get_auto_release_jobs_for_guild(guild_id)
+        except Exception:
+            return {}
+
+    def _cancel_auto_release_job(self, guild_id: int, suspect_id: int) -> None:
+        try:
+            from src.bot.services.state_council_scheduler import cancel_auto_release
+
+            cancel_auto_release(guild_id, suspect_id)
+        except Exception:
+            LOGGER.warning(
+                "state_council.auto_release.cancel_failed",
+                guild_id=guild_id,
+                suspect_id=suspect_id,
+            )
+
+    def _schedule_auto_release_job(
+        self, guild_id: int, suspect_id: int, hours: int, scheduled_by: int
+    ) -> Any | None:
+        try:
+            from src.bot.services.state_council_scheduler import set_auto_release
+
+            return set_auto_release(guild_id, suspect_id, hours, scheduled_by=scheduled_by)
+        except Exception:
+            LOGGER.warning(
+                "state_council.auto_release.schedule_failed",
+                guild_id=guild_id,
+                suspect_id=suspect_id,
+                hours=hours,
+            )
+            return None
 
     def _ensure_transfer(self) -> TransferService:
         """取得 TransferService（非 Optional）。"""
@@ -220,6 +280,41 @@ class StateCouncilService:
             ):
                 best = acc
         return best
+
+    async def _fetch_latest_identity_records(
+        self,
+        *,
+        guild_id: int,
+        target_ids: set[int],
+        limit: int = 1000,
+    ) -> dict[int, IdentityRecord]:
+        """Return latest arrest records keyed by target id."""
+
+        if not target_ids:
+            return {}
+
+        try:
+            pool: PoolProtocol = cast(PoolProtocol, get_pool())
+            cm = await self._pool_acquire_cm(pool)
+            async with cm as conn:
+                records = await self._gateway.fetch_identity_records(
+                    conn, guild_id=guild_id, limit=limit
+                )
+        except Exception:
+            return {}
+
+        latest: dict[int, IdentityRecord] = {}
+        for record in records:
+            if record.target_id not in target_ids:
+                continue
+            if record.action != "標記疑犯":
+                continue
+            if record.target_id in latest:
+                continue
+            latest[record.target_id] = record
+            if len(latest) == len(target_ids):
+                break
+        return latest
 
     async def reconcile_government_balances(
         self,
@@ -822,6 +917,229 @@ class StateCouncilService:
             return False
 
         return False
+
+    # --- Suspects Management ---
+    async def list_suspects(
+        self,
+        *,
+        guild: Any,
+        guild_id: int,
+        search: str | None = None,
+    ) -> list[SuspectProfile]:
+        cfg = await self.get_config(guild_id=guild_id)
+        suspect_role_id = getattr(cfg, "suspect_role_id", None)
+        if not suspect_role_id:
+            return []
+
+        suspect_role = guild.get_role(suspect_role_id) if hasattr(guild, "get_role") else None
+        members = list(getattr(suspect_role, "members", []) or []) if suspect_role else []
+        if not members:
+            return []
+
+        keyword = search.lower().strip() if search else None
+        target_ids = {member.id for member in members}
+        identity_map = await self._fetch_latest_identity_records(
+            guild_id=guild_id,
+            target_ids=target_ids,
+        )
+        auto_release_map = self._get_auto_release_jobs(guild_id)
+
+        profiles: list[SuspectProfile] = []
+        for member in members:
+            name = getattr(member, "display_name", getattr(member, "name", str(member.id)))
+            if keyword and keyword not in name.lower():
+                continue
+
+            record = identity_map.get(member.id)
+            schedule = auto_release_map.get(member.id)
+            profiles.append(
+                SuspectProfile(
+                    member_id=int(member.id),
+                    display_name=name,
+                    joined_at=getattr(member, "joined_at", None),
+                    arrested_at=getattr(record, "performed_at", None),
+                    arrest_reason=getattr(record, "reason", None),
+                    auto_release_at=getattr(schedule, "release_at", None),
+                    auto_release_hours=getattr(schedule, "hours", None),
+                )
+            )
+
+        profiles.sort(
+            key=lambda profile: (
+                profile.arrested_at or datetime.now(timezone.utc),
+                profile.display_name,
+            ),
+            reverse=True,
+        )
+        return profiles
+
+    async def release_suspects(
+        self,
+        *,
+        guild: Any,
+        guild_id: int,
+        department: str,
+        user_id: int,
+        user_roles: Sequence[int],
+        suspect_ids: Sequence[int],
+        reason: str | None = None,
+        audit_source: str = "manual",
+        skip_permission: bool = False,
+    ) -> list[SuspectReleaseResult]:
+        if not suspect_ids:
+            return []
+
+        if not skip_permission and not await self.check_department_permission(
+            guild_id=guild_id, user_id=user_id, department=department, user_roles=user_roles
+        ):
+            raise PermissionDeniedError("沒有權限釋放嫌疑人。")
+
+        cfg = await self.get_config(guild_id=guild_id)
+        suspect_role_id = getattr(cfg, "suspect_role_id", None)
+        if not suspect_role_id:
+            raise ValueError("嫌犯身分組尚未設定。")
+
+        suspect_role = guild.get_role(suspect_role_id) if hasattr(guild, "get_role") else None
+        if suspect_role is None:
+            raise ValueError("嫌犯身分組不存在，請檢查伺服器設定。")
+
+        citizen_role = None
+        citizen_role_id = getattr(cfg, "citizen_role_id", None)
+        if citizen_role_id:
+            citizen_role = guild.get_role(citizen_role_id) if hasattr(guild, "get_role") else None
+
+        summary: list[SuspectReleaseResult] = []
+        release_reason = reason or ("面板釋放" if audit_source == "manual" else "自動釋放")
+
+        for suspect_id in suspect_ids:
+            member = guild.get_member(suspect_id) if hasattr(guild, "get_member") else None
+            display_name = getattr(member, "display_name", None)
+            if member is None:
+                summary.append(
+                    SuspectReleaseResult(
+                        suspect_id=int(suspect_id),
+                        display_name=None,
+                        released=False,
+                        error="成員不存在",
+                    )
+                )
+                self._cancel_auto_release_job(guild_id, suspect_id)
+                continue
+
+            try:
+                roles = list(getattr(member, "roles", []) or [])
+                if suspect_role in roles:
+                    await member.remove_roles(suspect_role, reason=release_reason)
+                if citizen_role is not None and citizen_role not in roles:
+                    await member.add_roles(citizen_role, reason=release_reason)
+
+                performed_by = user_id if user_id else 0
+                await self.record_identity_action(
+                    guild_id=guild_id,
+                    target_id=suspect_id,
+                    action="移除疑犯標記",
+                    reason=release_reason,
+                    performed_by=performed_by,
+                )
+
+                self._cancel_auto_release_job(guild_id, suspect_id)
+                summary.append(
+                    SuspectReleaseResult(
+                        suspect_id=int(suspect_id),
+                        display_name=display_name,
+                        released=True,
+                        reason=release_reason,
+                    )
+                )
+            except Exception as exc:
+                summary.append(
+                    SuspectReleaseResult(
+                        suspect_id=int(suspect_id),
+                        display_name=display_name,
+                        released=False,
+                        reason=release_reason,
+                        error=str(exc),
+                    )
+                )
+                self._cancel_auto_release_job(guild_id, suspect_id)
+
+        return summary
+
+    async def schedule_auto_release(
+        self,
+        *,
+        guild: Any,
+        guild_id: int,
+        department: str,
+        user_id: int,
+        user_roles: Sequence[int],
+        suspect_ids: Sequence[int],
+        hours: int,
+    ) -> dict[int, datetime]:
+        if not suspect_ids:
+            raise ValueError("請先選擇要設定自動釋放的嫌疑人。")
+        if hours < 1 or hours > 168:
+            raise ValueError("自動釋放時限僅支援 1-168 小時。")
+
+        if not await self.check_department_permission(
+            guild_id=guild_id, user_id=user_id, department=department, user_roles=user_roles
+        ):
+            raise PermissionDeniedError("沒有權限設定自動釋放。")
+
+        cfg = await self.get_config(guild_id=guild_id)
+        suspect_role_id = getattr(cfg, "suspect_role_id", None)
+        if not suspect_role_id:
+            raise ValueError("嫌犯身分組尚未設定。")
+
+        suspect_role = guild.get_role(suspect_role_id) if hasattr(guild, "get_role") else None
+        if suspect_role is None:
+            raise ValueError("嫌犯身分組不存在，請檢查伺服器設定。")
+        suspect_role_id_value = getattr(suspect_role, "id", suspect_role_id)
+        try:
+            suspect_role_id_value = int(suspect_role_id_value)
+        except (TypeError, ValueError):
+            raise ValueError("嫌犯身分組設定無效。") from None
+
+        valid_ids: list[int] = []
+        for suspect_id in suspect_ids:
+            member = guild.get_member(suspect_id) if hasattr(guild, "get_member") else None
+            if not member:
+                continue
+            roles = list(getattr(member, "roles", []) or [])
+            role_ids: set[int] = set()
+            for role in roles:
+                value = getattr(role, "id", role)
+                try:
+                    role_ids.add(int(value))
+                except (TypeError, ValueError):
+                    continue
+            if suspect_role_id_value not in role_ids:
+                continue
+            valid_ids.append(int(suspect_id))
+
+        if not valid_ids:
+            raise ValueError("選取的成員目前不在嫌犯名單中。")
+
+        schedule_map: dict[int, datetime] = {}
+        for suspect_id in valid_ids:
+            job = self._schedule_auto_release_job(guild_id, suspect_id, hours, user_id)
+            if job is not None:
+                schedule_map[suspect_id] = job.release_at
+
+        return schedule_map
+
+    async def fetch_identity_audit_log(
+        self, *, guild_id: int, limit: int = 20
+    ) -> Sequence[IdentityRecord]:
+        try:
+            pool: PoolProtocol = cast(PoolProtocol, get_pool())
+            cm = await self._pool_acquire_cm(pool)
+            async with cm as conn:
+                return await self._gateway.fetch_identity_records(
+                    conn, guild_id=guild_id, limit=limit
+                )
+        except Exception:
+            return []
 
     # --- Utilities / Lookups ---
     async def find_department_by_role(self, *, guild_id: int, role_id: int) -> str | None:

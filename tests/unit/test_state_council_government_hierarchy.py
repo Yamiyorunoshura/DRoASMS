@@ -514,10 +514,10 @@ class TestStateCouncilGovernmentHierarchy:
         """Test auto-release implementation compliance."""
         # Test that auto-release follows the minimal viable implementation
         expected_features = [
-            "In-memory storage only",
-            "Settings lost on bot restart",
-            "Basic time options (1-168 hours)",
-            "Integration with existing scheduler",
+            "Countdown display on the panel",
+            "Batch scheduling support",
+            "Validated 1-168 hour window",
+            "Integration with background scheduler",
             "Audit trail recording",
         ]
 
@@ -627,7 +627,7 @@ class TestStateCouncilGovernmentHierarchy:
 
         # Test that we have implemented the core functionality
         implemented_features = [
-            "SuspectsManagementView class",
+            "HomelandSecuritySuspectsPanelView class",
             "JSON command registry files",
             "Department hierarchy expansion",
             "Auto-release scheduler functions",

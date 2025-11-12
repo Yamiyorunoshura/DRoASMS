@@ -261,7 +261,6 @@ class TestGetHelpData:
         assert "state_council config_citizen_role" in help_data
         assert "state_council config_suspect_role" in help_data
         assert "state_council panel" in help_data
-        assert "state_council suspects" in help_data
 
     def test_help_data_structure(self) -> None:
         """測試幫助數據結構"""
@@ -307,7 +306,6 @@ class TestBuildStateCouncilGroup:
         assert "config_citizen_role" in command_names
         assert "config_suspect_role" in command_names
         assert "panel" in command_names
-        assert "suspects" in command_names
 
     def test_group_with_currency_service(
         self, mock_state_council_service: MagicMock, mock_currency_config_service: MagicMock
