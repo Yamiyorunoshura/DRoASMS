@@ -10,6 +10,10 @@ from uuid import UUID
 
 import structlog
 
+from src.bot.services.currency_config_service import (
+    CurrencyConfigResult,
+    CurrencyConfigService,
+)
 from src.db import pool as db_pool
 from src.db.gateway.economy_queries import EconomyQueryGateway
 from src.db.gateway.state_council_governance import StateCouncilGovernanceGateway
@@ -379,6 +383,7 @@ class TelemetryListener:
 
             # 查詢轉帳後的餘額（僅讀取，避免 fn_get_balance 造成鎖等待）
             initiator_balance = None
+            currency_config: CurrencyConfigResult | None = None
             try:
                 pool = db_pool.get_pool()
             except RuntimeError:
@@ -411,20 +416,30 @@ class TelemetryListener:
                         guild_id=guild_id,
                         initiator_id=initiator_id,
                     )
+                try:
+                    currency_service = CurrencyConfigService(pool)
+                    currency_config = await currency_service.get_currency_config(guild_id=guild_id)
+                except Exception:
+                    LOGGER.debug(
+                        "telemetry.listener.notify_initiator_server.currency_query_failed",
+                        guild_id=guild_id,
+                    )
 
             # 格式化訊息
             lines: list[str] = []
             if amount is not None:
                 try:
                     amt = int(amount)
-                    lines.append(f"✅ 已成功將 {amt:,} 點轉給 {target_display}。")
+                    formatted_amount = _format_currency_amount(amt, currency_config)
+                    lines.append(f"✅ 已成功將 {formatted_amount}轉給 {target_display}。")
                 except Exception:
                     lines.append("✅ 轉帳成功。")
             else:
                 lines.append("✅ 轉帳成功。")
 
             if initiator_balance is not None:
-                lines.append(f"👉 你目前的餘額為 {initiator_balance:,} 點。")
+                balance_text = _format_currency_amount(initiator_balance, currency_config)
+                lines.append(f"👉 你目前的餘額為 {balance_text}。")
 
             if reason:
                 lines.append(f"📝 備註：{reason}")
@@ -462,6 +477,7 @@ class TelemetryListener:
             )
 
     def _is_tx_seen(self, tx: str) -> bool:
+        """去重：檢查交易 ID 是否已處理。"""
         if tx in self._seen_tx:
             return True
         self._seen_tx.add(tx)
@@ -475,6 +491,7 @@ class TelemetryListener:
         return False
 
     def _is_token_seen(self, token: str) -> bool:
+        """去重：檢查 interaction token 是否已處理。"""
         if token in self._seen_tokens:
             return True
         self._seen_tokens.add(token)
@@ -527,6 +544,14 @@ class TelemetryListener:
             await self._transfer_coordinator.handle_check_approved(transfer_id=transfer_id)
         except Exception:
             LOGGER.exception("telemetry.listener.transfer_check_approved.error", payload=parsed)
+
+
+def _format_currency_amount(amount: int, config: CurrencyConfigResult | None) -> str:
+    """Format amount with guild currency settings."""
+    name = config.currency_name if config else CurrencyConfigService.DEFAULT_CURRENCY_NAME
+    icon = config.currency_icon if config else CurrencyConfigService.DEFAULT_CURRENCY_ICON
+    unit = f"{name} {icon}".strip() if icon else name
+    return f"{amount:,} {unit}"
 
 
 async def _maybe_emit_state_council_event(parsed: Any, *, cause: str) -> None:

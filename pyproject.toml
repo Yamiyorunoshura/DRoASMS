@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "droasms-bot"
-version = "0.16.0"
+version = "0.17.0"
 description = "Discord bot economy foundations."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -238,6 +238,9 @@ targets = [
     "src/db/gateway/council_governance.py",
     "src/db/gateway/supreme_assembly_governance.py",
     "src/db/gateway/state_council_governance_mypc.py",
+    "src/db/gateway/state_council_governance.py",
+    "src/bot/services/state_council_service.py",
+    "src/bot/services/supreme_assembly_service.py",
 ]
 
 # 編譯選項（預設在本地開發可輕量化，CI/生產可視需要調高）
@@ -262,6 +265,9 @@ governance_targets = [
     "src/db/gateway/council_governance.py",
     "src/db/gateway/supreme_assembly_governance.py",
     "src/db/gateway/state_council_governance_mypc.py",
+    "src/db/gateway/state_council_governance.py",
+    "src/bot/services/state_council_service.py",
+    "src/bot/services/supreme_assembly_service.py",
 ]
 
 # 統一編譯器配置 - 整合 mypyc 和 mypc 配置
@@ -305,12 +311,13 @@ governance_modules = [
     "src.db.gateway.council_governance",
     "src.db.gateway.supreme_assembly_governance",
     "src.db.gateway.state_council_governance_mypc",
+    "src.db.gateway.state_council_governance",
+    "src.bot.services.state_council_service",
+    "src.bot.services.supreme_assembly_service",
 ]
 
 # 排除的模組
 exclude_modules = [
-    # 保留原始版本用於對比測試
-    "src.db.gateway.state_council_governance",
 ]
 
 # 編譯後端配置

@@ -12,6 +12,7 @@ class HelpParameter(TypedDict, total=False):
     name: str
     description: str
     required: bool
+    type: str  # e.g., "Member", "Role", "int"
 
 
 class HelpData(TypedDict, total=False):

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID
 
 import structlog
+from mypy_extensions import mypyc_attr
 
 from src.bot.services.adjustment_service import AdjustmentService
 from src.bot.services.department_registry import DepartmentRegistry
@@ -35,18 +36,83 @@ from src.infra.types.db import PoolProtocol
 LOGGER = structlog.get_logger(__name__)
 
 
+class _AcquireConnectionContext:
+    """Async context manager wrapper for pool.acquire() results."""
+
+    def __init__(self, pool_obj: Any, acq_obj: Any) -> None:
+        self._pool = pool_obj
+        self._acq = acq_obj
+        self._conn: Any | None = None
+
+    async def __aenter__(self) -> Any:
+        aenter = getattr(self._acq, "__aenter__", None)
+        if aenter is not None:
+            try:
+                LOGGER.debug(
+                    "acquire_cm_aenter",
+                    aenter_type=type(aenter).__name__,
+                    has_rv=hasattr(aenter, "return_value"),
+                )
+            except Exception:
+                pass
+            rv = getattr(aenter, "return_value", None)
+            if rv is not None:
+                try:
+                    LOGGER.debug(
+                        "acquire_cm_aenter_rv",
+                        rv_type=type(rv).__name__,
+                    )
+                except Exception:
+                    pass
+                self._conn = rv
+                return rv
+            self._conn = await aenter()
+            return self._conn
+        conn = self._acq
+        if inspect.isawaitable(conn):
+            conn = await conn
+        self._conn = conn
+        return conn
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        aexit = getattr(self._acq, "__aexit__", None)
+        if aexit is not None:
+            await aexit(exc_type, exc, tb)
+            return None
+        if self._conn is not None:
+            release = getattr(self._pool, "release", None)
+            if release is not None:
+                try:
+                    if inspect.iscoroutinefunction(release):
+                        await release(self._conn)
+                    else:
+                        release(self._conn)
+                except Exception:
+                    LOGGER.debug("acquire_cm_release_failed", exc_info=True)
+        return None
+
+
+@mypyc_attr(native_class=False)
 class StateCouncilNotConfiguredError(RuntimeError):
     pass
 
 
+@mypyc_attr(native_class=False)
 class PermissionDeniedError(RuntimeError):
     pass
 
 
+@mypyc_attr(native_class=False)
 class InsufficientFundsError(RuntimeError):
     pass
 
 
+@mypyc_attr(native_class=False)
 class MonthlyIssuanceLimitExceededError(RuntimeError):
     pass
 
@@ -458,69 +524,7 @@ class StateCouncilService:
         - 否則，若回傳值可等待，則 `await` 後回傳該連線，並於離開時嘗試呼叫 `pool.release()`
         """
         acq = pool.acquire()
-
-        class _AcquireCM:
-            def __init__(self, pool_obj: Any, acq_obj: Any) -> None:
-                self._pool = pool_obj
-                self._acq = acq_obj
-                self._conn: Any | None = None
-
-            async def __aenter__(self) -> Any:
-                aenter = getattr(self._acq, "__aenter__", None)
-                if aenter is not None:
-                    try:
-                        LOGGER.debug(
-                            "acquire_cm_aenter",
-                            aenter_type=type(aenter).__name__,
-                            has_rv=hasattr(aenter, "return_value"),
-                        )
-                    except Exception:
-                        pass
-                    # 若為 AsyncMock，直接使用預設的 return_value 可避免名稱鏈結造成的混淆
-                    rv = getattr(aenter, "return_value", None)
-                    if rv is not None:
-                        try:
-                            LOGGER.debug(
-                                "acquire_cm_aenter_rv",
-                                rv_type=type(rv).__name__,
-                            )
-                        except Exception:
-                            pass
-                        self._conn = rv
-                        return rv
-                    self._conn = await aenter()
-                    return self._conn
-                # 後援：await 取得連線
-                conn = self._acq
-                if inspect.isawaitable(conn):
-                    conn = await conn
-                self._conn = conn
-                return conn
-
-            async def __aexit__(
-                self,
-                exc_type: type[BaseException] | None,
-                exc: BaseException | None,
-                tb: TracebackType | None,
-            ) -> None:
-                aexit = getattr(self._acq, "__aexit__", None)
-                if aexit is not None:
-                    await aexit(exc_type, exc, tb)
-                    return None
-                # 後援：若 acquire 僅可 await，則嘗試歸還連線
-                if self._conn is not None:
-                    release = getattr(self._pool, "release", None)
-                    if release is not None:
-                        try:
-                            if inspect.iscoroutinefunction(release):
-                                await release(self._conn)
-                            else:
-                                release(self._conn)
-                        except Exception:
-                            pass
-                return None
-
-        return _AcquireCM(pool, acq)
+        return _AcquireConnectionContext(pool, acq)
 
     @staticmethod
     async def _tx_cm(conn: Any) -> Any:

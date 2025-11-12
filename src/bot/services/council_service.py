@@ -113,6 +113,12 @@ class CouncilService:
         pool: PoolProtocol = cast(PoolProtocol, get_pool())
         async with pool.acquire() as conn:
             c: ConnectionProtocol = conn
+            active = await self._gateway.count_active_by_guild(c, guild_id=guild_id)
+            if active >= 5:
+                raise RuntimeError(
+                    "There are already 5 進行中 proposals for this guild. "
+                    "Please結束或撤案後再建立新提案。"
+                )
             proposal = await self._gateway.create_proposal(
                 c,
                 guild_id=guild_id,

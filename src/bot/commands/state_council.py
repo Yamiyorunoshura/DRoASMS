@@ -1979,6 +1979,15 @@ class DepartmentUserTransferPanelView(discord.ui.View):
                 )
                 return
             try:
+                from src.db import pool as db_pool
+
+                currency_service = CurrencyConfigService(db_pool.get_pool())
+                currency_config = await currency_service.get_currency_config(guild_id=self.guild_id)
+                formatted_amount = _format_currency_display(currency_config, int(self.amount or 0))
+            except Exception:
+                formatted_amount = f"{int(self.amount or 0):,} 點"
+
+            try:
                 await self.service.transfer_department_to_user(
                     guild_id=self.guild_id,
                     user_id=self.author_id,
@@ -1991,7 +2000,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
                 await _send_message_compat(
                     interaction,
                     content=(
-                        f"✅ 轉帳成功！從 {self.source_department} 轉 {self.amount:,} 幣給 <@{self.recipient_id}>。"
+                        f"✅ 轉帳成功！從 {self.source_department} 轉 {formatted_amount} 給 <@{self.recipient_id}>。"
                     ),
                     ephemeral=True,
                 )

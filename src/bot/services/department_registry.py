@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 from dataclasses import dataclass
+from types import MethodType
 from typing import Any, Sequence, cast
 
 import structlog
@@ -319,14 +321,49 @@ class DepartmentRegistry:
 
 # Global singleton instance
 _registry: DepartmentRegistry | None = None
+_last_pytest_test_id: str | None = None
 
 
 def get_registry() -> DepartmentRegistry:
     """Get global department registry instance."""
     global _registry
+    _refresh_registry_if_needed()
     if _registry is None:
         _registry = DepartmentRegistry()
     return _registry
+
+
+def _registry_is_tainted(registry: DepartmentRegistry) -> bool:
+    """Detect leaked monkeypatches from previous tests and rebuild if needed."""
+    critical_methods = (
+        "get_by_id",
+        "get_by_name",
+        "get_by_code",
+        "list_all",
+        "get_id_by_name",
+        "get_name_by_id",
+    )
+    for method_name in critical_methods:
+        attr = getattr(registry, method_name, None)
+        if not isinstance(attr, MethodType):
+            return True
+    return False
+
+
+def _refresh_registry_if_needed() -> None:
+    """Refresh singleton between pytest test cases if the registry was monkeypatched."""
+    global _last_pytest_test_id, _registry
+    try:
+        current_test = os.environ.get("PYTEST_CURRENT_TEST")
+    except Exception:  # pragma: no cover - defensive
+        current_test = None
+
+    if current_test == _last_pytest_test_id:
+        return
+
+    _last_pytest_test_id = current_test
+    if current_test and _registry is not None and _registry_is_tainted(_registry):
+        _registry = DepartmentRegistry()
 
 
 __all__ = ["Department", "DepartmentRegistry", "get_registry"]

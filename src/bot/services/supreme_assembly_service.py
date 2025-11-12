@@ -6,6 +6,7 @@ from typing import Sequence, cast
 from uuid import UUID
 
 import structlog
+from mypy_extensions import mypyc_attr
 
 from src.bot.services.transfer_service import TransferService
 from src.db.gateway.supreme_assembly_governance import (
@@ -25,14 +26,17 @@ from src.infra.types.db import ConnectionProtocol, PoolProtocol
 LOGGER = structlog.get_logger(__name__)
 
 
+@mypyc_attr(native_class=False)
 class GovernanceNotConfiguredError(RuntimeError):
     pass
 
 
+@mypyc_attr(native_class=False)
 class PermissionDeniedError(RuntimeError):
     pass
 
 
+@mypyc_attr(native_class=False)
 class VoteAlreadyExistsError(RuntimeError):
     pass
 

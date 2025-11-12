@@ -7,7 +7,7 @@ from tenacity import (
     retry_if_exception_type,
     stop_after_attempt,
 )
-from tenacity.wait.wait_base import wait_base
+from tenacity.wait import wait_fixed
 
 T = TypeVar("T")
 
@@ -28,7 +28,7 @@ def exponential_backoff_with_jitter(
     0.1±10% 的斷言。
     """
 
-    class _FixedWithFractionalJitter(wait_base):
+    class _FixedWithFractionalJitter(wait_fixed):  # type: ignore[misc]
         def __init__(self, base: float, max_wait: float, jitter: tuple[float, float]) -> None:
             self._base = float(base)
             self._max = float(max_wait)

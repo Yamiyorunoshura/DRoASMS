@@ -1,27 +1,30 @@
 {
   "transfer": {
     "name": "transfer",
-    "description": "轉帳貨幣給其他用戶",
+    "description": "轉帳貨幣給其他用戶或政府帳戶",
     "category": "economy",
     "parameters": [
       {
-        "name": "recipient",
-        "description": "接收者",
-        "required": true
+        "name": "target",
+        "description": "要轉帳的成員或已綁定身分組",
+        "required": true,
+        "type": "User|Role"
       },
       {
         "name": "amount",
-        "description": "轉帳金額",
-        "required": true
+        "description": "轉帳金額（正整數）",
+        "required": true,
+        "type": "int"
       },
       {
         "name": "reason",
-        "description": "轉帳原因",
-        "required": false
+        "description": "轉帳理由（選填）",
+        "required": false,
+        "type": "str"
       }
     ],
     "permissions": [],
-    "examples": ["/transfer @用戶 100 感謝幫助"],
+    "examples": ["/transfer @user 100 感謝幫助"],
     "tags": ["經濟", "轉帳", "貨幣"]
   },
   "balance": {
@@ -32,11 +35,12 @@
       {
         "name": "user",
         "description": "要查詢的用戶（可選）",
-        "required": false
+        "required": false,
+        "type": "User"
       }
     ],
     "permissions": [],
-    "examples": ["/balance", "/balance @用戶"],
+    "examples": ["/balance", "/balance @user"],
     "tags": ["經濟", "餘額", "查詢"]
   },
   "help": {
@@ -47,7 +51,8 @@
       {
         "name": "command",
         "description": "要查詢的特定指令（可選）",
-        "required": false
+        "required": false,
+        "type": "str"
       }
     ],
     "permissions": [],
@@ -56,12 +61,165 @@
   },
   "council": {
     "name": "council",
-    "description": "國務院治理系統相關指令",
+    "description": "理事會治理指令群組",
     "category": "governance",
     "parameters": [],
-    "permissions": ["administrator"],
+    "permissions": ["administrator", "manage_guild"],
     "examples": ["/council panel"],
-    "tags": ["治理", "國務院", "管理"]
+    "tags": ["理事會", "治理"],
+    "subcommands": {
+      "config_role": {
+        "name": "council config_role",
+        "description": "設定常任理事會身分組",
+        "category": "governance",
+        "parameters": [
+          {
+            "name": "role",
+            "description": "將成為理事會成員的身分組",
+            "required": true,
+            "type": "Role"
+          }
+        ],
+        "permissions": ["administrator", "manage_guild"],
+        "examples": ["/council config_role @CouncilRole"],
+        "tags": ["設定", "治理"]
+      },
+      "panel": {
+        "name": "council panel",
+        "description": "開啟理事會面板（建案/投票/撤案/匯出）",
+        "category": "governance",
+        "parameters": [],
+        "permissions": [],
+        "examples": ["/council panel"],
+        "tags": ["面板", "操作"]
+      }
+    }
+  },
+  "state_council": {
+    "name": "state_council",
+    "description": "國務院治理指令群組",
+    "category": "governance",
+    "parameters": [],
+    "permissions": ["administrator", "manage_guild"],
+    "examples": ["/state_council panel"],
+    "tags": ["國務院", "治理"],
+    "subcommands": {
+      "config_leader": {
+        "name": "state_council config_leader",
+        "description": "設定國務院領袖或領袖身分組",
+        "category": "governance",
+        "parameters": [
+          {
+            "name": "leader",
+            "description": "要設定為領袖的使用者（可選）",
+            "required": false,
+            "type": "User"
+          },
+          {
+            "name": "leader_role",
+            "description": "要設定為領袖的身分組（可選）",
+            "required": false,
+            "type": "Role"
+          }
+        ],
+        "permissions": ["administrator", "manage_guild"],
+        "examples": ["/state_council config_leader leader:@user"],
+        "tags": ["設定", "治理"]
+      },
+      "config_citizen_role": {
+        "name": "state_council config_citizen_role",
+        "description": "設定公民身分組",
+        "category": "governance",
+        "parameters": [
+          {
+            "name": "role",
+            "description": "公民身分組",
+            "required": true,
+            "type": "Role"
+          }
+        ],
+        "permissions": ["administrator", "manage_guild"],
+        "examples": ["/state_council config_citizen_role role:@Citizen"],
+        "tags": ["設定", "治理"]
+      },
+      "config_suspect_role": {
+        "name": "state_council config_suspect_role",
+        "description": "設定嫌犯身分組",
+        "category": "governance",
+        "parameters": [
+          {
+            "name": "role",
+            "description": "嫌犯身分組",
+            "required": true,
+            "type": "Role"
+          }
+        ],
+        "permissions": ["administrator", "manage_guild"],
+        "examples": ["/state_council config_suspect_role role:@Suspect"],
+        "tags": ["設定", "治理"]
+      },
+      "panel": {
+        "name": "state_council panel",
+        "description": "開啟國務院面板（部門管理/轉帳/匯出）",
+        "category": "governance",
+        "parameters": [],
+        "permissions": [],
+        "examples": ["/state_council panel"],
+        "tags": ["面板", "操作"]
+      }
+    }
+  },
+  "supreme_assembly": {
+    "name": "supreme_assembly",
+    "description": "最高人民會議治理指令群組",
+    "category": "governance",
+    "parameters": [],
+    "permissions": ["administrator", "manage_guild"],
+    "examples": ["/supreme_assembly panel"],
+    "tags": ["最高人民會議", "治理"],
+    "subcommands": {
+      "config_speaker_role": {
+        "name": "supreme_assembly config_speaker_role",
+        "description": "設定議長身分組",
+        "category": "governance",
+        "parameters": [
+          {
+            "name": "role",
+            "description": "議長身分組",
+            "required": true,
+            "type": "Role"
+          }
+        ],
+        "permissions": ["administrator", "manage_guild"],
+        "examples": ["/supreme_assembly config_speaker_role @Speaker"],
+        "tags": ["設定", "治理"]
+      },
+      "config_member_role": {
+        "name": "supreme_assembly config_member_role",
+        "description": "設定議員身分組",
+        "category": "governance",
+        "parameters": [
+          {
+            "name": "role",
+            "description": "議員身分組",
+            "required": true,
+            "type": "Role"
+          }
+        ],
+        "permissions": ["administrator", "manage_guild"],
+        "examples": ["/supreme_assembly config_member_role @Member"],
+        "tags": ["設定", "治理"]
+      },
+      "panel": {
+        "name": "supreme_assembly panel",
+        "description": "開啟最高人民會議面板（表決/投票/傳召）",
+        "category": "governance",
+        "parameters": [],
+        "permissions": [],
+        "examples": ["/supreme_assembly panel"],
+        "tags": ["面板", "操作"]
+      }
+    }
   },
   "state": {
     "name": "state",
@@ -70,7 +228,7 @@
     "parameters": [],
     "permissions": [],
     "examples": ["/state info"],
-    "tags": ["狀態", "資訊", "國家"]
+    "tags": ["狀態", "資訊"]
   },
   "register": {
     "name": "register",
@@ -79,7 +237,7 @@
     "parameters": [],
     "permissions": [],
     "examples": ["/register"],
-    "tags": ["註冊", "公民", "加入"]
+    "tags": ["註冊", "公民"]
   },
   "identity": {
     "name": "identity",
@@ -88,7 +246,7 @@
     "parameters": [],
     "permissions": ["administrator"],
     "examples": ["/identity set"],
-    "tags": ["身份", "管理", "治理"]
+    "tags": ["身份", "管理"]
   },
   "welfare": {
     "name": "welfare",
@@ -96,8 +254,8 @@
     "category": "economy",
     "parameters": [],
     "permissions": [],
-    "examples": ["/ welfare claim"],
-    "tags": ["福利", "經濟", "補助"]
+    "examples": ["/welfare claim"],
+    "tags": ["福利", "經濟"]
   },
   "tax": {
     "name": "tax",
@@ -106,7 +264,7 @@
     "parameters": [],
     "permissions": ["administrator"],
     "examples": ["/tax collect"],
-    "tags": ["稅務", "經濟", "管理"]
+    "tags": ["稅務", "經濟"]
   },
   "audit": {
     "name": "audit",
@@ -115,6 +273,6 @@
     "parameters": [],
     "permissions": ["administrator"],
     "examples": ["/audit log"],
-    "tags": ["審計", "記錄", "查詢"]
+    "tags": ["審計", "記錄"]
   }
 }
