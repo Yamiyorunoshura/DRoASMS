@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Sequence
+from typing import Sequence, SupportsInt, cast
 from uuid import UUID
 
 from src.infra.types.db import ConnectionProtocol
@@ -108,7 +108,8 @@ class CouncilGovernanceGateway:
         if result is None:
             return []
         if isinstance(result, list):
-            return [int(role_id) for role_id in result]
+            typed_result = cast(list[SupportsInt], result)
+            return [int(role_id) for role_id in typed_result]
         return []
 
     async def add_council_role(

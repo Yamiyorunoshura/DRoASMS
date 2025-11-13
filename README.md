@@ -535,8 +535,8 @@ make test-container-performance # 效能測試
 make test-container-db         # 資料庫測試
 make test-container-economy    # 經濟相關測試
 make test-container-council    # 議會相關測試
-make test-container-all        # 所有測試（不含整合測試）
-make test-container-ci         # 完整 CI 流程（格式化、lint、型別檢查、所有測試）
+make test-container-all        # 所有測試（含整合測試）
+make test-container-ci         # 完整 CI 流程（格式化、lint、MyPy、Pyright、所有測試含整合測試）
 ```
 
 **查看覆蓋率報告**
@@ -557,7 +557,11 @@ xdg-open htmlcov/index.html  # Linux
 ### 程式碼品質工具
 ```bash
 # 型別檢查
+# MyPy（成熟穩定的 Python 類型檢查器）
 uv run mypy src/
+
+# Pyright（Microsoft 開發的類型檢查器，嚴格模式）
+uv run pyright src/
 
 # 程式碼品質檢查
 uv run ruff check .
@@ -565,6 +569,12 @@ uv run ruff check .
 # 程式碼格式化
 uv run black src/
 ```
+
+**雙重類型檢查策略**
+專案採用 MyPy 和 Pyright 雙重類型檢查來提供最全面的類型安全：
+- **MyPy**：成熟穩定，擁有豐富的生態系統和對 Python 特性的良好支援
+- **Pyright**：Microsoft 開發，擁有優異的類型推斷能力，能捕獲 MyPy 可能遺漏的類型錯誤
+- **嚴格模式**：兩個檢查器都在嚴格模式下運行，確保最高的類型安全標準
 
 ### Pre-commit Hooks
 專案已配置 pre-commit hooks，在提交前自動執行格式化與檢查：
@@ -604,13 +614,16 @@ make lint
 # lint 並自動修復
 make lint-fix
 
-# 執行型別檢查
+# 執行型別檢查（MyPy）
 make type-check
+
+# 執行型別檢查（Pyright）
+make pyright-check
 
 # 檢查格式化（不修改檔案）
 make format-check
 
-# 執行所有 CI 檢查（格式化、lint、型別檢查、pre-commit）
+# 執行所有本地 CI 檢查（格式化、lint、MyPy、Pyright、pre-commit）
 make ci-local
 
 # 執行所有測試（不含整合測試）
@@ -683,6 +696,31 @@ act -j lint
 3. **重要變更前**：執行完整測試
    ```bash
    make ci-full
+   ```
+
+### 推薦本地開發工作流程
+
+為確保程式碼品質並與 CI 環境保持一致，建議採用以下開發流程：
+
+1. **開發過程中**：啟用 pre-commit hooks 自動檢查
+   ```bash
+   make install-pre-commit
+   ```
+
+2. **提交前**：執行快速本地 CI 檢查
+   ```bash
+   make ci-local  # 包含 MyPy + Pyright 雙重類型檢查
+   ```
+
+3. **重要變更前**：執行完整 CI 流程（包含整合測試）
+   ```bash
+   make ci  # 使用測試容器執行完整 CI 流程
+   ```
+
+4. **類型檢查**：確保兩個類型檢查器都通過
+   ```bash
+   make type-check     # MyPy 檢查
+   make pyright-check  # Pyright 檢查
    ```
 
 ### 開發工具說明

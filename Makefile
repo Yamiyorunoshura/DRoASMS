@@ -1,4 +1,4 @@
-.PHONY: help install install-pre-commit format lint type-check format-check pre-commit-all lint-fix ci-local ci ci-full clean test test-container test-container-build test-container-unit test-container-contract test-container-integration test-container-performance test-container-db test-container-economy test-container-council test-container-all test-container-ci unified-migrate unified-migrate-dry-run unified-compile unified-compile-test unified-compile-clean unified-status unified-refresh-baseline
+.PHONY: help install install-pre-commit format lint type-check pyright-check format-check pre-commit-all lint-fix ci-local ci ci-full clean test test-container test-container-build test-container-unit test-container-contract test-container-integration test-container-performance test-container-db test-container-economy test-container-council test-container-all test-container-ci unified-migrate unified-migrate-dry-run unified-compile unified-compile-test unified-compile-clean unified-status unified-refresh-baseline
 
 .DEFAULT_GOAL := help
 
@@ -40,16 +40,19 @@ lint-fix: ## 執行 linting 並自動修復（ruff）
 type-check: ## 執行型別檢查（mypy）
 	uv run mypy src/
 
+pyright-check: ## 執行 Pyright 型別檢查（嚴格模式）
+	uv run pyright src/
+
 format-check: ## 檢查程式碼格式是否正確（black --check）
 	uv run black --check src/ tests/
 
 pre-commit-all: ## 對所有檔案執行 pre-commit 檢查
 	uv run pre-commit run --all-files
 
-ci-local: format-check lint type-check pre-commit-all ## 執行所有本地 CI 檢查（格式化、lint、型別檢查、pre-commit）
+ci-local: format-check lint type-check pyright-check pre-commit-all ## 執行所有本地 CI 檢查（格式化、lint、型別檢查、pre-commit）
 	@echo "✓ 所有本地 CI 檢查通過！"
 
-ci: ## 執行完整的 CI 檢查（包含所有測試）
+ci: ## 執行完整的 CI 檢查（包含所有測試與整合測試）
 	$(TEST_RUN) ci
 
 clean: ## 清理快取和臨時檔案

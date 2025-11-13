@@ -41,11 +41,12 @@ COPY scripts ./scripts
 RUN uv venv .venv \
     && . ./.venv/bin/activate \
     && uv sync --frozen --group dev \
-    && uv run python scripts/mypyc_economy_setup.py build_ext --build-lib build/mypyc_out
+    && mkdir -p build/unified \
+    && uv run python scripts/compile_modules.py compile --project-root /app
 
 ENV PATH="/app/.venv/bin:${PATH}"
 # 讓編譯後的擴充模組優先於原始純 Python 版本
-ENV PYTHONPATH="/app/build/mypyc_out:/app"
+ENV PYTHONPATH="/app/build/unified:/app"
 
 # 入口腳本
 COPY docker/bin/test.sh /app/test.sh

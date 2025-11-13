@@ -57,16 +57,16 @@ class _PatchedConnection(_AsyncpgConnection):  # type: ignore[misc]  # asyncpg s
 
 _POOL_LOCKS: "WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = WeakKeyDictionary()
 _POOLS: "WeakKeyDictionary[asyncio.AbstractEventLoop, asyncpg.Pool]" = WeakKeyDictionary()
-_LAST_POOL: asyncpg.Pool | None = None
+_last_pool: asyncpg.Pool | None = None
 
 
 async def init_pool(config: PoolConfig | None = None) -> asyncpg.Pool:
     """Initialise the asyncpg pool if it does not already exist."""
-    global _LAST_POOL
+    global _last_pool
     loop = asyncio.get_running_loop()
     existing = _POOLS.get(loop)
     if existing is not None:
-        _LAST_POOL = existing
+        _last_pool = existing
         return existing
 
     lock = _get_pool_lock(loop)
@@ -92,7 +92,7 @@ async def init_pool(config: PoolConfig | None = None) -> asyncpg.Pool:
             connection_class=_PatchedConnection,
         )
         _POOLS[loop] = pool
-        _LAST_POOL = pool
+        _last_pool = pool
         # Best-effort: ensure DB schema is migrated for tests/first-run environments.
         # Contract tests may run before dedicated DB test migrations; auto-upgrade here.
         try:
@@ -139,14 +139,14 @@ def get_pool() -> asyncpg.Pool:
         pool = _POOLS.get(loop)
         if pool is not None:
             return pool
-    if _LAST_POOL is not None:
-        return _LAST_POOL
+    if _last_pool is not None:
+        return _last_pool
     raise RuntimeError("Database pool not initialised. Call init_pool() first.")
 
 
 async def close_pool() -> None:
     """Close the pool if one exists."""
-    global _LAST_POOL
+    global _last_pool
     loop = asyncio.get_running_loop()
     lock = _get_pool_lock(loop)
 
@@ -155,8 +155,8 @@ async def close_pool() -> None:
 
     if pool is not None:
         await pool.close()
-        if _LAST_POOL is pool:
-            _LAST_POOL = None
+        if _last_pool is pool:
+            _last_pool = None
         LOGGER.info("db.pool.closed")
 
 

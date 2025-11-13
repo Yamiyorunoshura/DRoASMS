@@ -62,10 +62,10 @@ usage() {
   db            - 執行資料庫函數測試
   economy       - 執行經濟相關測試
   council       - 執行議會相關測試
-  all           - 執行所有測試類型（不含整合測試）
+  all           - 執行所有測試類型（含整合測試）
   ci            - 執行完整 CI 流程（格式化、lint、型別檢查、所有測試）
 
-預設: 執行所有測試（不含整合測試）
+預設: 執行所有測試（含整合測試）
 EOF
 }
 
@@ -196,15 +196,37 @@ run_council() {
 }
 
 run_all() {
-    echo "執行所有測試（不含整合測試）..."
+    echo "執行所有測試（含整合測試）..."
     # 先建立 DB schema（供後續合約測試使用）
     alembic upgrade head || true
-    run_unit
-    run_contract
-    run_economy
-    run_db
-    run_council
-    run_performance
+    run_unit || {
+        echo "❌ 單元測試失敗"
+        exit 1
+    }
+    run_contract || {
+        echo "❌ 合約測試失敗"
+        exit 1
+    }
+    run_economy || {
+        echo "❌ 經濟測試失敗"
+        exit 1
+    }
+    run_db || {
+        echo "❌ 資料庫函數測試失敗"
+        exit 1
+    }
+    run_council || {
+        echo "❌ 議會測試失敗"
+        exit 1
+    }
+    run_integration || {
+        echo "❌ 整合測試失敗"
+        exit 1
+    }
+    run_performance || {
+        echo "❌ 效能測試失敗"
+        exit 1
+    }
 }
 
 run_ci() {
@@ -225,9 +247,15 @@ run_ci() {
     }
 
     # 型別檢查
-    echo "執行型別檢查..."
+    echo "執行型別檢查 (MyPy)..."
     mypy src/ --cache-dir="$MYPY_CACHE_DIR" || {
-        echo "❌ 型別檢查失敗"
+        echo "❌ MyPy 型別檢查失敗"
+        exit 1
+    }
+
+    echo "執行型別檢查 (Pyright)..."
+    pyright src/ || {
+        echo "❌ Pyright 型別檢查失敗"
         exit 1
     }
 
@@ -244,7 +272,7 @@ run_ci() {
         echo "   提示：本機環境會自動執行 pre-commit hooks"
     fi
 
-    # 執行所有測試（不含整合測試）
+    # 執行所有測試（含整合測試）
     run_all
 
     echo "✓ 完整的 CI 檢查通過！"

@@ -45,9 +45,9 @@ def _extract_select_values(interaction: discord.Interaction) -> list[str]:
     raw_values = data.get("values")
     if not isinstance(raw_values, list):
         return []
-    raw_list: list[Any] = list(raw_values)
+    typed_values = cast(list[Any], raw_values)  # type: ignore[redundant-cast]
     vals: list[str] = []
-    for item in raw_list:
+    for item in typed_values:
         if isinstance(item, str):
             vals.append(item)
     return vals

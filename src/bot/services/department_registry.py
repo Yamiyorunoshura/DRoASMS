@@ -7,7 +7,7 @@ import os
 import pathlib
 from dataclasses import dataclass
 from types import MethodType
-from typing import Any, Sequence
+from typing import Any, Sequence, cast
 
 import structlog
 
@@ -74,11 +74,11 @@ class DepartmentRegistry:
             if not isinstance(raw_loaded, list):
                 raise ValueError("Departments JSON must be a list")
 
-            raw: list[Any] = raw_loaded
+            raw: list[Any] = cast(list[Any], raw_loaded)  # type: ignore[redundant-cast]
             for obj in raw:
                 if not isinstance(obj, dict):
                     raise ValueError("Each department must be a dict")
-                item: dict[str, Any] = obj
+                item = cast(dict[str, Any], obj)
                 if "id" not in item or "name" not in item or "code" not in item:
                     raise ValueError("Department must have id, name, and code")
                 if not isinstance(item["code"], int) or item["code"] < 0:
@@ -87,8 +87,13 @@ class DepartmentRegistry:
                 subs_raw = item.get("subordinates")
                 subordinates: list[str] | None = None
                 if isinstance(subs_raw, list):
-                    if all(isinstance(s, str) for s in subs_raw):
-                        subordinates = [str(s) for s in subs_raw]
+                    subs_list: list[Any] = cast(list[Any], subs_raw)  # type: ignore[redundant-cast]
+                    filtered: list[str] = []
+                    for s in subs_list:
+                        if isinstance(s, str) and s:
+                            filtered.append(s)
+                    if filtered:
+                        subordinates = filtered
 
                 dept = Department(
                     id=str(item["id"]),

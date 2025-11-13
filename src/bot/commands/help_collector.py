@@ -15,7 +15,8 @@ from src.bot.commands.help_data import CollectedHelpData, HelpData, HelpParamete
 
 LOGGER = structlog.get_logger(__name__)
 
-JsonDict = dict[str, Any]
+JsonValue = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
+JsonDict = dict[str, JsonValue]
 
 
 def collect_help_data(
@@ -115,9 +116,9 @@ class _RegistryNode(TypedDict):
 _registry_cache: dict[str, _RegistryNode] | None = None
 
 
-def _load_help_json(
+def _load_help_json(  # pyright: ignore[reportUnusedFunction]
     command_name: str, parent_name: str = ""
-) -> HelpData | None:  # pyright: ignore[reportUnusedFunction]
+) -> HelpData | None:
     """Legacy loader kept for unit tests and transitional compatibility.
 
     It first tries to locate per-command JSON files (both legacy scattered files and
@@ -164,12 +165,12 @@ def _read_help_file(path: Path) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         LOGGER.warning("help.json.invalid_format", path=str(path))
         return None
-    typed_payload: JsonDict = payload
+    typed_payload = cast(JsonDict, payload)
     return typed_payload
 
 
 def _extract_help_entry(
-    payload: dict[str, Any], command_name: str, parent_name: str = ""
+    payload: JsonDict, command_name: str, parent_name: str = ""
 ) -> HelpData | None:
     # If payload already resembles HelpData (or even empty dict for tests), return it directly.
     if _looks_like_help_data(payload):
@@ -189,32 +190,25 @@ def _extract_help_entry(
     return None
 
 
-def _dig_help_payload(node: dict[str, Any], path: list[str]) -> HelpData | None:
-    current: dict[str, Any] | None = node
+def _dig_help_payload(node: JsonDict, path: list[str]) -> HelpData | None:
+    current: JsonDict = node
     for part in path:
-        if not isinstance(current, dict):
-            return None
-        current_dict: JsonDict = current
-        # Direct key match
-        direct = current_dict.get(part)
+        direct = current.get(part)
         if isinstance(direct, dict):
-            current = cast(JsonDict, direct)
+            current = direct
             continue
-        # Nested under subcommands
-        subcommands = current_dict.get("subcommands")
+        subcommands = current.get("subcommands")
         if isinstance(subcommands, dict):
             nested = subcommands.get(part)
             if isinstance(nested, dict):
-                current = cast(JsonDict, nested)
+                current = nested
                 continue
         return None
 
-    if isinstance(current, dict):
-        return cast(HelpData, current)
-    return None
+    return cast(HelpData, current)
 
 
-def _looks_like_help_data(payload: dict[str, Any]) -> bool:
+def _looks_like_help_data(payload: object) -> bool:
     if not isinstance(payload, dict):
         return False
     if payload == {}:
@@ -277,10 +271,10 @@ def _load_registry() -> dict[str, _RegistryNode]:
     raw_dict = cast(JsonDict, raw_payload)
     registry: dict[str, _RegistryNode] = {}
     for name, entry in raw_dict.items():
-        if not isinstance(name, str) or not isinstance(entry, dict):
+        if not isinstance(entry, dict):
             LOGGER.warning("help.registry.invalid_entry", command=name)
             continue
-        node = _build_registry_node([name], cast(JsonDict, entry))
+        node = _build_registry_node([name], entry)
         if node:
             registry[name] = node
 
@@ -288,31 +282,32 @@ def _load_registry() -> dict[str, _RegistryNode]:
     return registry
 
 
-def _build_registry_node(path: list[str], entry: dict[str, Any]) -> _RegistryNode | None:
+def _build_registry_node(path: list[str], entry: JsonDict) -> _RegistryNode | None:
     try:
         data: HelpData = {
-            "name": entry.get("name", " ".join(path)),
+            "name": _registry_entry_name(entry, path),
             "description": _require_str(entry, "description", path),
             "category": _require_str(entry, "category", path),
             "parameters": _validate_parameters(entry.get("parameters"), path),
-            "permissions": _ensure_str_list(entry.get("permissions", [])),
-            "examples": _ensure_str_list(entry.get("examples", [])),
-            "tags": _ensure_str_list(entry.get("tags", [])),
+            "permissions": _ensure_str_list(entry.get("permissions")),
+            "examples": _ensure_str_list(entry.get("examples")),
+            "tags": _ensure_str_list(entry.get("tags")),
         }
     except ValueError as exc:
         LOGGER.warning("help.registry.entry_invalid", command=" ".join(path), error=str(exc))
         return None
 
     subcommands: dict[str, _RegistryNode] = {}
-    raw_subs = entry.get("subcommands", {})
-    if raw_subs:
+    raw_subs = entry.get("subcommands")
+    if raw_subs is not None:
         if not isinstance(raw_subs, dict):
             LOGGER.warning(
                 "help.registry.subcommands_invalid", command=" ".join(path), subcommands=raw_subs
             )
         else:
-            for sub_name, sub_entry in raw_subs.items():
-                if not isinstance(sub_name, str) or not isinstance(sub_entry, dict):
+            sub_dict: JsonDict = raw_subs
+            for sub_name, sub_entry in sub_dict.items():
+                if not isinstance(sub_entry, dict):
                     LOGGER.warning(
                         "help.registry.subcommand_invalid",
                         command=" ".join(path),
@@ -326,27 +321,36 @@ def _build_registry_node(path: list[str], entry: dict[str, Any]) -> _RegistryNod
     return {"data": data, "subcommands": subcommands}
 
 
-def _require_str(entry: dict[str, Any], field: str, path: list[str]) -> str:
+def _registry_entry_name(entry: JsonDict, path: list[str]) -> str:
+    value = entry.get("name")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return " ".join(path)
+
+
+def _require_str(entry: JsonDict, field: str, path: list[str]) -> str:
     value = entry.get(field)
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field} must be a non-empty string ({' '.join(path)})")
     return value.strip()
 
 
-def _ensure_str_list(value: Any) -> list[str]:
-    if not value:
+def _ensure_str_list(value: JsonValue | None) -> list[str]:
+    if value is None:
         return []
     if not isinstance(value, list):
         raise ValueError("Expected list of strings")
     result: list[str] = []
     for item in value:
-        if isinstance(item, str) and item.strip():
-            result.append(item.strip())
+        if isinstance(item, str):
+            stripped = item.strip()
+            if stripped:
+                result.append(stripped)
     return result
 
 
-def _validate_parameters(value: Any, path: list[str]) -> list[HelpParameter]:
-    if not value:
+def _validate_parameters(value: JsonValue | None, path: list[str]) -> list[HelpParameter]:
+    if value is None:
         return []
     if not isinstance(value, list):
         raise ValueError("parameters must be a list")
@@ -354,10 +358,11 @@ def _validate_parameters(value: Any, path: list[str]) -> list[HelpParameter]:
     for idx, item in enumerate(value):
         if not isinstance(item, dict):
             raise ValueError(f"parameter {idx} must be a dict")
-        name = _require_str(item, "name", path)
-        description = _require_str(item, "description", path)
-        param_type = _require_str(item, "type", path)
-        required = bool(item.get("required", False))
+        item_dict: JsonDict = item
+        name = _require_str(item_dict, "name", path)
+        description = _require_str(item_dict, "description", path)
+        param_type = _require_str(item_dict, "type", path)
+        required = bool(item_dict.get("required", False))
         params.append(
             {
                 "name": name,

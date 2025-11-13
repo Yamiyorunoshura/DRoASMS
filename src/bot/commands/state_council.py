@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import math
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Literal, Protocol, Sequence, cast
+from typing import Any, Awaitable, Callable, Iterable, Literal, Protocol, Sequence, cast
 
 import discord
 import structlog
@@ -3482,11 +3482,10 @@ class HomelandSecuritySuspectsPanelView(discord.ui.View):
     async def _on_select(self, interaction: discord.Interaction) -> None:
         if not await self._ensure_author(interaction):
             return
-        data: dict[str, Any] = cast(dict[str, Any], interaction.data or {})
+        data = cast(dict[str, Any], interaction.data or {})
         raw_values = data.get("values")
-        iterable_values: Sequence[Any]
         if isinstance(raw_values, (list, tuple, set)):
-            iterable_values = list(raw_values)
+            iterable_values: list[Any] = list(cast(Iterable[Any], raw_values))
         else:
             iterable_values = []
         selected: set[int] = set()

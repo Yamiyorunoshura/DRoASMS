@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.1] - 2025-11-13
+
+### 修改
+- **類型檢查增強**：新增 Pyright 到 CI 工作流程，提供更嚴格的類型檢查
+  - 更新 `.github/workflows/ci.yml` 加入 pyright-check 工作項目
+  - 透過 uv 執行 Pyright 類型檢查，確保代碼品質
+- **類型注釋優化**：改進多個模組的類型安全性
+  - 更新 `help_collector.py`，新增 `JsonValue` 類型定義，改善 JSON 類型處理
+  - 優化 `council.py` 中的類型轉換，使用明確的 `cast()` 調用
+  - 改進 `retry.py` 和 `pool.py` 中的類型處理
+- **Docker 測試改進**：優化測試容器腳本
+  - 更新 `docker/bin/test.sh`，改善測試執行流程
+  - 微調 `docker/test.Dockerfile` 的構建配置
+- **配置文件調整**：小幅更新 Makefile 和其他配置檔案
+
+### 修復
+- **類型安全修復**：解決多個模組中的類型提示問題
+  - 修復 `src/bot/commands/help_collector.py` 中的 JSON 類型處理
+  - 改進 `src/db/pool.py` 和 `src/infra/logging/config.py` 的類型注釋
+
+### 注意
+- 此版本為維護性發布，主要專注於代碼品質和類型安全改進
+- 所有變更均保持向後兼容性，不影響現有功能運行
+
 ## [0.18.0] - 2025-11-13
 
 ### 新增

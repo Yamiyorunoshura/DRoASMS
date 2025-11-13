@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from typing import Any, Mapping, MutableMapping
+from typing import Any, Mapping, MutableMapping, cast
 
 import structlog
 
@@ -46,18 +46,19 @@ def _mask_sensitive_values(
     """
 
     def mask_value(key: str, value: Any) -> Any:
-        if isinstance(value, dict):
-            from typing import Mapping as _Mapping
-            from typing import cast as _cast
-
-            d = _cast(_Mapping[str, Any], value)
-            return {k: mask_value(k, v) for k, v in d.items()}
+        if isinstance(value, Mapping):
+            typed_mapping = cast(Mapping[str, Any], value)
+            nested: dict[str, Any] = {}
+            for nested_key, nested_value in typed_mapping.items():
+                nested[nested_key] = mask_value(nested_key, nested_value)
+            return nested
         if isinstance(value, list):
-            # list 類型已由 isinstance 確認，無需再 cast
-            return [mask_value(key, v) for v in value]
+            typed_list = cast(list[Any], value)  # type: ignore[redundant-cast]
+            masked_list: list[Any] = []
+            for item in typed_list:
+                masked_list.append(mask_value(key, item))
+            return masked_list
         if key.lower() in _SENSITIVE_KEYS:
-            if isinstance(value, str):
-                return "[REDACTED]"
             return "[REDACTED]"
         return value
 

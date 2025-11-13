@@ -55,6 +55,35 @@ jobs:
       - name: Run mypy
         run: uv run mypy src/
 
+  pyright-check:
+    name: Type Check (pyright)
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.13-slim
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/uv
+          key: ${{ runner.os }}-uv-${{ env.UV_VERSION }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-${{ env.UV_VERSION }}-
+            ${{ runner.os }}-uv-
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run pyright
+        run: uv run pyright src/
+
   format-check:
     name: Format Check (black)
     runs-on: ubuntu-latest
