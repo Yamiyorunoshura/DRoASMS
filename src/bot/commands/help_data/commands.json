@@ -171,7 +171,7 @@
   },
   "supreme_assembly": {
     "name": "supreme_assembly",
-    "description": "最高人民會議治理指令群組",
+    "description": "最高人民會議治理指令群組（支援人民代表身分組）",
     "category": "governance",
     "parameters": [],
     "permissions": ["administrator", "manage_guild"],
@@ -196,23 +196,23 @@
       },
       "config_member_role": {
         "name": "supreme_assembly config_member_role",
-        "description": "設定議員身分組",
+        "description": "設定人民代表身分組",
         "category": "governance",
         "parameters": [
           {
             "name": "role",
-            "description": "議員身分組",
+            "description": "人民代表身分組",
             "required": true,
             "type": "Role"
           }
         ],
         "permissions": ["administrator", "manage_guild"],
-        "examples": ["/supreme_assembly config_member_role @Member"],
+        "examples": ["/supreme_assembly config_member_role @Representative"],
         "tags": ["設定", "治理"]
       },
       "panel": {
         "name": "supreme_assembly panel",
-        "description": "開啟最高人民會議面板（表決/投票/傳召）",
+        "description": "開啟最高人民會議面板（議長：表決/投票/傳召，人民代表：投票）",
         "category": "governance",
         "parameters": [],
         "permissions": [],

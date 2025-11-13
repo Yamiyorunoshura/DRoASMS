@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -28,6 +29,9 @@ from src.bot.services.council_service import (
     GovernanceNotConfiguredError,
     PermissionDeniedError,
 )
+from src.bot.services.permission_service import PermissionService
+from src.bot.services.state_council_service import StateCouncilService
+from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 from src.infra.di.container import DependencyContainer
 
 # --- Fixtures and Mocks ---
@@ -110,6 +114,10 @@ def mock_council_service() -> MagicMock:
     service.list_active_proposals = AsyncMock(return_value=[])
     service.export_interval = AsyncMock(return_value=[])
     service.expire_due_proposals = AsyncMock(return_value=0)
+    service.add_council_role = AsyncMock(return_value=True)
+    service.remove_council_role = AsyncMock(return_value=True)
+    service.get_council_role_ids = AsyncMock(return_value=[])
+    service.check_council_permission = AsyncMock(return_value=True)
     return service
 
 
@@ -117,7 +125,16 @@ def mock_council_service() -> MagicMock:
 def mock_container(mock_council_service: MagicMock) -> MagicMock:
     """創建一個假的依賴注入容器"""
     container = MagicMock(spec=DependencyContainer)
-    container.resolve = MagicMock(return_value=mock_council_service)
+    permission_service = MagicMock(spec=PermissionService)
+
+    def _resolve(service_type: type[Any]) -> Any:
+        if service_type is CouncilService:
+            return mock_council_service
+        if service_type is PermissionService:
+            return permission_service
+        return MagicMock()
+
+    container.resolve = MagicMock(side_effect=_resolve)
     return container
 
 
@@ -246,6 +263,9 @@ class TestGetHelpData:
         assert isinstance(help_data, dict)
         assert "council" in help_data
         assert "council config_role" in help_data
+        assert "council add_role" in help_data
+        assert "council remove_role" in help_data
+        assert "council list_roles" in help_data
         assert "council panel" in help_data
 
     def test_help_data_structure(self) -> None:
@@ -278,6 +298,9 @@ class TestBuildCouncilGroup:
         # 檢查是否有 config_role 和 panel 指令
         command_names = [cmd.name for cmd in group._children.values()]
         assert "config_role" in command_names
+        assert "add_role" in command_names
+        assert "remove_role" in command_names
+        assert "list_roles" in command_names
         assert "panel" in command_names
 
 
@@ -297,9 +320,15 @@ class TestRegister:
         with (
             patch("src.bot.commands.council._install_background_scheduler"),
             patch("src.bot.commands.council.CouncilService") as mock_service_cls,
+            patch("src.bot.commands.council.StateCouncilService") as mock_state_cls,
+            patch("src.bot.commands.council.SupremeAssemblyService") as mock_supreme_cls,
+            patch("src.bot.commands.council.PermissionService") as mock_permission_cls,
         ):
             service_instance = MagicMock(spec=CouncilService)
             mock_service_cls.return_value = service_instance
+            mock_state_cls.return_value = MagicMock(spec=StateCouncilService)
+            mock_supreme_cls.return_value = MagicMock(spec=SupremeAssemblyService)
+            mock_permission_cls.return_value = MagicMock(spec=PermissionService)
             register(mock_command_tree, container=None)
             mock_service_cls.assert_called_once_with()
         mock_command_tree.add_command.assert_called_once()
@@ -1270,7 +1299,11 @@ class TestCouncilCommandsIntegration:
 
         assert panel_cmd is not None
 
+        mock_council_service.check_council_permission.return_value = False
+
         # Execute command
         await panel_cmd.callback(interaction)
 
-        interaction.response.send_message.assert_called_with("僅限理事可開啟面板。", ephemeral=True)
+        interaction.response.send_message.assert_called_with(
+            "僅限具備常任理事身分組的人員可開啟面板。", ephemeral=True
+        )

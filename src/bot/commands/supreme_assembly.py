@@ -9,18 +9,14 @@ import structlog
 from discord import app_commands
 
 from src.bot.commands.help_data import HelpData
-from src.bot.commands.state_council import (
-    _edit_message_compat as _edit_message_compat,
-)
-from src.bot.commands.state_council import (
-    _send_message_compat as _send_message_compat,
-)
-from src.bot.commands.state_council import (
-    _send_modal_compat as _send_modal_compat,
+from src.bot.interaction_compat import (
+    send_message_compat,
+    send_modal_compat,
 )
 from src.bot.services.balance_service import BalanceService
 from src.bot.services.council_service import CouncilService
 from src.bot.services.department_registry import get_registry
+from src.bot.services.permission_service import PermissionService
 from src.bot.services.state_council_service import StateCouncilService
 from src.bot.services.supreme_assembly_service import (
     GovernanceNotConfiguredError,
@@ -46,11 +42,11 @@ LOGGER = structlog.get_logger(__name__)
 # 以免 Pylance 在嚴格模式下將 comprehension 內的 v 判為 Unknown。
 def _extract_select_values(interaction: discord.Interaction) -> list[str]:
     data = cast(dict[str, Any], interaction.data or {})
-    raw = data.get("values")
-    if not isinstance(raw, list):
+    raw_values = data.get("values")
+    if not isinstance(raw_values, list):
         return []
+    raw_list: list[Any] = list(raw_values)
     vals: list[str] = []
-    raw_list = raw if isinstance(raw, list) else []
     for item in raw_list:
         if isinstance(item, str):
             vals.append(item)
@@ -118,10 +114,16 @@ def register(
     if container is None:
         # Fallback to old behavior for backward compatibility during migration
         service = SupremeAssemblyService()
+        permission_service = PermissionService(
+            council_service=CouncilService(),
+            state_council_service=StateCouncilService(),
+            supreme_assembly_service=service,
+        )
     else:
         service = container.resolve(SupremeAssemblyService)
+        permission_service = container.resolve(PermissionService)
 
-    tree.add_command(build_supreme_assembly_group(service))
+    tree.add_command(build_supreme_assembly_group(service, permission_service=permission_service))
     # Install background scheduler if client is available
     client = getattr(tree, "client", None)
     if client is not None:
@@ -131,6 +133,7 @@ def register(
 
 def build_supreme_assembly_group(
     service: SupremeAssemblyService,
+    permission_service: PermissionService | None = None,
 ) -> app_commands.Group:
     """Build the /supreme_assembly command group."""
     supreme_assembly = app_commands.Group(
@@ -143,14 +146,14 @@ def build_supreme_assembly_group(
     @app_commands.describe(role="Discord 角色，將作為議長身分組")
     async def config_speaker_role(interaction: discord.Interaction, role: discord.Role) -> None:
         if interaction.guild_id is None or interaction.guild is None:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="本指令需在伺服器中執行。", ephemeral=True
             )
             return
         # Require admin/manage_guild
         perms = getattr(interaction.user, "guild_permissions", None)
         if not perms or not (perms.administrator or perms.manage_guild):
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
             )
             return
@@ -176,7 +179,7 @@ def build_supreme_assembly_group(
 
             account_id = SupremeAssemblyService.derive_account_id(interaction.guild_id)
             if bootstrapped:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction,
                     content=(
                         f"已設定議長角色：{role.mention}（帳戶ID {account_id}）。"
@@ -186,16 +189,14 @@ def build_supreme_assembly_group(
                     ephemeral=True,
                 )
             else:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction,
                     content=f"已設定議長角色：{role.mention}（帳戶ID {account_id}）",
                     ephemeral=True,
                 )
         except Exception as exc:  # pragma: no cover - unexpected
             LOGGER.exception("supreme_assembly.config_speaker_role.error", error=str(exc))
-            await _send_message_compat(
-                interaction, content="設定失敗，請稍後再試。", ephemeral=True
-            )
+            await send_message_compat(interaction, content="設定失敗，請稍後再試。", ephemeral=True)
 
     @supreme_assembly.command(
         name="config_member_role", description="設定最高人民會議議員身分組（角色）"
@@ -203,14 +204,14 @@ def build_supreme_assembly_group(
     @app_commands.describe(role="Discord 角色，將作為議員名冊來源")
     async def config_member_role(interaction: discord.Interaction, role: discord.Role) -> None:
         if interaction.guild_id is None or interaction.guild is None:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="本指令需在伺服器中執行。", ephemeral=True
             )
             return
         # Require admin/manage_guild
         perms = getattr(interaction.user, "guild_permissions", None)
         if not perms or not (perms.administrator or perms.manage_guild):
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
             )
             return
@@ -236,7 +237,7 @@ def build_supreme_assembly_group(
 
             account_id = SupremeAssemblyService.derive_account_id(interaction.guild_id)
             if bootstrapped:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction,
                     content=(
                         f"已設定議員角色：{role.mention}（帳戶ID {account_id}）。"
@@ -246,16 +247,14 @@ def build_supreme_assembly_group(
                     ephemeral=True,
                 )
             else:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction,
                     content=f"已設定議員角色：{role.mention}（帳戶ID {account_id}）",
                     ephemeral=True,
                 )
         except Exception as exc:  # pragma: no cover - unexpected
             LOGGER.exception("supreme_assembly.config_member_role.error", error=str(exc))
-            await _send_message_compat(
-                interaction, content="設定失敗，請稍後再試。", ephemeral=True
-            )
+            await send_message_compat(interaction, content="設定失敗，請稍後再試。", ephemeral=True)
 
     @supreme_assembly.command(name="panel", description="開啟最高人民會議面板（表決/投票/傳召）")
     async def panel(
@@ -263,7 +262,7 @@ def build_supreme_assembly_group(
     ) -> None:
         # 僅允許在伺服器使用
         if interaction.guild_id is None or interaction.guild is None:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="本指令需在伺服器中執行。", ephemeral=True
             )
             return
@@ -271,7 +270,7 @@ def build_supreme_assembly_group(
         try:
             cfg = await service.get_config(guild_id=interaction.guild_id)
         except GovernanceNotConfiguredError:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=(
                     "尚未完成治理設定，請先執行 /supreme_assembly config_speaker_role 和 "
@@ -281,26 +280,41 @@ def build_supreme_assembly_group(
             )
             return
 
-        # 檢查議長或議員資格
-        speaker_role = interaction.guild.get_role(cfg.speaker_role_id)
-        member_role = interaction.guild.get_role(cfg.member_role_id)
-
-        is_speaker = (
-            speaker_role is not None
-            and isinstance(interaction.user, discord.Member)
-            and speaker_role in interaction.user.roles
-        )
-        is_member = (
-            member_role is not None
-            and isinstance(interaction.user, discord.Member)
-            and member_role in interaction.user.roles
-        )
-
-        if not (is_speaker or is_member):
-            await _send_message_compat(
-                interaction, content="僅限議長或議員可開啟面板。", ephemeral=True
+        user_roles = [role.id for role in getattr(interaction.user, "roles", [])]
+        if permission_service is not None:
+            # 使用最高人民議會權限檢查器以支援人民代表身分組
+            perm_result = await permission_service.check_supreme_peoples_assembly_permission(
+                guild_id=interaction.guild_id,
+                user_id=interaction.user.id,
+                user_roles=user_roles,
+                operation="panel_access",
             )
-            return
+            if not perm_result.allowed:
+                error_message = perm_result.reason or "僅限議長或人民代表可開啟面板。"
+                await send_message_compat(interaction, content=error_message, ephemeral=True)
+                return
+            is_speaker = perm_result.permission_level == "speaker"
+            is_member = perm_result.permission_level in {"speaker", "representative", "member"}
+        else:
+            speaker_role = interaction.guild.get_role(cfg.speaker_role_id)
+            member_role = interaction.guild.get_role(cfg.member_role_id)
+
+            is_speaker = (
+                speaker_role is not None
+                and isinstance(interaction.user, discord.Member)
+                and speaker_role in interaction.user.roles
+            )
+            is_member = (
+                member_role is not None
+                and isinstance(interaction.user, discord.Member)
+                and member_role in interaction.user.roles
+            )
+
+            if not (is_speaker or is_member):
+                await send_message_compat(
+                    interaction, content="僅限議長或議員可開啟面板。", ephemeral=True
+                )
+                return
 
         view = SupremeAssemblyPanelView(
             service=service,
@@ -309,10 +323,11 @@ def build_supreme_assembly_group(
             speaker_role_id=cfg.speaker_role_id,
             member_role_id=cfg.member_role_id,
             is_speaker=is_speaker,
+            is_member=is_member,
         )
         await view.refresh_options()
         embed = await view.build_summary_embed()
-        await _send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
         try:
             message = await interaction.original_response()
             await view.bind_message(message)
@@ -356,6 +371,7 @@ class SupremeAssemblyPanelView(discord.ui.View):
         speaker_role_id: int,
         member_role_id: int,
         is_speaker: bool,
+        is_member: bool,
     ) -> None:
         super().__init__(timeout=600)
         self.service = service
@@ -364,12 +380,13 @@ class SupremeAssemblyPanelView(discord.ui.View):
         self.speaker_role_id = speaker_role_id
         self.member_role_id = member_role_id
         self.is_speaker = is_speaker
+        self.is_member = is_member
         self._message: discord.Message | None = None
         self._unsubscribe: Callable[[], Awaitable[None]] | None = None
         self._update_lock = asyncio.Lock()
         self._paginator: Any | None = None  # 分頁器屬性
 
-        # 元件：轉帳、發起表決（僅議長）、傳召（僅議長）、使用指引
+        # 元件：轉帳、發起表決（議長或人民代表）、傳召（僅議長）、使用指引
         self._transfer_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="轉帳",
             style=discord.ButtonStyle.primary,
@@ -377,7 +394,7 @@ class SupremeAssemblyPanelView(discord.ui.View):
         self._transfer_btn.callback = self._on_click_transfer
         self.add_item(self._transfer_btn)
 
-        if self.is_speaker:
+        if self.is_member:
             self._propose_btn: discord.ui.Button[Any] = discord.ui.Button(
                 label="發起表決",
                 style=discord.ButtonStyle.primary,
@@ -385,6 +402,7 @@ class SupremeAssemblyPanelView(discord.ui.View):
             self._propose_btn.callback = self._on_click_propose
             self.add_item(self._propose_btn)
 
+        if self.is_speaker:
             self._summon_btn: discord.ui.Button[Any] = discord.ui.Button(
                 label="傳召",
                 style=discord.ButtonStyle.secondary,
@@ -464,15 +482,23 @@ class SupremeAssemblyPanelView(discord.ui.View):
         members = role.members if role is not None else []
         N = 10
         top_mentions = ", ".join(m.mention for m in members[:N]) if members else "(無)"
-        summary = f"餘額：{balance_str}｜議員（{len(members)}）：{top_mentions}"
+        member_type = "人民代表" if len(members) > 0 else "議員"
+        summary = f"餘額：{balance_str}｜{member_type}（{len(members)}）：{top_mentions}"
         embed.add_field(name="摘要", value=summary, inline=False)
-        embed.description = "在此可：轉帳、發起表決（議長）、投票、傳召（議長）。"
+
+        # 根據使用者權限等級顯示不同的功能說明
+        if self.is_speaker:
+            embed.description = "在此可：轉帳、發起表決、投票、傳召。（議長權限）"
+        elif self.is_member:
+            embed.description = "在此可：轉帳、發起表決、投票。（人民代表權限）"
+        else:
+            embed.description = "在此可：轉帳、投票。"
         return embed
 
     def _build_help_embed(self) -> discord.Embed:
         """建構最高人民會議面板之使用指引。"""
         lines = [
-            "• 開啟方式：於伺服器使用 /supreme_assembly panel（僅限議長或議員）。",
+            "• 開啟方式：於伺服器使用 /supreme_assembly panel（僅限議長或人民代表）。",
             (
                 "• 轉帳功能：點擊「轉帳」，選擇轉帳類型（使用者、常任理事會、政府部門），"
                 "然後選擇受款人、輸入金額和用途描述。"
@@ -481,12 +507,12 @@ class SupremeAssemblyPanelView(discord.ui.View):
                 "• 轉帳類型：可選擇轉帳給使用者（使用 Discord 使用者選擇器）、"
                 "轉帳給常任理事會或轉帳給政府部門（從下拉選單選擇）。"
             ),
-            "• 發起表決：僅議長可發起表決，需填寫提案內容、金額（如適用）和用途描述。",
-            "• 名冊快照：建案當下鎖定議員名單與投票門檻 T，用於後續投票與決議。",
-            "• 投票：於「進行中表決」下拉選擇提案後可進行「同意/反對/棄權」。",
+            "• 發起表決：僅議長或人民代表可發起表決，需填寫提案內容、金額（如適用）和用途描述。",
+            "• 名冊快照：建案當下鎖定人民代表名單與投票門檻 T，用於後續投票與決議。",
+            "• 投票：人民代表可於「進行中表決」下拉選擇提案後進行「同意/反對/棄權」。",
             "• 投票規則：投票後不可改選，與理事會機制不同。",
             "• 匿名投票：進行中僅顯示合計票數，結案後揭露個別投票。",
-            "• 傳召功能：僅議長可使用，可傳召議員或政府官員，系統會發送私訊通知。",
+            "• 傳召功能：僅議長可使用，可傳召人民代表或政府官員，系統會發送私訊通知。",
             "• 即時更新：面板開啟期間會自動刷新清單與合計票數。",
             "• 私密性：所有回覆皆為 ephemeral，僅對開啟者可見。",
         ]
@@ -496,10 +522,10 @@ class SupremeAssemblyPanelView(discord.ui.View):
 
     async def _on_click_help(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
-            await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
         try:
-            await _send_message_compat(interaction, embed=self._build_help_embed(), ephemeral=True)
+            await send_message_compat(interaction, embed=self._build_help_embed(), ephemeral=True)
         except Exception:
             # 後援：若已回覆，改用 followup
             try:
@@ -515,11 +541,11 @@ class SupremeAssemblyPanelView(discord.ui.View):
     async def _on_click_view_all_proposals(self, interaction: discord.Interaction) -> None:
         """查看所有提案的分頁列表。"""
         if interaction.user.id != self.author_id:
-            await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
         if not hasattr(self, "_paginator") or not self._paginator:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content="分頁器尚未初始化，請稍後再試。",
                 ephemeral=True,
@@ -531,7 +557,7 @@ class SupremeAssemblyPanelView(discord.ui.View):
             embed = self._paginator.create_embed(0)
             view = self._paginator.create_view()
 
-            await _send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+            await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
         except Exception as exc:
             LOGGER.exception(
                 "supreme_assembly.panel.view_all_proposals.error",
@@ -601,38 +627,41 @@ class SupremeAssemblyPanelView(discord.ui.View):
             await interaction.response.send_message("僅限面板開啟者操作。", ephemeral=True)
             return
         view = SupremeAssemblyTransferTypeSelectionView(service=self.service, guild=self.guild)
-        await _send_message_compat(
+        await send_message_compat(
             interaction, content="請選擇轉帳類型：", view=view, ephemeral=True
         )
 
     async def _on_click_propose(self, interaction: discord.Interaction) -> None:
-        # 僅限議長
-        if not self.is_speaker or interaction.user.id != self.author_id:
-            await _send_message_compat(interaction, content="僅限議長可發起表決。", ephemeral=True)
+        # 僅限議長或人民代表
+        can_propose = self.is_speaker or self.is_member
+        if not can_propose or interaction.user.id != self.author_id:
+            await send_message_compat(
+                interaction, content="僅限議長或人民代表可發起表決。", ephemeral=True
+            )
             return
         try:
             cfg = await self.service.get_config(guild_id=self.guild.id)
         except GovernanceNotConfiguredError:
-            await _send_message_compat(interaction, content="尚未完成治理設定。", ephemeral=True)
+            await send_message_compat(interaction, content="尚未完成治理設定。", ephemeral=True)
             return
         role = self.guild.get_role(cfg.member_role_id)
         if role is None or len(role.members) == 0:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="議員名冊為空，請先確認角色有成員。", ephemeral=True
             )
             return
         modal = CreateProposalModal(service=self.service, guild=self.guild)
-        await _send_modal_compat(interaction, modal)
+        await send_modal_compat(interaction, modal)
 
     async def _on_click_summon(self, interaction: discord.Interaction) -> None:
         # 僅限議長
         if not self.is_speaker or interaction.user.id != self.author_id:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="僅限議長可使用傳召功能。", ephemeral=True
             )
             return
         view = SummonTypeSelectionView(service=self.service, guild=self.guild)
-        await _send_message_compat(
+        await send_message_compat(
             interaction, content="請選擇傳召類型：", view=view, ephemeral=True
         )
 
@@ -641,17 +670,17 @@ class SupremeAssemblyPanelView(discord.ui.View):
         raw_values = self._select.values
         pid_str = raw_values[0] if raw_values else None
         if pid_str in (None, "none"):
-            await _send_message_compat(interaction, content="沒有可操作的提案。", ephemeral=True)
+            await send_message_compat(interaction, content="沒有可操作的提案。", ephemeral=True)
             return
 
         try:
             pid = UUID(pid_str)
         except Exception:
-            await _send_message_compat(interaction, content="選項格式錯誤。", ephemeral=True)
+            await send_message_compat(interaction, content="選項格式錯誤。", ephemeral=True)
             return
         proposal = await self.service.get_proposal(proposal_id=pid)
         if proposal is None or proposal.guild_id != self.guild.id:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="提案不存在或不屬於此伺服器。", ephemeral=True
             )
             return
@@ -810,20 +839,20 @@ class SupremeAssemblyTransferTypeSelectionView(discord.ui.View):
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
         if not interaction.data:
-            await _send_message_compat(interaction, content="請選擇一個轉帳類型。", ephemeral=True)
+            await send_message_compat(interaction, content="請選擇一個轉帳類型。", ephemeral=True)
             return
         values = _extract_select_values(interaction)
         if not values:
-            await _send_message_compat(interaction, content="請選擇一個轉帳類型。", ephemeral=True)
+            await send_message_compat(interaction, content="請選擇一個轉帳類型。", ephemeral=True)
             return
         selected_type: str | None = values[0] if values else None
         if not selected_type:
-            await _send_message_compat(interaction, content="請選擇一個轉帳類型。", ephemeral=True)
+            await send_message_compat(interaction, content="請選擇一個轉帳類型。", ephemeral=True)
             return
 
         if selected_type == "user":
             view = SupremeAssemblyUserSelectView(service=self.service, guild=self.guild)
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="請選擇受款使用者：", view=view, ephemeral=True
             )
         elif selected_type == "council":
@@ -832,16 +861,16 @@ class SupremeAssemblyTransferTypeSelectionView(discord.ui.View):
                 guild=self.guild,
                 target_type="council",
             )
-            await _send_modal_compat(interaction, modal)
+            await send_modal_compat(interaction, modal)
         elif selected_type == "department":
             dept_view: SupremeAssemblyDepartmentSelectView = SupremeAssemblyDepartmentSelectView(
                 service=self.service, guild=self.guild
             )
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="請選擇受款部門：", view=dept_view, ephemeral=True
             )
         else:
-            await _send_message_compat(interaction, content="未知的轉帳類型。", ephemeral=True)
+            await send_message_compat(interaction, content="未知的轉帳類型。", ephemeral=True)
 
 
 class SupremeAssemblyUserSelectView(discord.ui.View):
@@ -862,15 +891,15 @@ class SupremeAssemblyUserSelectView(discord.ui.View):
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
         if not interaction.data:
-            await _send_message_compat(interaction, content="請選擇一個使用者。", ephemeral=True)
+            await send_message_compat(interaction, content="請選擇一個使用者。", ephemeral=True)
             return
         values = _extract_select_values(interaction)
         if not values:
-            await _send_message_compat(interaction, content="請選擇一個使用者。", ephemeral=True)
+            await send_message_compat(interaction, content="請選擇一個使用者。", ephemeral=True)
             return
         selected_id: str | None = values[0] if values else None
         if not selected_id:
-            await _send_message_compat(interaction, content="請選擇一個使用者。", ephemeral=True)
+            await send_message_compat(interaction, content="請選擇一個使用者。", ephemeral=True)
             return
 
         member = self.guild.get_member(int(selected_id)) if self.guild else None
@@ -883,7 +912,7 @@ class SupremeAssemblyUserSelectView(discord.ui.View):
             target_user_id=int(selected_id),
             target_user_name=display_name,
         )
-        await _send_modal_compat(interaction, modal)
+        await send_modal_compat(interaction, modal)
 
 
 class SupremeAssemblyDepartmentSelectView(discord.ui.View):
@@ -922,21 +951,21 @@ class SupremeAssemblyDepartmentSelectView(discord.ui.View):
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
         if not interaction.data:
-            await _send_message_compat(interaction, content="請選擇一個部門。", ephemeral=True)
+            await send_message_compat(interaction, content="請選擇一個部門。", ephemeral=True)
             return
         values = _extract_select_values(interaction)
         if not values:
-            await _send_message_compat(interaction, content="請選擇一個部門。", ephemeral=True)
+            await send_message_compat(interaction, content="請選擇一個部門。", ephemeral=True)
             return
         selected_id: str | None = values[0] if values else None
         if not selected_id:
-            await _send_message_compat(interaction, content="請選擇一個部門。", ephemeral=True)
+            await send_message_compat(interaction, content="請選擇一個部門。", ephemeral=True)
             return
 
         registry = get_registry()
         dept = registry.get_by_id(selected_id)
         if dept is None:
-            await _send_message_compat(interaction, content="部門不存在。", ephemeral=True)
+            await send_message_compat(interaction, content="部門不存在。", ephemeral=True)
             return
 
         modal = SupremeAssemblyTransferModal(
@@ -1008,10 +1037,10 @@ class SupremeAssemblyTransferModal(discord.ui.Modal, title="轉帳"):
         try:
             amt = int(str(self.amount.value).replace(",", "").strip())
         except Exception:
-            await _send_message_compat(interaction, content="金額需為正整數。", ephemeral=True)
+            await send_message_compat(interaction, content="金額需為正整數。", ephemeral=True)
             return
         if amt <= 0:
-            await _send_message_compat(interaction, content="金額需 > 0。", ephemeral=True)
+            await send_message_compat(interaction, content="金額需 > 0。", ephemeral=True)
             return
 
         # Determine target account ID
@@ -1029,7 +1058,7 @@ class SupremeAssemblyTransferModal(discord.ui.Modal, title="轉帳"):
                 )
 
         if not target_id:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="錯誤：無法確定受款帳戶。", ephemeral=True
             )
             return
@@ -1048,7 +1077,7 @@ class SupremeAssemblyTransferModal(discord.ui.Modal, title="轉帳"):
                 amount=amt,
                 reason=str(self.description.value or "").strip() or None,
             )
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=f"轉帳成功！金額：{amt:,}，受款人：{self.target_info.value}",
                 ephemeral=True,
@@ -1061,12 +1090,10 @@ class SupremeAssemblyTransferModal(discord.ui.Modal, title="轉帳"):
                 target_id=target_id,
             )
         except TransferValidationError as exc:
-            await _send_message_compat(interaction, content=f"轉帳失敗：{exc}", ephemeral=True)
+            await send_message_compat(interaction, content=f"轉帳失敗：{exc}", ephemeral=True)
         except Exception as exc:
             LOGGER.exception("supreme_assembly.panel.transfer.error", error=str(exc))
-            await _send_message_compat(
-                interaction, content="轉帳失敗，請稍後再試。", ephemeral=True
-            )
+            await send_message_compat(interaction, content="轉帳失敗，請稍後再試。", ephemeral=True)
 
 
 # --- Proposal UI Components ---
@@ -1237,14 +1264,14 @@ async def _handle_vote(
             choice=choice,
         )
     except VoteAlreadyExistsError:
-        await _send_message_compat(interaction, content="已投票，無法改選。", ephemeral=True)
+        await send_message_compat(interaction, content="已投票，無法改選。", ephemeral=True)
         return
     except PermissionDeniedError as exc:
-        await _send_message_compat(interaction, content=str(exc), ephemeral=True)
+        await send_message_compat(interaction, content=str(exc), ephemeral=True)
         return
     except Exception as exc:  # pragma: no cover
         LOGGER.exception("supreme_assembly.vote.error", error=str(exc))
-        await _send_message_compat(interaction, content="投票失敗。", ephemeral=True)
+        await send_message_compat(interaction, content="投票失敗。", ephemeral=True)
         return
 
     embed = discord.Embed(title="最高人民會議表決（投票）", color=0xE74C3C)
@@ -1254,7 +1281,7 @@ async def _handle_vote(
         value=f"同意 {totals.approve} / 反對 {totals.reject} / 棄權 {totals.abstain}",
     )
     embed.add_field(name="門檻 T", value=str(totals.threshold_t))
-    await _send_message_compat(interaction, content="已記錄您的投票。", ephemeral=True)
+    await send_message_compat(interaction, content="已記錄您的投票。", ephemeral=True)
     try:
         await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception:
@@ -1375,7 +1402,7 @@ class SummonTypeSelectionView(discord.ui.View):
     ) -> None:
         # 預先載入議員清單以正確顯示下拉式選單
         view = await SummonMemberSelectView.build(service=self.service, guild=self.guild)
-        await _send_message_compat(
+        await send_message_compat(
             interaction, content="請選擇要傳召的議員：", view=view, ephemeral=True
         )
 
@@ -1387,7 +1414,7 @@ class SummonTypeSelectionView(discord.ui.View):
         self, interaction: discord.Interaction, button: discord.ui.Button[Any]
     ) -> None:
         view = SummonOfficialSelectView(service=self.service, guild=self.guild)
-        await _send_message_compat(
+        await send_message_compat(
             interaction, content="請選擇要傳召的政府官員：", view=view, ephemeral=True
         )
 
@@ -1446,15 +1473,15 @@ class SummonMemberSelectView(discord.ui.View):
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
         if not interaction.data:
-            await _send_message_compat(interaction, content="請選擇一個議員。", ephemeral=True)
+            await send_message_compat(interaction, content="請選擇一個議員。", ephemeral=True)
             return
         values = _extract_select_values(interaction)
         if not values:
-            await _send_message_compat(interaction, content="請選擇一個議員。", ephemeral=True)
+            await send_message_compat(interaction, content="請選擇一個議員。", ephemeral=True)
             return
         selected_id: str | None = values[0] if values else None
         if not selected_id:
-            await _send_message_compat(interaction, content="請選擇一個議員。", ephemeral=True)
+            await send_message_compat(interaction, content="請選擇一個議員。", ephemeral=True)
             return
 
         try:
@@ -1477,7 +1504,7 @@ class SummonMemberSelectView(discord.ui.View):
                     await self.service.mark_summon_delivered(summon_id=summon.summon_id)
                 except Exception:
                     pass
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=f"已傳召議員 {member.mention if member else selected_id}。",
                 ephemeral=True,
@@ -1491,9 +1518,7 @@ class SummonMemberSelectView(discord.ui.View):
             )
         except Exception as exc:
             LOGGER.exception("supreme_assembly.panel.summon.error", error=str(exc))
-            await _send_message_compat(
-                interaction, content="傳召失敗，請稍後再試。", ephemeral=True
-            )
+            await send_message_compat(interaction, content="傳召失敗，請稍後再試。", ephemeral=True)
 
 
 class SummonOfficialSelectView(discord.ui.View):
@@ -1548,15 +1573,15 @@ class SummonOfficialSelectView(discord.ui.View):
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
         if not interaction.data:
-            await _send_message_compat(interaction, content="請選擇一個官員。", ephemeral=True)
+            await send_message_compat(interaction, content="請選擇一個官員。", ephemeral=True)
             return
         values = _extract_select_values(interaction)
         if not values:
-            await _send_message_compat(interaction, content="請選擇一個官員。", ephemeral=True)
+            await send_message_compat(interaction, content="請選擇一個官員。", ephemeral=True)
             return
         selected_value: str | None = values[0] if values else None
         if not selected_value:
-            await _send_message_compat(interaction, content="請選擇一個官員。", ephemeral=True)
+            await send_message_compat(interaction, content="請選擇一個官員。", ephemeral=True)
             return
 
         # 針對政府官員：導出對應的帳戶 ID 以記錄 summon，並實際 DM 給可辨識之使用者（領袖/角色成員）
@@ -1629,7 +1654,7 @@ class SummonOfficialSelectView(discord.ui.View):
                 view = await SummonPermanentCouncilView.build(
                     service=self.service, guild=self.guild, original_view=self
                 )
-                await _send_message_compat(
+                await send_message_compat(
                     interaction,
                     content="請選擇要傳召的常任理事會成員（可多選）：",
                     view=view,
@@ -1638,9 +1663,7 @@ class SummonOfficialSelectView(discord.ui.View):
                 return
 
             if not target_id:
-                await _send_message_compat(
-                    interaction, content="無法確定目標官員。", ephemeral=True
-                )
+                await send_message_compat(interaction, content="無法確定目標官員。", ephemeral=True)
                 return
 
             # 建立 summon 紀錄
@@ -1676,7 +1699,7 @@ class SummonOfficialSelectView(discord.ui.View):
                 except Exception:
                     pass
 
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=(
                     f"已傳召 {target_name}（帳戶 ID: {target_id}）。"
@@ -1698,9 +1721,7 @@ class SummonOfficialSelectView(discord.ui.View):
             )
         except Exception as exc:
             LOGGER.exception("supreme_assembly.panel.summon.error", error=str(exc))
-            await _send_message_compat(
-                interaction, content="傳召失敗，請稍後再試。", ephemeral=True
-            )
+            await send_message_compat(interaction, content="傳召失敗，請稍後再試。", ephemeral=True)
 
 
 class SummonPermanentCouncilView(discord.ui.View):
@@ -1777,20 +1798,20 @@ class SummonPermanentCouncilView(discord.ui.View):
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
         if not interaction.data:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="請選擇至少一個常任理事。", ephemeral=True
             )
             return
         values = _extract_select_values(interaction)
         if not values:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="請選擇至少一個常任理事。", ephemeral=True
             )
             return
         selected_ids = [int(v) for v in values if v.isdigit()]
 
         if not selected_ids:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="請選擇至少一個常任理事。", ephemeral=True
             )
             return
@@ -1844,7 +1865,7 @@ class SummonPermanentCouncilView(discord.ui.View):
             if len(summoned_members) > 5:
                 members_list += f" 等 {len(summoned_members)} 人"
 
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=(
                     f"已傳召 {members_list}。"
@@ -1868,9 +1889,7 @@ class SummonPermanentCouncilView(discord.ui.View):
             LOGGER.exception(
                 "supreme_assembly.panel.summon.permanent_council.error", error=str(exc)
             )
-            await _send_message_compat(
-                interaction, content="傳召失敗，請稍後再試。", ephemeral=True
-            )
+            await send_message_compat(interaction, content="傳召失敗，請稍後再試。", ephemeral=True)
 
 
 # --- Helpers ---

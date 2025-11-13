@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Sequence
+from typing import Any, Sequence, cast
 from uuid import UUID
 
 from src.infra.types.db import ConnectionProtocol
@@ -44,6 +44,18 @@ class DepartmentConfig:
     tax_rate_basis: int
     tax_rate_percent: int
     max_issuance_per_month: int
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class DepartmentRoleConfig:
+    """國務院部門角色配置"""
+
+    id: int
+    guild_id: int
+    department: str
+    role_id: int
     created_at: datetime
     updated_at: datetime
 
@@ -819,10 +831,77 @@ class StateCouncilGovernanceGateway:
         )
         return [dict(row) for row in rows]
 
+    # --- Department Multiple Role Management ---
+    async def add_department_role(
+        self, connection: ConnectionProtocol, *, guild_id: int, department: str, role_id: int
+    ) -> bool:
+        """為指定部門添加角色"""
+        row = await connection.fetchrow(
+            f"SELECT * FROM {self._schema}.add_state_council_department_role($1, $2, $3)",
+            guild_id,
+            department,
+            role_id,
+        )
+        return bool(row["add_state_council_department_role"]) if row else False
+
+    async def remove_department_role(
+        self, connection: ConnectionProtocol, *, guild_id: int, department: str, role_id: int
+    ) -> bool:
+        """從指定部門移除角色"""
+        row = await connection.fetchrow(
+            f"SELECT * FROM {self._schema}.remove_state_council_department_role($1, $2, $3)",
+            guild_id,
+            department,
+            role_id,
+        )
+        return bool(row["remove_state_council_department_role"]) if row else False
+
+    async def get_department_role_ids(
+        self, connection: ConnectionProtocol, *, guild_id: int, department: str
+    ) -> Sequence[int]:
+        """獲取部門的所有角色ID"""
+        row = await connection.fetchrow(
+            f"SELECT * FROM {self._schema}.get_state_council_department_role_ids($1, $2)",
+            guild_id,
+            department,
+        )
+        if not row:
+            return []
+
+        raw_ids = row.get("get_state_council_department_role_ids")
+        role_ids = cast(Sequence[Any] | None, raw_ids)
+        if role_ids is None:
+            return []
+        return [int(role_id) for role_id in role_ids]
+
+    async def list_department_role_configs(
+        self, connection: ConnectionProtocol, *, guild_id: int
+    ) -> Sequence[DepartmentRoleConfig]:
+        """列出公會所有部門角色配置"""
+        rows = await connection.fetch(
+            f"SELECT * FROM {self._schema}.list_state_council_department_role_configs($1)", guild_id
+        )
+
+        configs: list[DepartmentRoleConfig] = []
+        for row in rows:
+            configs.append(
+                DepartmentRoleConfig(
+                    id=row["id"],
+                    guild_id=row["guild_id"],
+                    department=row["department"],
+                    role_id=row["role_id"],
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                )
+            )
+
+        return configs
+
 
 __all__ = [
     "StateCouncilConfig",
     "DepartmentConfig",
+    "DepartmentRoleConfig",
     "GovernmentAccount",
     "WelfareDisbursement",
     "TaxRecord",

@@ -15,6 +15,8 @@ from src.bot.commands.help_data import CollectedHelpData, HelpData, HelpParamete
 
 LOGGER = structlog.get_logger(__name__)
 
+JsonDict = dict[str, Any]
+
 
 def collect_help_data(
     tree: app_commands.CommandTree,
@@ -110,10 +112,12 @@ class _RegistryNode(TypedDict):
     subcommands: dict[str, "_RegistryNode"]
 
 
-_REGISTRY_CACHE: dict[str, _RegistryNode] | None = None
+_registry_cache: dict[str, _RegistryNode] | None = None
 
 
-def _load_help_json(command_name: str, parent_name: str = "") -> HelpData | None:
+def _load_help_json(
+    command_name: str, parent_name: str = ""
+) -> HelpData | None:  # pyright: ignore[reportUnusedFunction]
     """Legacy loader kept for unit tests and transitional compatibility.
 
     It first tries to locate per-command JSON files (both legacy scattered files and
@@ -160,7 +164,8 @@ def _read_help_file(path: Path) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         LOGGER.warning("help.json.invalid_format", path=str(path))
         return None
-    return payload
+    typed_payload: JsonDict = payload
+    return typed_payload
 
 
 def _extract_help_entry(
@@ -185,21 +190,22 @@ def _extract_help_entry(
 
 
 def _dig_help_payload(node: dict[str, Any], path: list[str]) -> HelpData | None:
-    current: Any = node
+    current: dict[str, Any] | None = node
     for part in path:
         if not isinstance(current, dict):
             return None
+        current_dict: JsonDict = current
         # Direct key match
-        direct = current.get(part)
+        direct = current_dict.get(part)
         if isinstance(direct, dict):
-            current = direct
+            current = cast(JsonDict, direct)
             continue
         # Nested under subcommands
-        subcommands = current.get("subcommands")
+        subcommands = current_dict.get("subcommands")
         if isinstance(subcommands, dict):
             nested = subcommands.get(part)
             if isinstance(nested, dict):
-                current = nested
+                current = cast(JsonDict, nested)
                 continue
         return None
 
@@ -245,39 +251,40 @@ def _get_registry_node(full_name: str) -> _RegistryNode | None:
 
 
 def _load_registry() -> dict[str, _RegistryNode]:
-    global _REGISTRY_CACHE
-    if _REGISTRY_CACHE is not None:
-        return _REGISTRY_CACHE
+    global _registry_cache
+    if _registry_cache is not None:
+        return _registry_cache
 
     path = Path("src/bot/commands/help_data/commands.json")
     if not path.exists():
         LOGGER.warning("help.registry.missing", path=str(path))
-        _REGISTRY_CACHE = {}
-        return _REGISTRY_CACHE
+        _registry_cache = {}
+        return _registry_cache
 
     try:
         with path.open("r", encoding="utf-8") as fp:
-            raw = json.load(fp)
+            raw_payload = json.load(fp)
     except Exception as exc:
         LOGGER.warning("help.registry.load_error", path=str(path), error=str(exc))
-        _REGISTRY_CACHE = {}
-        return _REGISTRY_CACHE
+        _registry_cache = {}
+        return _registry_cache
 
-    if not isinstance(raw, dict):
+    if not isinstance(raw_payload, dict):
         LOGGER.warning("help.registry.invalid_format", path=str(path))
-        _REGISTRY_CACHE = {}
-        return _REGISTRY_CACHE
+        _registry_cache = {}
+        return _registry_cache
 
+    raw_dict = cast(JsonDict, raw_payload)
     registry: dict[str, _RegistryNode] = {}
-    for name, entry in raw.items():
+    for name, entry in raw_dict.items():
         if not isinstance(name, str) or not isinstance(entry, dict):
             LOGGER.warning("help.registry.invalid_entry", command=name)
             continue
-        node = _build_registry_node([name], entry)
+        node = _build_registry_node([name], cast(JsonDict, entry))
         if node:
             registry[name] = node
 
-    _REGISTRY_CACHE = registry
+    _registry_cache = registry
     return registry
 
 

@@ -11,6 +11,7 @@ from src.bot.services.adjustment_service import AdjustmentService
 from src.bot.services.balance_service import BalanceService
 from src.bot.services.council_service import CouncilService
 from src.bot.services.currency_config_service import CurrencyConfigService
+from src.bot.services.permission_service import PermissionService
 from src.bot.services.state_council_service import StateCouncilService
 from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 from src.bot.services.transfer_service import TransferService
@@ -119,5 +120,22 @@ def bootstrap_container() -> DependencyContainer:
     # The service can build its own gateway, but registering it enables DI resolution
     # via commands like container.resolve(SupremeAssemblyService).
     container.register(SupremeAssemblyService, lifecycle=Lifecycle.SINGLETON)
+
+    # PermissionService composes governance services for unified role checks
+    def create_permission_service() -> PermissionService:
+        council_service = container.resolve(CouncilService)
+        state_council_service = container.resolve(StateCouncilService)
+        supreme_assembly_service = container.resolve(SupremeAssemblyService)
+        return PermissionService(
+            council_service=council_service,
+            state_council_service=state_council_service,
+            supreme_assembly_service=supreme_assembly_service,
+        )
+
+    container.register(
+        PermissionService,
+        factory=create_permission_service,
+        lifecycle=Lifecycle.SINGLETON,
+    )
 
     return container

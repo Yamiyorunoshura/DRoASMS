@@ -13,10 +13,21 @@ from src.infra.types.db import ConnectionProtocol
 @dataclass(frozen=True, slots=True)
 class CouncilConfig:
     guild_id: int
-    council_role_id: int
+    council_role_id: int  # 保持向下相容，主要使用 council_role_ids
     council_account_member_id: int
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class CouncilRoleConfig:
+    """常任理事身分組配置"""
+
+    guild_id: int
+    role_id: int
+    created_at: datetime
+    updated_at: datetime
+    id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +97,75 @@ class CouncilGovernanceGateway:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+    # --- Council Role Management ---
+    async def get_council_role_ids(
+        self, connection: ConnectionProtocol, *, guild_id: int
+    ) -> Sequence[int]:
+        """獲取所有常任理事身分組 ID"""
+        sql = f"SELECT {self._schema}.fn_get_council_role_ids($1)"
+        result = await connection.fetchval(sql, guild_id)
+        if result is None:
+            return []
+        if isinstance(result, list):
+            return [int(role_id) for role_id in result]
+        return []
+
+    async def add_council_role(
+        self, connection: ConnectionProtocol, *, guild_id: int, role_id: int
+    ) -> bool:
+        """添加常任理事身分組"""
+        sql = f"SELECT {self._schema}.fn_add_council_role($1, $2)"
+        result = await connection.fetchval(sql, guild_id, role_id)
+        return bool(result)
+
+    async def remove_council_role(
+        self, connection: ConnectionProtocol, *, guild_id: int, role_id: int
+    ) -> bool:
+        """移除常任理事身分組"""
+        sql = f"SELECT {self._schema}.fn_remove_council_role($1, $2)"
+        result = await connection.fetchval(sql, guild_id, role_id)
+        return bool(result)
+
+    async def list_council_role_configs(
+        self, connection: ConnectionProtocol, *, guild_id: int
+    ) -> Sequence[CouncilRoleConfig]:
+        """列出所有常任理事身分組配置（含舊版單一身分組）。"""
+        configs: list[CouncilRoleConfig] = []
+
+        config = await self.fetch_config(connection, guild_id=guild_id)
+        if config and config.council_role_id:
+            configs.append(
+                CouncilRoleConfig(
+                    guild_id=guild_id,
+                    role_id=config.council_role_id,
+                    created_at=config.created_at,
+                    updated_at=config.updated_at,
+                )
+            )
+
+        rows = await connection.fetch(
+            f"""
+                SELECT id, guild_id, role_id, created_at, updated_at
+                FROM {self._schema}.council_role_ids
+                WHERE guild_id = $1
+                ORDER BY created_at
+            """,
+            guild_id,
+        )
+
+        for row in rows:
+            configs.append(
+                CouncilRoleConfig(
+                    id=row["id"],
+                    guild_id=row["guild_id"],
+                    role_id=row["role_id"],
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                )
+            )
+
+        return configs
 
     # --- Proposals ---
     async def create_proposal(
@@ -338,6 +418,7 @@ class CouncilGovernanceGateway:
 
 __all__ = [
     "CouncilConfig",
+    "CouncilRoleConfig",
     "CouncilGovernanceGateway",
     "Proposal",
     "Tally",

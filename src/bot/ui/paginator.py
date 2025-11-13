@@ -175,7 +175,7 @@ class EmbedPaginator:
 
     async def _on_prev_page(self, interaction: discord.Interaction) -> None:
         """處理上一頁按鈕點擊。"""
-        from src.bot.commands.state_council import _send_message_compat as _send_msg_compat
+        from src.bot.interaction_compat import send_message_compat as _send_msg_compat
 
         if self.author_id and interaction.user.id != self.author_id:
             await _send_msg_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
@@ -187,7 +187,7 @@ class EmbedPaginator:
 
     async def _on_next_page(self, interaction: discord.Interaction) -> None:
         """處理下一頁按鈕點擊。"""
-        from src.bot.commands.state_council import _send_message_compat as _send_msg_compat
+        from src.bot.interaction_compat import send_message_compat as _send_msg_compat
 
         if self.author_id and interaction.user.id != self.author_id:
             await _send_msg_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
@@ -199,7 +199,7 @@ class EmbedPaginator:
 
     async def _on_jump_page(self, interaction: discord.Interaction) -> None:
         """處理頁面跳轉選擇。"""
-        from src.bot.commands.state_council import _send_message_compat as _send_msg_compat
+        from src.bot.interaction_compat import send_message_compat as _send_msg_compat
 
         if self.author_id and interaction.user.id != self.author_id:
             await _send_msg_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
@@ -215,7 +215,7 @@ class EmbedPaginator:
 
         selected_value: str = values[0]
         if selected_value == "more":
-            from src.bot.commands.state_council import _send_message_compat as _send_msg_compat
+            from src.bot.interaction_compat import send_message_compat as _send_msg_compat
 
             await _send_msg_compat(
                 interaction,
@@ -230,7 +230,7 @@ class EmbedPaginator:
                 self.current_page = page_num
                 await self._update_page(interaction)
         except (ValueError, IndexError):
-            from src.bot.commands.state_council import _send_message_compat as _send_msg_compat
+            from src.bot.interaction_compat import send_message_compat as _send_msg_compat
 
             await _send_msg_compat(interaction, content="無效的頁面選擇。", ephemeral=True)
 
@@ -243,7 +243,7 @@ class EmbedPaginator:
                 new_view = self.create_view()
 
                 # 更新訊息
-                from src.bot.commands.state_council import _edit_message_compat as _edit_msg_compat
+                from src.bot.interaction_compat import edit_message_compat as _edit_msg_compat
 
                 await _edit_msg_compat(interaction, embed=new_embed, view=new_view)
 
@@ -256,7 +256,7 @@ class EmbedPaginator:
 
             except Exception as exc:
                 LOGGER.exception("paginator.update_page.error", error=str(exc))
-                from src.bot.commands.state_council import _send_message_compat as _send_msg_compat
+                from src.bot.interaction_compat import send_message_compat as _send_msg_compat
 
                 await _send_msg_compat(
                     interaction,

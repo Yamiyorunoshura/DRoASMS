@@ -6,12 +6,14 @@ import discord
 import pytest
 
 from src.bot.commands.state_council import (
-    _edit_message_compat,
     _format_currency_display,
-    _send_message_compat,
-    _send_modal_compat,
     build_state_council_group,
     get_help_data,
+)
+from src.bot.interaction_compat import (
+    edit_message_compat,
+    send_message_compat,
+    send_modal_compat,
 )
 from src.bot.services.currency_config_service import CurrencyConfigResult
 from src.bot.services.state_council_service import (
@@ -165,17 +167,17 @@ class TestMessageCompatFunctions:
     """測試消息兼容性函數"""
 
     @pytest.mark.asyncio
-    async def test_send_message_compat_with_response(self) -> None:
+    async def testsend_message_compat_with_response(self) -> None:
         """測試使用 response.send_message"""
         interaction = MagicMock()
         interaction.response.send_message = AsyncMock()
 
-        await _send_message_compat(interaction, content="Test message", ephemeral=True)
+        await send_message_compat(interaction, content="Test message", ephemeral=True)
 
         interaction.response.send_message.assert_called_once_with("Test message", ephemeral=True)
 
     @pytest.mark.asyncio
-    async def test_send_message_compat_with_edit_message(self) -> None:
+    async def testsend_message_compat_with_edit_message(self) -> None:
         """測試使用 response_edit_message"""
         interaction = MagicMock()
         interaction.response = MagicMock()
@@ -183,12 +185,12 @@ class TestMessageCompatFunctions:
         interaction.response_edit_message = AsyncMock()
 
         embed = MagicMock()
-        await _send_message_compat(interaction, embed=embed, ephemeral=True)
+        await send_message_compat(interaction, embed=embed, ephemeral=True)
 
         interaction.response_edit_message.assert_called_once_with(embed=embed, ephemeral=True)
 
     @pytest.mark.asyncio
-    async def test_send_message_compat_with_send_message_stub(self) -> None:
+    async def testsend_message_compat_with_send_message_stub(self) -> None:
         """測試使用 response_send_message stub"""
         interaction = MagicMock()
         interaction.response = MagicMock()
@@ -196,23 +198,23 @@ class TestMessageCompatFunctions:
         del interaction.response.edit_message
         interaction.response_send_message = AsyncMock()
 
-        await _send_message_compat(interaction, content="Test message")
+        await send_message_compat(interaction, content="Test message")
 
         interaction.response_send_message.assert_called_once_with("Test message", ephemeral=False)
 
     @pytest.mark.asyncio
-    async def test_edit_message_compat_with_response(self) -> None:
+    async def testedit_message_compat_with_response(self) -> None:
         """測試使用 response.edit_message"""
         interaction = MagicMock()
         interaction.response.edit_message = AsyncMock()
 
         embed = MagicMock()
-        await _edit_message_compat(interaction, embed=embed)
+        await edit_message_compat(interaction, embed=embed)
 
         interaction.response.edit_message.assert_called_once_with(embed=embed)
 
     @pytest.mark.asyncio
-    async def test_edit_message_compat_with_stub(self) -> None:
+    async def testedit_message_compat_with_stub(self) -> None:
         """測試使用 response_edit_message stub"""
         interaction = MagicMock()
         interaction.response = MagicMock()
@@ -220,23 +222,23 @@ class TestMessageCompatFunctions:
         interaction.response_edit_message = AsyncMock()
 
         embed = MagicMock()
-        await _edit_message_compat(interaction, embed=embed)
+        await edit_message_compat(interaction, embed=embed)
 
         interaction.response_edit_message.assert_called_once_with(embed=embed)
 
     @pytest.mark.asyncio
-    async def test_send_modal_compat_with_response(self) -> None:
+    async def testsend_modal_compat_with_response(self) -> None:
         """測試使用 response.send_modal"""
         interaction = MagicMock()
         interaction.response.send_modal = AsyncMock()
 
         modal = MagicMock()
-        await _send_modal_compat(interaction, modal)
+        await send_modal_compat(interaction, modal)
 
         interaction.response.send_modal.assert_called_once_with(modal)
 
     @pytest.mark.asyncio
-    async def test_send_modal_compat_with_stub(self) -> None:
+    async def testsend_modal_compat_with_stub(self) -> None:
         """測試使用 response_send_modal stub"""
         interaction = MagicMock()
         interaction.response = MagicMock()
@@ -244,7 +246,7 @@ class TestMessageCompatFunctions:
         interaction.response_send_modal = AsyncMock()
 
         modal = MagicMock()
-        await _send_modal_compat(interaction, modal)
+        await send_modal_compat(interaction, modal)
 
         interaction.response_send_modal.assert_called_once_with(modal)
 

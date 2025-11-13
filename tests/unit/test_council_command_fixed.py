@@ -140,6 +140,9 @@ class TestGetHelpData:
         assert isinstance(help_data, dict)
         assert "council" in help_data
         assert "council config_role" in help_data
+        assert "council add_role" in help_data
+        assert "council remove_role" in help_data
+        assert "council list_roles" in help_data
         assert "council panel" in help_data
 
     def test_help_data_structure(self) -> None:
@@ -174,6 +177,9 @@ class TestBuildCouncilGroup:
         # 檢查是否有 config_role 和 panel 指令
         command_names = [cmd.name for cmd in group._children.values()]
         assert "config_role" in command_names
+        assert "add_role" in command_names
+        assert "remove_role" in command_names
+        assert "list_roles" in command_names
         assert "panel" in command_names
 
 
@@ -393,6 +399,7 @@ class TestCouncilCommandLogic:
         mock_config = MagicMock()
         mock_config.council_role_id = 11111
         mock_council_service.get_config = AsyncMock(return_value=mock_config)
+        mock_council_service.check_council_permission = AsyncMock(return_value=False)
 
         # Mock guild, role, and member
         mock_guild = MagicMock()
@@ -430,7 +437,9 @@ class TestCouncilCommandLogic:
             # Execute command
             await panel_cmd.callback(interaction)
 
-        interaction.response.send_message.assert_called_with("僅限理事可開啟面板。", ephemeral=True)
+        interaction.response.send_message.assert_called_with(
+            "僅限具備常任理事身分組的人員可開啟面板。", ephemeral=True
+        )
 
 
 # --- UI Component Tests (Event Loop Safe) ---

@@ -55,5 +55,9 @@ openspec/
 # hypothesis
 .hypothesis/
 
-# uv
-uv.lock
+# backup
+*.bak
+backup/
+
+# cov
+htmlcov_council/

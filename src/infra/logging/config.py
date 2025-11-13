@@ -61,7 +61,9 @@ def _mask_sensitive_values(
             return "[REDACTED]"
         return value
 
-    masked: dict[str, Any] = {k: mask_value(k, v) for k, v in event_dict.items()}
+    masked: dict[str, Any] = {}
+    for key, value in event_dict.items():
+        masked[key] = mask_value(key, value)
     return masked
 
 

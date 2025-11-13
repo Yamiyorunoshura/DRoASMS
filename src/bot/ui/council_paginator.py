@@ -6,7 +6,7 @@ from typing import Any, Sequence
 
 import discord
 
-from src.bot.commands.state_council import _send_message_compat as _send_msg_compat
+from src.bot.interaction_compat import send_message_compat as _send_msg_compat
 from src.bot.services.department_registry import get_registry
 from src.bot.ui.paginator import EmbedPaginator
 

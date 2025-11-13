@@ -22,6 +22,7 @@ from src.db.gateway.economy_queries import EconomyQueryGateway
 from src.db.gateway.state_council_governance import (
     CurrencyIssuance,
     DepartmentConfig,
+    DepartmentRoleConfig,
     GovernmentAccount,
     IdentityRecord,
     InterdepartmentTransfer,
@@ -31,7 +32,7 @@ from src.db.gateway.state_council_governance import (
     WelfareDisbursement,
 )
 from src.db.pool import get_pool
-from src.infra.types.db import PoolProtocol
+from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -881,9 +882,10 @@ class StateCouncilService:
         """檢查使用者是否可存取指定部門。
 
         規則：
-        1) 若該部門設定存在且使用者擁有所需角色 → 允許。
-        2) 否則再檢查是否為國務院領袖（身分或角色）→ 允許。
-        3) 其他情況 → 拒絕。
+        1) 若該部門有多角色設定且使用者擁有任一角色 → 允許。
+        2) 若該部門有傳統單角色設定且使用者擁有該角色 → 允許。
+        3) 否則再檢查是否為國務院領袖（身分或角色）→ 允許。
+        4) 其他情況 → 拒絕。
         """
         # 先確認是否已完成國務院設定；未設定時一律拒絕
         try:
@@ -895,20 +897,34 @@ class StateCouncilService:
             pool: PoolProtocol = cast(PoolProtocol, get_pool())
             cm = await self._pool_acquire_cm(pool)
             async with cm as conn:
+                # 檢查多角色配置
+                department_role_ids = await self._gateway.get_department_role_ids(
+                    conn, guild_id=guild_id, department=department
+                )
+
+                if department_role_ids:
+                    # 有多角色配置：檢查用戶是否擁有任一部門角色
+                    if bool(set(department_role_ids) & set(user_roles)):
+                        return True
+
+                # 檢查傳統的單角色配置
                 dept_config = await self._gateway.fetch_department_config(
                     conn, guild_id=guild_id, department=department
                 )
-        except Exception:
-            # 資料來源不可用時保守拒絕
-            return False
 
-        # 先做角色檢查（單元測試多半只提供部門設定而未提供整體配置）
-        if dept_config is not None:
-            # 測試友善：若為 AsyncMock，視為通過
-            if isinstance(dept_config, AsyncMock):
-                return True
-            if dept_config.role_id is not None and dept_config.role_id in user_roles:
-                return True
+                if dept_config is not None:
+                    # 測試友善：若為 AsyncMock，視為通過
+                    if isinstance(dept_config, AsyncMock):
+                        return True
+                    if dept_config.role_id is not None and dept_config.role_id in user_roles:
+                        return True
+        except Exception as exc:
+            LOGGER.warning(
+                "state_council.permission.department_check_failed",
+                guild_id=guild_id,
+                department=department,
+                error=str(exc),
+            )
 
         # 角色不符或部門不存在時，允許國務院領袖擁有全域權限
         try:
@@ -921,6 +937,45 @@ class StateCouncilService:
             return False
 
         return False
+
+    # --- Department Role Management ---
+    async def add_department_role(self, *, guild_id: int, department: str, role_id: int) -> bool:
+        """為指定部門添加角色"""
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        cm = await self._pool_acquire_cm(pool)
+        async with cm as conn:
+            c: ConnectionProtocol = conn
+            return await self._gateway.add_department_role(
+                c, guild_id=guild_id, department=department, role_id=role_id
+            )
+
+    async def remove_department_role(self, *, guild_id: int, department: str, role_id: int) -> bool:
+        """從指定部門移除角色"""
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        cm = await self._pool_acquire_cm(pool)
+        async with cm as conn:
+            c: ConnectionProtocol = conn
+            return await self._gateway.remove_department_role(
+                c, guild_id=guild_id, department=department, role_id=role_id
+            )
+
+    async def get_department_role_ids(self, *, guild_id: int, department: str) -> Sequence[int]:
+        """獲取部門的所有角色ID"""
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        cm = await self._pool_acquire_cm(pool)
+        async with cm as conn:
+            c: ConnectionProtocol = conn
+            return await self._gateway.get_department_role_ids(
+                c, guild_id=guild_id, department=department
+            )
+
+    async def list_department_role_configs(self, guild_id: int) -> Sequence[DepartmentRoleConfig]:
+        """列出公會所有部門角色配置"""
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        cm = await self._pool_acquire_cm(pool)
+        async with cm as conn:
+            c: ConnectionProtocol = conn
+            return await self._gateway.list_department_role_configs(c, guild_id=guild_id)
 
     # --- Suspects Management ---
     async def list_suspects(

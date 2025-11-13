@@ -11,6 +11,7 @@ from src.bot.services.transfer_service import TransferError, TransferService
 from src.db.gateway.council_governance import (
     CouncilConfig,
     CouncilGovernanceGateway,
+    CouncilRoleConfig,
     Proposal,
     Tally,
 )
@@ -401,6 +402,55 @@ class CouncilService:
         async with pool.acquire() as conn:
             c: ConnectionProtocol = conn
             return await self._gateway.fetch_proposal(c, proposal_id=proposal_id)
+
+    # --- Council Role Management ---
+    async def get_council_role_ids(self, *, guild_id: int) -> Sequence[int]:
+        """獲取所有常任理事身分組 ID"""
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
+            return await self._gateway.get_council_role_ids(c, guild_id=guild_id)
+
+    async def add_council_role(self, *, guild_id: int, role_id: int) -> bool:
+        """添加常任理事身分組"""
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
+            return await self._gateway.add_council_role(c, guild_id=guild_id, role_id=role_id)
+
+    async def remove_council_role(self, *, guild_id: int, role_id: int) -> bool:
+        """移除常任理事身分組"""
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
+            return await self._gateway.remove_council_role(c, guild_id=guild_id, role_id=role_id)
+
+    async def check_council_permission(self, *, guild_id: int, user_roles: Sequence[int]) -> bool:
+        """檢查用戶是否具備常任理事權限（基於身分組）"""
+        try:
+            council_role_ids = await self.get_council_role_ids(guild_id=guild_id)
+            if not council_role_ids:
+                # 向下相容：檢查傳統的單一身分組配置
+                cfg = await self.get_config(guild_id=guild_id)
+                return cfg.council_role_id in user_roles
+
+            # 檢查用戶是否具備任一常任理事身分組
+            has_multiple_role = bool(set(council_role_ids) & set(user_roles))
+
+            # 同時檢查傳統的單一身分組配置（向下相容）
+            cfg = await self.get_config(guild_id=guild_id)
+            has_single_role = cfg.council_role_id in user_roles
+
+            return has_multiple_role or has_single_role
+        except GovernanceNotConfiguredError:
+            return False
+
+    async def list_council_role_configs(self, guild_id: int) -> Sequence[CouncilRoleConfig]:
+        """列出公會的常任理事身分組配置"""
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
+            return await self._gateway.list_council_role_configs(c, guild_id=guild_id)
 
     # --- Queries for UI ---
     async def list_active_proposals(self) -> Sequence[Proposal]:

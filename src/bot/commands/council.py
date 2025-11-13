@@ -4,7 +4,7 @@ import asyncio
 import csv
 import io
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, cast
+from typing import Any, Awaitable, Callable, Sequence, cast
 from uuid import UUID
 
 import discord
@@ -12,12 +12,7 @@ import structlog
 from discord import app_commands
 
 from src.bot.commands.help_data import HelpData
-from src.bot.commands.state_council import (
-    _edit_message_compat as _edit_message_compat,
-)
-from src.bot.commands.state_council import (
-    _send_message_compat as _send_message_compat,
-)
+from src.bot.interaction_compat import send_message_compat
 from src.bot.services.balance_service import BalanceService
 from src.bot.services.council_service import (
     CouncilService,
@@ -25,6 +20,9 @@ from src.bot.services.council_service import (
     PermissionDeniedError,
 )
 from src.bot.services.department_registry import get_registry
+from src.bot.services.permission_service import PermissionResult, PermissionService
+from src.bot.services.state_council_service import StateCouncilService
+from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 from src.bot.ui.council_paginator import CouncilProposalPaginator
 from src.db.pool import get_pool
 from src.infra.di.container import DependencyContainer
@@ -38,12 +36,12 @@ LOGGER = structlog.get_logger(__name__)
 # 以免 Pylance 在嚴格模式下將 comprehension 內的變數判為 Unknown。
 def _extract_select_values(interaction: discord.Interaction) -> list[str]:
     data = cast(dict[str, Any], interaction.data or {})
-    raw = data.get("values")
-    if not isinstance(raw, list):
+    raw_values = data.get("values")
+    if not isinstance(raw_values, list):
         return []
+    raw_list: list[Any] = list(raw_values)
     vals: list[str] = []
-    # 已由 isinstance 確認為 list，移除冗餘 cast
-    for item in raw:
+    for item in raw_list:
         if isinstance(item, str):
             vals.append(item)
     return vals
@@ -76,6 +74,45 @@ def get_help_data() -> dict[str, HelpData]:
             "examples": ["/council config_role @CouncilRole"],
             "tags": ["設定", "配置"],
         },
+        "council add_role": {
+            "name": "council add_role",
+            "description": "新增常任理事身分組（支援多個身分組）。需要管理員或管理伺服器權限。",
+            "category": "governance",
+            "parameters": [
+                {
+                    "name": "role",
+                    "description": "要加入理事名冊的 Discord 身分組",
+                    "required": True,
+                },
+            ],
+            "permissions": ["administrator", "manage_guild"],
+            "examples": ["/council add_role @副議長"],
+            "tags": ["設定", "權限", "身分組"],
+        },
+        "council remove_role": {
+            "name": "council remove_role",
+            "description": "移除常任理事身分組（支援多個身分組）。需要管理員或管理伺服器權限。",
+            "category": "governance",
+            "parameters": [
+                {
+                    "name": "role",
+                    "description": "要從理事名冊移除的 Discord 身分組",
+                    "required": True,
+                },
+            ],
+            "permissions": ["administrator", "manage_guild"],
+            "examples": ["/council remove_role @榮譽理事"],
+            "tags": ["設定", "權限", "身分組"],
+        },
+        "council list_roles": {
+            "name": "council list_roles",
+            "description": "列出所有常任理事身分組設定。",
+            "category": "governance",
+            "parameters": [],
+            "permissions": [],
+            "examples": ["/council list_roles"],
+            "tags": ["查詢", "權限"],
+        },
         "council panel": {
             "name": "council panel",
             "description": "開啟理事會面板（建案/投票/撤案/匯出）。僅限理事使用。",
@@ -95,16 +132,24 @@ def register(
     if container is None:
         # Fallback to old behavior for backward compatibility during migration
         service = CouncilService()
+        permission_service = PermissionService(
+            council_service=service,
+            state_council_service=StateCouncilService(),
+            supreme_assembly_service=SupremeAssemblyService(),
+        )
     else:
         service = container.resolve(CouncilService)
+        permission_service = container.resolve(PermissionService)
 
-    tree.add_command(build_council_group(service))
+    tree.add_command(build_council_group(service, permission_service=permission_service))
     _install_background_scheduler(tree.client, service)
 
     LOGGER.debug("bot.command.council.registered")
 
 
-def build_council_group(service: CouncilService) -> app_commands.Group:
+def build_council_group(
+    service: CouncilService, permission_service: PermissionService | None = None
+) -> app_commands.Group:
     council = app_commands.Group(name="council", description="理事會治理指令群組")
 
     @council.command(name="config_role", description="設定常任理事身分組（角色）")
@@ -113,29 +158,27 @@ def build_council_group(service: CouncilService) -> app_commands.Group:
         interaction: discord.Interaction, role: discord.Role
     ) -> None:
         if interaction.guild_id is None or interaction.guild is None:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="本指令需在伺服器中執行。", ephemeral=True
             )
             return
         # Require admin/manage_guild
         perms = getattr(interaction.user, "guild_permissions", None)
         if not perms or not (perms.administrator or perms.manage_guild):
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
             )
             return
         try:
             cfg = await service.set_config(guild_id=interaction.guild_id, council_role_id=role.id)
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=f"已設定理事角色：{role.mention}（帳戶ID {cfg.council_account_member_id}）",
                 ephemeral=True,
             )
         except Exception as exc:  # pragma: no cover - unexpected
             LOGGER.exception("council.config_role.error", error=str(exc))
-            await _send_message_compat(
-                interaction, content="設定失敗，請稍後再試。", ephemeral=True
-            )
+            await send_message_compat(interaction, content="設定失敗，請稍後再試。", ephemeral=True)
 
     # 依規範：移除與面板重疊之撤案/建案/匯出斜線指令（保留 panel/config_role）
 
@@ -145,7 +188,7 @@ def build_council_group(service: CouncilService) -> app_commands.Group:
     ) -> None:
         # 僅允許在伺服器使用
         if interaction.guild_id is None or interaction.guild is None:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="本指令需在伺服器中執行。", ephemeral=True
             )
             return
@@ -153,29 +196,50 @@ def build_council_group(service: CouncilService) -> app_commands.Group:
         try:
             cfg = await service.get_config(guild_id=interaction.guild_id)
         except GovernanceNotConfiguredError:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content="尚未完成治理設定，請先執行 /council config_role。",
                 ephemeral=True,
             )
             return
-        # 檢查理事資格
-        role = interaction.guild.get_role(cfg.council_role_id)
-        if role is None or (
-            isinstance(interaction.user, discord.Member) and role not in interaction.user.roles
-        ):
-            await _send_message_compat(interaction, content="僅限理事可開啟面板。", ephemeral=True)
+
+        user_roles = [role.id for role in getattr(interaction.user, "roles", [])]
+        permission_result: PermissionResult | None = None
+        if permission_service is not None:
+            permission_result = await permission_service.check_council_permission(
+                guild_id=interaction.guild_id,
+                user_id=interaction.user.id,
+                user_roles=user_roles,
+                operation="panel_access",
+            )
+            has_permission = permission_result.allowed
+        else:
+            has_permission = await service.check_council_permission(
+                guild_id=interaction.guild_id, user_roles=user_roles
+            )
+
+        if not has_permission:
+            denial_reason = (
+                permission_result.reason
+                if permission_result and permission_result.reason
+                else "僅限具備常任理事身分組的人員可開啟面板。"
+            )
+            await send_message_compat(
+                interaction,
+                content=denial_reason,
+                ephemeral=True,
+            )
             return
 
         view = CouncilPanelView(
             service=service,
             guild=interaction.guild,
             author_id=interaction.user.id,
-            council_role_id=cfg.council_role_id,
+            council_role_id=cfg.council_role_id,  # 保持向下相容
         )
         await view.refresh_options()
         embed = await view.build_summary_embed()
-        await _send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
         try:
             message = await interaction.original_response()
             await view.bind_message(message)
@@ -191,6 +255,115 @@ def build_council_group(service: CouncilService) -> app_commands.Group:
             guild_id=interaction.guild_id,
             user_id=interaction.user.id,
         )
+
+    @council.command(name="add_role", description="新增常任理事身分組（支援多組）")
+    @app_commands.describe(role="要加入理事名冊的 Discord 身分組")
+    async def add_role(  # pyright: ignore[reportUnusedFunction]
+        interaction: discord.Interaction, role: discord.Role
+    ) -> None:
+        if interaction.guild_id is None or interaction.guild is None:
+            await send_message_compat(
+                interaction, content="本指令需在伺服器中執行。", ephemeral=True
+            )
+            return
+        perms = getattr(interaction.user, "guild_permissions", None)
+        if not perms or not (perms.administrator or perms.manage_guild):
+            await send_message_compat(
+                interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
+            )
+            return
+        try:
+            added = await service.add_council_role(guild_id=interaction.guild_id, role_id=role.id)
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.exception("council.add_role.error", error=str(exc))
+            await send_message_compat(
+                interaction, content="新增身分組失敗，請稍後再試。", ephemeral=True
+            )
+            return
+        if added:
+            content = f"已新增 {role.mention} 到常任理事名冊。"
+        else:
+            content = f"{role.mention} 已存在於常任理事名冊。"
+        await send_message_compat(interaction, content=content, ephemeral=True)
+
+    @council.command(name="remove_role", description="移除常任理事身分組")
+    @app_commands.describe(role="要從理事名冊移除的 Discord 身分組")
+    async def remove_role(  # pyright: ignore[reportUnusedFunction]
+        interaction: discord.Interaction, role: discord.Role
+    ) -> None:
+        if interaction.guild_id is None or interaction.guild is None:
+            await send_message_compat(
+                interaction, content="本指令需在伺服器中執行。", ephemeral=True
+            )
+            return
+        perms = getattr(interaction.user, "guild_permissions", None)
+        if not perms or not (perms.administrator or perms.manage_guild):
+            await send_message_compat(
+                interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
+            )
+            return
+        try:
+            removed = await service.remove_council_role(
+                guild_id=interaction.guild_id, role_id=role.id
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.exception("council.remove_role.error", error=str(exc))
+            await send_message_compat(
+                interaction, content="移除身分組失敗，請稍後再試。", ephemeral=True
+            )
+            return
+        if removed:
+            content = f"已將 {role.mention} 從常任理事名冊移除。"
+        else:
+            content = f"{role.mention} 不在常任理事名冊中。"
+        await send_message_compat(interaction, content=content, ephemeral=True)
+
+    @council.command(name="list_roles", description="列出所有常任理事身分組")
+    async def list_roles(  # pyright: ignore[reportUnusedFunction]
+        interaction: discord.Interaction,
+    ) -> None:
+        if interaction.guild_id is None or interaction.guild is None:
+            await send_message_compat(
+                interaction, content="本指令需在伺服器中執行。", ephemeral=True
+            )
+            return
+        try:
+            role_ids = await service.get_council_role_ids(guild_id=interaction.guild_id)
+            cfg = await service.get_config(guild_id=interaction.guild_id)
+        except GovernanceNotConfiguredError:
+            await send_message_compat(
+                interaction,
+                content="尚未完成治理設定，請先執行 /council config_role。",
+                ephemeral=True,
+            )
+            return
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.exception("council.list_roles.error", error=str(exc))
+            await send_message_compat(
+                interaction, content="讀取理事身分組失敗，請稍後再試。", ephemeral=True
+            )
+            return
+
+        lines: list[str] = []
+        mentioned_ids: set[int] = set()
+        for role_id in role_ids:
+            role = interaction.guild.get_role(role_id)
+            mention = role.mention if role else f"`{role_id}`"
+            lines.append(f"• {mention}")
+            mentioned_ids.add(role_id)
+
+        # 保持向下相容：若舊的 council_role_id 仍存在且未列出，也顯示
+        if cfg.council_role_id and cfg.council_role_id not in mentioned_ids:
+            legacy = interaction.guild.get_role(cfg.council_role_id)
+            mention = legacy.mention if legacy else f"`{cfg.council_role_id}`"
+            lines.append(f"• {mention}（舊版設定）")
+
+        content = (
+            "目前沒有額外的常任理事身分組。"
+            if not lines
+            else "常任理事身分組：\n" + "\n".join(lines)
+        )
+        await send_message_compat(interaction, content=content, ephemeral=True)
 
     return council
 
@@ -295,8 +468,24 @@ async def _dm_council_for_voting(
     service = CouncilService()
     view = VotingView(proposal_id=proposal.proposal_id, service=service)
     # Anonymous in-progress: only aggregated counts are shown in the button acknowledgment
-    role = guild.get_role((await service.get_config(guild_id=guild.id)).council_role_id)
-    members: list[discord.Member] = list(role.members) if role is not None else []
+
+    # 使用新的多身分組機制獲取所有理事
+    members: list[discord.Member] = []
+    try:
+        council_role_ids = await service.get_council_role_ids(guild_id=guild.id)
+        for role_id in council_role_ids:
+            role = guild.get_role(role_id)
+            if role:
+                members.extend(role.members)
+
+        # 如果沒有多身分組配置，向下相容使用單一身分組
+        if not members:
+            cfg = await service.get_config(guild_id=guild.id)
+            role = guild.get_role(cfg.council_role_id)
+            if role:
+                members.extend(role.members)
+    except Exception as exc:  # pragma: no cover - best effort
+        LOGGER.warning("council.dm.fetch_members_error", error=str(exc))
 
     embed = discord.Embed(title="理事會轉帳提案（請投票）", color=0x3498DB)
     embed.add_field(name="提案編號", value=str(proposal.proposal_id), inline=False)
@@ -540,11 +729,37 @@ class CouncilPanelView(discord.ui.View):
                 error=str(exc),
             )
 
-        role = self.guild.get_role(self.council_role_id)
-        members = role.members if role is not None else []
+        # 使用新的多身分組機制獲取所有理事
+        council_members: list[discord.Member] = []
+        try:
+            council_role_ids = await self.service.get_council_role_ids(guild_id=self.guild.id)
+            for role_id in council_role_ids:
+                role = self.guild.get_role(role_id)
+                if role:
+                    members = cast(Sequence[discord.Member], getattr(role, "members", []))
+                    council_members.extend(members)
+
+            # 如果沒有多身分組配置，向下相容使用單一身分組
+            if not council_members and self.council_role_id:
+                role = self.guild.get_role(self.council_role_id)
+                if role:
+                    members = cast(Sequence[discord.Member], getattr(role, "members", []))
+                    council_members.extend(members)
+        except Exception as exc:  # pragma: no cover - best effort
+            LOGGER.warning(
+                "council.panel.members_fetch_error",
+                guild_id=self.guild.id,
+                error=str(exc),
+            )
+
+        # 去除重複成員
+        deduped: dict[int, discord.Member] = {member.id: member for member in council_members}
+        unique_members: list[discord.Member] = list(deduped.values())
         N = 10
-        top_mentions = ", ".join(m.mention for m in members[:N]) if members else "(無)"
-        summary = f"餘額：{balance_str}｜理事（{len(members)}）: {top_mentions}"
+        top_mentions = (
+            ", ".join(m.mention for m in unique_members[:N]) if unique_members else "(無)"
+        )
+        summary = f"餘額：{balance_str}｜理事（{len(unique_members)}）: {top_mentions}"
         embed.add_field(name="Council 摘要", value=summary, inline=False)
         embed.description = "在此可：建立提案、檢視進行中提案並投票、撤案與匯出。"
         return embed
@@ -640,17 +855,17 @@ class CouncilPanelView(discord.ui.View):
 
     async def _on_click_propose(self, interaction: discord.Interaction) -> None:
         # 僅限理事（面板開啟時已檢查，此處再保險一次）
-        try:
-            cfg = await self.service.get_config(guild_id=self.guild.id)
-        except GovernanceNotConfiguredError:
-            await interaction.response.send_message("尚未完成治理設定。", ephemeral=True)
+        user_roles = [role.id for role in getattr(interaction.user, "roles", [])]
+        has_permission = await self.service.check_council_permission(
+            guild_id=self.guild.id, user_roles=user_roles
+        )
+
+        if not has_permission:
+            await interaction.response.send_message(
+                "僅限具備常任理事身分組的人員可建立提案。", ephemeral=True
+            )
             return
-        role = self.guild.get_role(cfg.council_role_id)
-        if role is None or (
-            isinstance(interaction.user, discord.Member) and role not in interaction.user.roles
-        ):
-            await interaction.response.send_message("僅限理事可建立提案。", ephemeral=True)
-            return
+
         # Show transfer type selection view instead of modal
         view = TransferTypeSelectionView(service=self.service, guild=self.guild)
         await interaction.response.send_message("請選擇轉帳類型：", view=view, ephemeral=True)

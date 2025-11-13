@@ -1,20 +1,26 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import math
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Literal, Sequence, cast
+from typing import Any, Awaitable, Callable, Literal, Protocol, Sequence, cast
 
 import discord
 import structlog
 from discord import app_commands
 
 from src.bot.commands.help_data import HelpData
+from src.bot.interaction_compat import (
+    edit_message_compat,
+    send_message_compat,
+    send_modal_compat,
+)
+from src.bot.services.council_service import CouncilService
 from src.bot.services.currency_config_service import (
     CurrencyConfigResult,
     CurrencyConfigService,
 )
+from src.bot.services.permission_service import PermissionService
 from src.bot.services.state_council_service import (
     InsufficientFundsError,
     MonthlyIssuanceLimitExceededError,
@@ -24,6 +30,7 @@ from src.bot.services.state_council_service import (
     SuspectProfile,
     SuspectReleaseResult,
 )
+from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 from src.infra.di.container import DependencyContainer
 from src.infra.events.state_council_events import (
     StateCouncilEvent,
@@ -35,21 +42,8 @@ from src.infra.events.state_council_events import (
 LOGGER = structlog.get_logger(__name__)
 
 
-def _supports_kwarg(func: Any, kwarg: str) -> bool:
-    """Best-effort check whether callable accepts the given keyword argument."""
-    try:
-        signature = inspect.signature(func)
-    except (ValueError, TypeError):
-        return True
-    if kwarg in signature.parameters:
-        kind = signature.parameters[kwarg].kind
-        return kind in (
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            inspect.Parameter.KEYWORD_ONLY,
-        )
-    return any(
-        param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
-    )
+class _Disableable(Protocol):
+    disabled: bool
 
 
 def _format_currency_display(currency_config: CurrencyConfigResult, amount: int) -> str:
@@ -144,110 +138,6 @@ def get_help_data() -> dict[str, HelpData]:
     }
 
 
-async def _send_message_compat(
-    interaction: Any,
-    *,
-    content: str | None = None,
-    embed: Any | None = None,
-    view: Any | None = None,
-    ephemeral: bool | None = None,
-) -> None:
-    """Send message compat for real discord.Interaction and test stubs.
-
-    Prefers interaction.response.send_message if available; otherwise tries
-    stub methods like response_send_message/response_edit_message used in tests.
-    """
-    send_msg = getattr(getattr(interaction, "response", None), "send_message", None)
-    # 檢測是否為測試 mock 對象（MagicMock/AsyncMock）
-    is_test_mock = hasattr(send_msg, "_mock_name") or str(type(send_msg).__name__).endswith("Mock")
-
-    if send_msg and asyncio.iscoroutinefunction(send_msg) and not is_test_mock:
-        kwargs: dict[str, Any] = {}
-        if content is not None:
-            kwargs["content"] = content
-        if embed is not None:
-            kwargs["embed"] = embed
-        # Discord 2.x 會在 view 為 None 時存取 is_finished；因此不要傳入 None。
-        if view is not None:
-            kwargs["view"] = view
-        # 預設不公開；僅在明確要求時設置。
-        kwargs["ephemeral"] = bool(ephemeral)
-        await interaction.response.send_message(**kwargs)
-        return
-    if callable(send_msg):
-        # 測試替身（MagicMock）情境：非 async 方法，直接呼叫即可
-        kwargs_nonasync: dict[str, Any] = {}
-        if embed is not None:
-            kwargs_nonasync["embed"] = embed
-        if view is not None:
-            kwargs_nonasync["view"] = view
-        kwargs_nonasync["ephemeral"] = bool(ephemeral)
-        # 若只有純文字內容，依測試期望以位置參數傳遞
-        if content is not None and not (embed or view):
-            send_msg(content, **kwargs_nonasync)
-        else:
-            if content is not None:
-                kwargs_nonasync["content"] = content
-            send_msg(**kwargs_nonasync)
-        return
-    # Fallbacks for tests
-    if (embed is not None or view is not None) and hasattr(interaction, "response_edit_message"):
-        kwargs2: dict[str, Any] = {}
-        if embed is not None:
-            kwargs2["embed"] = embed
-        if view is not None:
-            kwargs2["view"] = view
-        response_edit = interaction.response_edit_message
-        if _supports_kwarg(response_edit, "ephemeral"):
-            kwargs2["ephemeral"] = bool(ephemeral)
-        await response_edit(**kwargs2)
-        return
-    if hasattr(interaction, "response_send_message"):
-        await interaction.response_send_message(content or "", ephemeral=bool(ephemeral))
-        return
-
-
-async def _edit_message_compat(
-    interaction: Any, *, embed: Any | None = None, view: Any | None = None
-) -> None:
-    edit_msg = getattr(getattr(interaction, "response", None), "edit_message", None)
-    if edit_msg and asyncio.iscoroutinefunction(edit_msg):
-        kwargs_async: dict[str, Any] = {}
-        if embed is not None:
-            kwargs_async["embed"] = embed
-        if view is not None:
-            kwargs_async["view"] = view
-        await interaction.response.edit_message(**kwargs_async)
-        return
-    if callable(edit_msg):
-        kwargs_nonasync: dict[str, Any] = {}
-        if embed is not None:
-            kwargs_nonasync["embed"] = embed
-        if view is not None:
-            kwargs_nonasync["view"] = view
-        edit_msg(**kwargs_nonasync)
-        return
-    if hasattr(interaction, "response_edit_message"):
-        kwargs2: dict[str, Any] = {}
-        if embed is not None:
-            kwargs2["embed"] = embed
-        if view is not None:
-            kwargs2["view"] = view
-        await interaction.response_edit_message(**kwargs2)
-
-
-async def _send_modal_compat(interaction: Any, modal: Any) -> None:
-    send_modal = getattr(getattr(interaction, "response", None), "send_modal", None)
-    if send_modal and asyncio.iscoroutinefunction(send_modal):
-        await interaction.response.send_modal(modal)
-        return
-    if callable(send_modal):
-        send_modal(modal)
-        return
-    if hasattr(interaction, "response_send_modal"):
-        await interaction.response_send_modal(modal)
-
-
 def register(
     tree: app_commands.CommandTree, *, container: DependencyContainer | None = None
 ) -> None:
@@ -256,17 +146,35 @@ def register(
         # Fallback to old behavior for backward compatibility during migration
         service = StateCouncilService()
         currency_service = None
+        try:
+            permission_service = PermissionService(
+                council_service=CouncilService(),
+                state_council_service=service,
+                supreme_assembly_service=SupremeAssemblyService(),
+            )
+        except RuntimeError as exc:
+            LOGGER.warning(
+                "state_council.permission_service.init_failed",
+                error=str(exc),
+                hint="Ensure init_pool() runs before registering commands.",
+            )
+            permission_service = None
     else:
         service = container.resolve(StateCouncilService)
         currency_service = container.resolve(CurrencyConfigService)
+        permission_service = container.resolve(PermissionService)
 
-    tree.add_command(build_state_council_group(service, currency_service))
+    tree.add_command(
+        build_state_council_group(service, currency_service, permission_service=permission_service)
+    )
     _install_background_scheduler(tree.client, service)
     LOGGER.debug("bot.command.state_council.registered")
 
 
 def build_state_council_group(
-    service: StateCouncilService, currency_service: CurrencyConfigService | None = None
+    service: StateCouncilService,
+    currency_service: CurrencyConfigService | None = None,
+    permission_service: PermissionService | None = None,
 ) -> app_commands.Group:
     state_council = app_commands.Group(name="state_council", description="國務院治理指令")
 
@@ -281,7 +189,7 @@ def build_state_council_group(
         leader_role: discord.Role | None = None,
     ) -> None:
         if interaction.guild_id is None or interaction.guild is None:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="本指令需在伺服器中執行。", ephemeral=True
             )
             return
@@ -291,14 +199,14 @@ def build_state_council_group(
             interaction, "guild_permissions", None
         )
         if not perms or not (perms.administrator or perms.manage_guild):
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
             )
             return
 
         # Validate that at least one of leader or leader_role is provided
         if not leader and not leader_role:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content="必須指定一位使用者或一個身分組作為國務院領袖。",
                 ephemeral=True,
@@ -330,12 +238,10 @@ def build_state_council_group(
                 ]
             )
 
-            await _send_message_compat(interaction, content="".join(response_parts), ephemeral=True)
+            await send_message_compat(interaction, content="".join(response_parts), ephemeral=True)
         except Exception as exc:
             LOGGER.exception("state_council.config_leader.error", error=str(exc))
-            await _send_message_compat(
-                interaction, content="設定失敗，請稍後再試。", ephemeral=True
-            )
+            await send_message_compat(interaction, content="設定失敗，請稍後再試。", ephemeral=True)
 
     @state_council.command(name="config_citizen_role", description="設定公民身分組")
     @app_commands.describe(role="要設定為公民身分組的身分組")
@@ -344,7 +250,7 @@ def build_state_council_group(
         role: discord.Role,
     ) -> None:
         if interaction.guild_id is None or interaction.guild is None:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="本指令需在伺服器中執行。", ephemeral=True
             )
             return
@@ -354,7 +260,7 @@ def build_state_council_group(
             interaction, "guild_permissions", None
         )
         if not perms or not (perms.administrator or perms.manage_guild):
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
             )
             return
@@ -364,7 +270,7 @@ def build_state_council_group(
             await service.update_citizen_role_config(
                 guild_id=interaction.guild_id, citizen_role_id=role.id
             )
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=f"✅ 已設定公民身分組為 {role.mention}。",
                 ephemeral=True,
@@ -376,16 +282,14 @@ def build_state_council_group(
                 role_id=role.id,
             )
         except StateCouncilNotConfiguredError:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content="尚未完成國務院設定，請先執行 /state_council config_leader。",
                 ephemeral=True,
             )
         except Exception as exc:
             LOGGER.exception("state_council.config_citizen_role.error", error=str(exc))
-            await _send_message_compat(
-                interaction, content="設定失敗，請稍後再試。", ephemeral=True
-            )
+            await send_message_compat(interaction, content="設定失敗，請稍後再試。", ephemeral=True)
 
     @state_council.command(name="config_suspect_role", description="設定嫌犯身分組")
     @app_commands.describe(role="要設定為嫌犯身分組的身分組")
@@ -394,7 +298,7 @@ def build_state_council_group(
         role: discord.Role,
     ) -> None:
         if interaction.guild_id is None or interaction.guild is None:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="本指令需在伺服器中執行。", ephemeral=True
             )
             return
@@ -404,7 +308,7 @@ def build_state_council_group(
             interaction, "guild_permissions", None
         )
         if not perms or not (perms.administrator or perms.manage_guild):
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
             )
             return
@@ -414,7 +318,7 @@ def build_state_council_group(
             await service.update_suspect_role_config(
                 guild_id=interaction.guild_id, suspect_role_id=role.id
             )
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=f"✅ 已設定嫌犯身分組為 {role.mention}。",
                 ephemeral=True,
@@ -426,23 +330,21 @@ def build_state_council_group(
                 role_id=role.id,
             )
         except StateCouncilNotConfiguredError:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content="尚未完成國務院設定，請先執行 /state_council config_leader。",
                 ephemeral=True,
             )
         except Exception as exc:
             LOGGER.exception("state_council.config_suspect_role.error", error=str(exc))
-            await _send_message_compat(
-                interaction, content="設定失敗，請稍後再試。", ephemeral=True
-            )
+            await send_message_compat(interaction, content="設定失敗，請稍後再試。", ephemeral=True)
 
     @state_council.command(name="panel", description="開啟國務院面板")
     async def panel(  # pyright: ignore[reportUnusedFunction]
         interaction: discord.Interaction,
     ) -> None:
         if interaction.guild_id is None or interaction.guild is None:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="本指令需在伺服器中執行。", ephemeral=True
             )
             return
@@ -451,7 +353,7 @@ def build_state_council_group(
         try:
             cfg = await service.get_config(guild_id=interaction.guild_id)
         except StateCouncilNotConfiguredError:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content="尚未完成國務院設定，請先執行 /state_council config_leader。",
                 ephemeral=True,
@@ -459,36 +361,46 @@ def build_state_council_group(
             return
         except Exception:
             # 保守處理：無法取得設定一律視為未設定
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content="尚未完成國務院設定，請先執行 /state_council config_leader。",
                 ephemeral=True,
             )
             return
 
-        # Check if user is leader or has department permissions
         user_roles = [role.id for role in getattr(interaction.user, "roles", [])]
 
-        # Check leadership via service (tests assert this is called)
         is_leader = await service.check_leader_permission(
             guild_id=interaction.guild_id, user_id=interaction.user.id, user_roles=user_roles
         )
 
-        # Check if user has any department permission
         has_dept_permission = False
         departments = ["內政部", "財政部", "國土安全部", "中央銀行"]
-        for dept in departments:
-            if await service.check_department_permission(
-                guild_id=interaction.guild_id,
-                user_id=interaction.user.id,
-                department=dept,
-                user_roles=user_roles,
-            ):
-                has_dept_permission = True
-                break
+        if permission_service is not None and not is_leader:
+            for dept in departments:
+                result = await permission_service.check_department_permission(
+                    guild_id=interaction.guild_id,
+                    user_id=interaction.user.id,
+                    user_roles=user_roles,
+                    department=dept,
+                    operation="panel_access",
+                )
+                if result.allowed:
+                    has_dept_permission = True
+                    break
+        elif not is_leader:
+            for dept in departments:
+                if await service.check_department_permission(
+                    guild_id=interaction.guild_id,
+                    user_id=interaction.user.id,
+                    department=dept,
+                    user_roles=user_roles,
+                ):
+                    has_dept_permission = True
+                    break
 
         if not (is_leader or has_dept_permission):
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content="僅限國務院領袖或部門授權人員可開啟面板。",
                 ephemeral=True,
@@ -502,7 +414,7 @@ def build_state_council_group(
             )
         except StateCouncilNotConfiguredError:
             # 配置檢查已在前面完成，理論上不應發生此錯誤
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content="尚未完成國務院設定，請先執行 /state_council config_leader。",
                 ephemeral=True,
@@ -521,18 +433,21 @@ def build_state_council_group(
         # Get currency service
         from src.db import pool as db_pool
 
-        pool = db_pool.get_pool()
-        currency_service = CurrencyConfigService(pool)
+        currency_service_instance = currency_service
+        if currency_service_instance is None:
+            pool = db_pool.get_pool()
+            currency_service_instance = CurrencyConfigService(pool)
 
         view = StateCouncilPanelView(
             service=service,
-            currency_service=currency_service,
+            currency_service=currency_service_instance,
             guild=interaction.guild,
             guild_id=interaction.guild_id,
             author_id=interaction.user.id,
             leader_id=cfg.leader_id,
             leader_role_id=cfg.leader_role_id,
             user_roles=user_roles,
+            permission_service=permission_service,
         )
         await view.refresh_options()
         if hasattr(interaction, "response_send_message") and not hasattr(interaction, "response"):
@@ -540,7 +455,7 @@ def build_state_council_group(
             embed = discord.Embed(title="🏛️ 國務院總覽")
         else:
             embed = await view.build_summary_embed()
-        await _send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
         try:
             message = await interaction.original_response()
             await view.bind_message(message)
@@ -592,6 +507,7 @@ class StateCouncilPanelView(discord.ui.View):
         leader_id: int | None,
         leader_role_id: int | None,
         user_roles: list[int],
+        permission_service: PermissionService | None = None,
     ) -> None:
         super().__init__(timeout=None)
         self.service = service
@@ -602,12 +518,18 @@ class StateCouncilPanelView(discord.ui.View):
         self.leader_id = leader_id
         self.leader_role_id = leader_role_id
         self.user_roles = user_roles
+        self.permission_service = permission_service
+        self.is_leader = bool(
+            (self.leader_id and self.author_id == self.leader_id)
+            or (self.leader_role_id and self.leader_role_id in self.user_roles)
+        )
         self.message: discord.Message | None = None
         # 即時事件訂閱
         self._unsubscribe: Callable[[], Awaitable[None]] | None = None
         self._update_lock = asyncio.Lock()
         self.current_page = "總覽"
         self.departments = ["內政部", "財政部", "國土安全部", "中央銀行"]
+        self._last_allowed_departments: list[str] = []
         # 供總覽頁設定部門領導用之選擇狀態
         self.config_target_department: str | None = None
 
@@ -712,15 +634,48 @@ class StateCouncilPanelView(discord.ui.View):
                     pass
         super().stop()
 
+    async def _compute_allowed_departments(self) -> list[str]:
+        if self.is_leader:
+            return list(self.departments)
+        allowed: list[str] = []
+        for dept in self.departments:
+            if await self._has_department_permission(dept):
+                allowed.append(dept)
+        return allowed
+
+    async def _has_department_permission(self, department: str) -> bool:
+        if self.is_leader:
+            return True
+        if self.permission_service is not None:
+            result = await self.permission_service.check_department_permission(
+                guild_id=self.guild_id,
+                user_id=self.author_id,
+                user_roles=self.user_roles,
+                department=department,
+                operation="panel_access",
+            )
+            return result.allowed
+        return await self.service.check_department_permission(
+            guild_id=self.guild_id,
+            user_id=self.author_id,
+            department=department,
+            user_roles=self.user_roles,
+        )
+
     async def refresh_options(self) -> None:
         """Refresh view components based on current page and permissions."""
         self.clear_items()
+
+        allowed_departments = await self._compute_allowed_departments()
+        self._last_allowed_departments = allowed_departments
+        if self.current_page != "總覽" and self.current_page not in allowed_departments:
+            self.current_page = "總覽"
 
         # 導航下拉選單（總覽 + 各部門）
         options: list[discord.SelectOption] = [
             discord.SelectOption(label="總覽", value="總覽", default=self.current_page == "總覽")
         ]
-        for dept in self.departments:
+        for dept in allowed_departments:
             options.append(
                 discord.SelectOption(label=dept, value=dept, default=self.current_page == dept)
             )
@@ -732,7 +687,7 @@ class StateCouncilPanelView(discord.ui.View):
 
         async def _on_nav_select(interaction: discord.Interaction) -> None:
             if interaction.user.id != self.author_id:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
                 )
                 return
@@ -740,7 +695,7 @@ class StateCouncilPanelView(discord.ui.View):
             self.current_page = value
             await self.refresh_options()
             embed = await self.build_summary_embed()
-            await _edit_message_compat(interaction, embed=embed, view=self)
+            await edit_message_compat(interaction, embed=embed, view=self)
 
         nav.callback = _on_nav_select
         self.add_item(nav)
@@ -748,7 +703,7 @@ class StateCouncilPanelView(discord.ui.View):
         # Page-specific actions
         if self.current_page == "總覽":
             await self._add_overview_actions()
-        elif self.current_page in self.departments:
+        elif self.current_page in allowed_departments:
             await self._add_department_actions()
 
         # 各頁通用：使用指引按鈕（置於最後一列）
@@ -761,12 +716,12 @@ class StateCouncilPanelView(discord.ui.View):
 
         async def _on_help(interaction: discord.Interaction) -> None:
             if interaction.user.id != self.author_id:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
                 )
                 return
             embed = self._build_help_embed()
-            await _send_message_compat(interaction, embed=embed, ephemeral=True)
+            await send_message_compat(interaction, embed=embed, ephemeral=True)
 
         help_btn.callback = _on_help
         self.add_item(help_btn)
@@ -774,28 +729,28 @@ class StateCouncilPanelView(discord.ui.View):
     def _make_dept_callback(self, department: str) -> Any:
         async def callback(interaction: discord.Interaction) -> None:
             if interaction.user.id != self.author_id:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
                 )
                 return
             self.current_page = department
             await self.refresh_options()
             embed = await self.build_summary_embed()
-            await _edit_message_compat(interaction, embed=embed, view=self)
+            await edit_message_compat(interaction, embed=embed, view=self)
 
         return callback
 
     def _make_overview_callback(self) -> Any:
         async def callback(interaction: discord.Interaction) -> None:
             if interaction.user.id != self.author_id:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
                 )
                 return
             self.current_page = "總覽"
             await self.refresh_options()
             embed = await self.build_summary_embed()
-            await _edit_message_compat(interaction, embed=embed, view=self)
+            await edit_message_compat(interaction, embed=embed, view=self)
 
         return callback
 
@@ -821,10 +776,7 @@ class StateCouncilPanelView(discord.ui.View):
         self.add_item(transfer_user_btn)
 
         # Export data button - only available to leaders
-        is_leader = (self.leader_id and self.author_id == self.leader_id) or (
-            self.leader_role_id and self.leader_role_id in self.user_roles
-        )
-        if is_leader:
+        if self.is_leader:
             export_btn: discord.ui.Button[Any] = discord.ui.Button(
                 label="匯出資料",
                 style=discord.ButtonStyle.secondary,
@@ -852,7 +804,7 @@ class StateCouncilPanelView(discord.ui.View):
 
             async def _on_dept_select(interaction: discord.Interaction) -> None:
                 if interaction.user.id != self.author_id:
-                    await _send_message_compat(
+                    await send_message_compat(
                         interaction, content="僅限面板開啟者操作。", ephemeral=True
                     )
                     return
@@ -860,7 +812,7 @@ class StateCouncilPanelView(discord.ui.View):
                     dept_select.values[0] if dept_select.values else None
                 )
                 # 僅更新元件（避免洗掉已選值）
-                await _edit_message_compat(interaction, view=self)
+                await edit_message_compat(interaction, view=self)
 
             dept_select.callback = _on_dept_select
             self.add_item(dept_select)
@@ -879,12 +831,12 @@ class StateCouncilPanelView(discord.ui.View):
 
             async def _on_role_pick(interaction: discord.Interaction) -> None:
                 if interaction.user.id != self.author_id:
-                    await _send_message_compat(
+                    await send_message_compat(
                         interaction, content="僅限面板開啟者操作。", ephemeral=True
                     )
                     return
                 if not self.config_target_department:
-                    await _send_message_compat(
+                    await send_message_compat(
                         interaction, content="請先選擇要設定的部門。", ephemeral=True
                     )
                     return
@@ -899,7 +851,7 @@ class StateCouncilPanelView(discord.ui.View):
                         role_id=role_id,
                     )
                 except PermissionDeniedError:
-                    await _send_message_compat(
+                    await send_message_compat(
                         interaction,
                         content="沒有權限設定部門領導。",
                         ephemeral=True,
@@ -907,14 +859,14 @@ class StateCouncilPanelView(discord.ui.View):
                     return
                 except Exception as exc:
                     LOGGER.exception("state_council.panel.set_leader_role.error", error=str(exc))
-                    await _send_message_compat(
+                    await send_message_compat(
                         interaction,
                         content="設定失敗，請稍後再試。",
                         ephemeral=True,
                     )
                     return
 
-                await _send_message_compat(
+                await send_message_compat(
                     interaction,
                     content=(
                         f"已更新 {self.config_target_department} 領導人身分組為"
@@ -928,6 +880,8 @@ class StateCouncilPanelView(discord.ui.View):
 
     async def _add_department_actions(self) -> None:
         department = self.current_page
+        if department not in self._last_allowed_departments:
+            return
 
         # 每個部門頁面均提供「部門轉帳」快捷鍵
         transfer_btn: discord.ui.Button[Any] = discord.ui.Button(
@@ -1222,7 +1176,7 @@ class StateCouncilPanelView(discord.ui.View):
     # Button callbacks
     async def _transfer_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
-            await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
         # 新 UX：開啟「部門轉帳」嵌入式面板（以下拉式選單選擇目標部門、以 Modal 輸入金額與理由）。
@@ -1238,7 +1192,7 @@ class StateCouncilPanelView(discord.ui.View):
             departments=self.departments,
         )
         embed = view.build_embed()
-        await _send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
         try:
             msg = await interaction.original_response()
             view.set_message(msg)
@@ -1247,7 +1201,7 @@ class StateCouncilPanelView(discord.ui.View):
 
     async def _transfer_to_user_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
-            await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
         preset_from: str | None = (
@@ -1262,7 +1216,7 @@ class StateCouncilPanelView(discord.ui.View):
             departments=self.departments,
         )
         embed = view.build_embed()
-        await _send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
         try:
             msg = await interaction.original_response()
             view.set_message(msg)
@@ -1271,50 +1225,79 @@ class StateCouncilPanelView(discord.ui.View):
 
     async def _export_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
-            await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
         modal = ExportDataModal(self.service, self.guild_id)
-        await _send_modal_compat(interaction, modal)
+        await send_modal_compat(interaction, modal)
 
     async def _welfare_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
-            await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
         modal = WelfareDisbursementModal(
             self.service, self.guild_id, self.author_id, self.user_roles
         )
-        await _send_modal_compat(interaction, modal)
+        await send_modal_compat(interaction, modal)
 
     async def _welfare_settings_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
-            await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
         modal = WelfareSettingsModal(self.service, self.guild_id, self.author_id, self.user_roles)
-        await _send_modal_compat(interaction, modal)
+        await send_modal_compat(interaction, modal)
 
     async def _tax_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
-            await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
         modal = TaxCollectionModal(self.service, self.guild_id, self.author_id, self.user_roles)
-        await _send_modal_compat(interaction, modal)
+        await send_modal_compat(interaction, modal)
 
     async def _tax_settings_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
-            await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
         modal = TaxSettingsModal(self.service, self.guild_id, self.author_id, self.user_roles)
-        await _send_modal_compat(interaction, modal)
+        await send_modal_compat(interaction, modal)
 
     async def _arrest_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
-            await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
+
+        # 檢查國土安全部權限
+        if self.permission_service is not None:
+            result = await self.permission_service.check_homeland_security_permission(
+                guild_id=self.guild_id,
+                user_id=self.author_id,
+                user_roles=self.user_roles,
+                operation="arrest",
+            )
+            if not result.allowed:
+                await send_message_compat(
+                    interaction,
+                    content=f"權限不足：{result.reason or '不具備國土安全部權限'}",
+                    ephemeral=True,
+                )
+                return
+        else:
+            # 後備權限檢查
+            has_permission = await self.service.check_department_permission(
+                guild_id=self.guild_id,
+                user_id=self.author_id,
+                department="國土安全部",
+                user_roles=self.user_roles,
+            )
+            if not has_permission:
+                await send_message_compat(
+                    interaction, content="權限不足：不具備國土安全部權限", ephemeral=True
+                )
+                return
 
         # self.guild 於建立 View 時必定存在
 
@@ -1330,12 +1313,41 @@ class StateCouncilPanelView(discord.ui.View):
             author_id=self.author_id,
             user_roles=self.user_roles,
         )
-        await _send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
 
     async def _suspects_management_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
-            await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
+
+        # 檢查國土安全部權限
+        if self.permission_service is not None:
+            result = await self.permission_service.check_homeland_security_permission(
+                guild_id=self.guild_id,
+                user_id=self.author_id,
+                user_roles=self.user_roles,
+                operation="panel_access",
+            )
+            if not result.allowed:
+                await send_message_compat(
+                    interaction,
+                    content=f"權限不足：{result.reason or '不具備國土安全部權限'}",
+                    ephemeral=True,
+                )
+                return
+        else:
+            # 後備權限檢查
+            has_permission = await self.service.check_department_permission(
+                guild_id=self.guild_id,
+                user_id=self.author_id,
+                department="國土安全部",
+                user_roles=self.user_roles,
+            )
+            if not has_permission:
+                await send_message_compat(
+                    interaction, content="權限不足：不具備國土安全部權限", ephemeral=True
+                )
+                return
 
         view = HomelandSecuritySuspectsPanelView(
             service=self.service,
@@ -1349,14 +1361,14 @@ class StateCouncilPanelView(discord.ui.View):
             await view.prepare()
             embed = view.build_embed()
         except Exception as exc:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=f"載入嫌疑人面板失敗：{exc}",
                 ephemeral=True,
             )
             return
 
-        await _send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
         try:
             msg = await interaction.original_response()
             view.set_message(msg)
@@ -1365,21 +1377,21 @@ class StateCouncilPanelView(discord.ui.View):
 
     async def _currency_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
-            await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
         modal = CurrencyIssuanceModal(
             self.service, self.currency_service, self.guild_id, self.author_id, self.user_roles
         )
-        await _send_modal_compat(interaction, modal)
+        await send_modal_compat(interaction, modal)
 
     async def _currency_settings_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
-            await _send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
         modal = CurrencySettingsModal(self.service, self.guild_id, self.author_id, self.user_roles)
-        await _send_modal_compat(interaction, modal)
+        await send_modal_compat(interaction, modal)
 
 
 # --- Modal Implementations ---
@@ -1473,7 +1485,7 @@ class InterdepartmentTransferModal(discord.ui.Modal, title="部門轉帳"):
                 reason=reason,
             )
 
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=(
                     f"✅ 轉帳成功！\n"
@@ -1484,10 +1496,10 @@ class InterdepartmentTransferModal(discord.ui.Modal, title="部門轉帳"):
             )
 
         except (ValueError, PermissionDeniedError, InsufficientFundsError) as e:
-            await _send_message_compat(interaction, content=f"❌ 轉帳失敗：{e}", ephemeral=True)
+            await send_message_compat(interaction, content=f"❌ 轉帳失敗：{e}", ephemeral=True)
         except Exception as e:
             LOGGER.exception("Interdepartment transfer failed", error=str(e))
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="❌ 轉帳失敗，請稍後再試。", ephemeral=True
             )
 
@@ -1524,12 +1536,12 @@ class TransferAmountReasonModal(discord.ui.Modal, title="填寫金額與理由")
 
             self.parent_view.amount = amount
             self.parent_view.reason = reason
-            await _send_message_compat(interaction, content="已更新金額與理由。", ephemeral=True)
+            await send_message_compat(interaction, content="已更新金額與理由。", ephemeral=True)
 
             # 嘗試刷新原面板
             await self.parent_view.apply_ui_update(interaction)
         except ValueError as e:
-            await _send_message_compat(interaction, content=f"❌ {e}", ephemeral=True)
+            await send_message_compat(interaction, content=f"❌ {e}", ephemeral=True)
 
 
 class InterdepartmentTransferPanelView(discord.ui.View):
@@ -1621,7 +1633,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
 
             async def _on_from(interaction: discord.Interaction) -> None:
                 if interaction.user.id != self.author_id:
-                    await _send_message_compat(
+                    await send_message_compat(
                         interaction, content="僅限面板開啟者操作。", ephemeral=True
                     )
                     return
@@ -1650,7 +1662,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
 
         async def _on_to(interaction: discord.Interaction) -> None:
             if interaction.user.id != self.author_id:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
                 )
                 return
@@ -1669,21 +1681,17 @@ class InterdepartmentTransferPanelView(discord.ui.View):
 
         async def _on_fill(interaction: discord.Interaction) -> None:
             if interaction.user.id != self.author_id:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
                 )
                 return
             if self.source_department is None:
-                await _send_message_compat(
-                    interaction, content="請先選擇來源部門。", ephemeral=True
-                )
+                await send_message_compat(interaction, content="請先選擇來源部門。", ephemeral=True)
                 return
             if self.to_department is None:
-                await _send_message_compat(
-                    interaction, content="請先選擇目標部門。", ephemeral=True
-                )
+                await send_message_compat(interaction, content="請先選擇目標部門。", ephemeral=True)
                 return
-            await _send_modal_compat(interaction, TransferAmountReasonModal(self))
+            await send_modal_compat(interaction, TransferAmountReasonModal(self))
 
         fill_btn.callback = _on_fill
         self.add_item(fill_btn)
@@ -1698,14 +1706,12 @@ class InterdepartmentTransferPanelView(discord.ui.View):
 
         async def _on_submit(interaction: discord.Interaction) -> None:
             if interaction.user.id != self.author_id:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
                 )
                 return
             if not self._can_submit():
-                await _send_message_compat(
-                    interaction, content="請先完成所有欄位。", ephemeral=True
-                )
+                await send_message_compat(interaction, content="請先完成所有欄位。", ephemeral=True)
                 return
             try:
                 await self.service.transfer_between_departments(
@@ -1717,7 +1723,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
                     amount=int(self.amount or 0),
                     reason=str(self.reason or ""),
                 )
-                await _send_message_compat(
+                await send_message_compat(
                     interaction,
                     content=(
                         f"✅ 轉帳成功！從 {self.source_department} 轉 {self.amount:,} 幣到 {self.to_department}。"
@@ -1730,10 +1736,10 @@ class InterdepartmentTransferPanelView(discord.ui.View):
                 self.refresh_controls()
                 await self.apply_ui_update(interaction)
             except (PermissionDeniedError, InsufficientFundsError, ValueError) as e:
-                await _send_message_compat(interaction, content=f"❌ 轉帳失敗：{e}", ephemeral=True)
+                await send_message_compat(interaction, content=f"❌ 轉帳失敗：{e}", ephemeral=True)
             except Exception as e:  # pragma: no cover - 防禦性
                 LOGGER.exception("interdept.transfer_panel.submit_failed", error=str(e))
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="❌ 轉帳失敗，請稍後再試。", ephemeral=True
                 )
 
@@ -1749,7 +1755,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
 
         async def _on_cancel(interaction: discord.Interaction) -> None:
             if interaction.user.id != self.author_id:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
                 )
                 return
@@ -1758,7 +1764,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
                 if self.message is not None:
                     await self.message.edit(view=None)
                 else:
-                    await _edit_message_compat(interaction, view=None)
+                    await edit_message_compat(interaction, view=None)
             except Exception:
                 # 無法透過互動編輯時，嘗試直接停用 view
                 self.stop()
@@ -1771,7 +1777,7 @@ class InterdepartmentTransferPanelView(discord.ui.View):
         self.refresh_controls()
         embed = self.build_embed()
         try:
-            await _edit_message_compat(interaction, embed=embed, view=self)
+            await edit_message_compat(interaction, embed=embed, view=self)
         except Exception:
             # 後援：若持有訊息實例，直接編輯
             if self.message is not None:
@@ -1806,10 +1812,10 @@ class RecipientInputModal(discord.ui.Modal, title="設定受款人"):
                 raise ValueError
 
             self.parent_view.recipient_id = user_id
-            await _send_message_compat(interaction, content="已設定受款人。", ephemeral=True)
+            await send_message_compat(interaction, content="已設定受款人。", ephemeral=True)
             await self.parent_view.apply_ui_update(interaction)
         except Exception:
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="❌ 受款人格式錯誤，請輸入 @或ID。", ephemeral=True
             )
 
@@ -1900,7 +1906,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
 
             async def _on_from(interaction: discord.Interaction) -> None:
                 if interaction.user.id != self.author_id:
-                    await _send_message_compat(
+                    await send_message_compat(
                         interaction, content="僅限面板開啟者操作。", ephemeral=True
                     )
                     return
@@ -1919,16 +1925,14 @@ class DepartmentUserTransferPanelView(discord.ui.View):
 
         async def _on_set_recipient(interaction: discord.Interaction) -> None:
             if interaction.user.id != self.author_id:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
                 )
                 return
             if self.source_department is None:
-                await _send_message_compat(
-                    interaction, content="請先選擇來源部門。", ephemeral=True
-                )
+                await send_message_compat(interaction, content="請先選擇來源部門。", ephemeral=True)
                 return
-            await _send_modal_compat(interaction, RecipientInputModal(self))
+            await send_modal_compat(interaction, RecipientInputModal(self))
 
         set_recipient_btn.callback = _on_set_recipient
         self.add_item(set_recipient_btn)
@@ -1942,19 +1946,17 @@ class DepartmentUserTransferPanelView(discord.ui.View):
 
         async def _on_fill(interaction: discord.Interaction) -> None:
             if interaction.user.id != self.author_id:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
                 )
                 return
             if self.source_department is None:
-                await _send_message_compat(
-                    interaction, content="請先選擇來源部門。", ephemeral=True
-                )
+                await send_message_compat(interaction, content="請先選擇來源部門。", ephemeral=True)
                 return
             if self.recipient_id is None:
-                await _send_message_compat(interaction, content="請先設定受款人。", ephemeral=True)
+                await send_message_compat(interaction, content="請先設定受款人。", ephemeral=True)
                 return
-            await _send_modal_compat(interaction, TransferAmountReasonModal(self))
+            await send_modal_compat(interaction, TransferAmountReasonModal(self))
 
         fill_btn.callback = _on_fill
         self.add_item(fill_btn)
@@ -1969,14 +1971,12 @@ class DepartmentUserTransferPanelView(discord.ui.View):
 
         async def _on_submit(interaction: discord.Interaction) -> None:
             if interaction.user.id != self.author_id:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
                 )
                 return
             if not self._can_submit():
-                await _send_message_compat(
-                    interaction, content="請先完成所有欄位。", ephemeral=True
-                )
+                await send_message_compat(interaction, content="請先完成所有欄位。", ephemeral=True)
                 return
             try:
                 from src.db import pool as db_pool
@@ -1997,7 +1997,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
                     amount=int(self.amount or 0),
                     reason=str(self.reason or ""),
                 )
-                await _send_message_compat(
+                await send_message_compat(
                     interaction,
                     content=(
                         f"✅ 轉帳成功！從 {self.source_department} 轉 {formatted_amount} 給 <@{self.recipient_id}>。"
@@ -2007,10 +2007,10 @@ class DepartmentUserTransferPanelView(discord.ui.View):
                 self.refresh_controls()
                 await self.apply_ui_update(interaction)
             except (PermissionDeniedError, InsufficientFundsError, ValueError) as e:
-                await _send_message_compat(interaction, content=f"❌ 轉帳失敗：{e}", ephemeral=True)
+                await send_message_compat(interaction, content=f"❌ 轉帳失敗：{e}", ephemeral=True)
             except Exception as e:
                 LOGGER.exception("dept_to_user.transfer_panel.submit_failed", error=str(e))
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="❌ 轉帳失敗，請稍後再試。", ephemeral=True
                 )
 
@@ -2026,7 +2026,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
 
         async def _on_cancel(interaction: discord.Interaction) -> None:
             if interaction.user.id != self.author_id:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
                 )
                 return
@@ -2034,7 +2034,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
                 if self.message is not None:
                     await self.message.edit(view=None)
                 else:
-                    await _edit_message_compat(interaction, view=None)
+                    await edit_message_compat(interaction, view=None)
             except Exception:
                 self.stop()
 
@@ -2045,7 +2045,7 @@ class DepartmentUserTransferPanelView(discord.ui.View):
         self.refresh_controls()
         embed = self.build_embed()
         try:
-            await _edit_message_compat(interaction, embed=embed, view=self)
+            await edit_message_compat(interaction, embed=embed, view=self)
         except Exception:
             if self.message is not None:
                 try:
@@ -2116,7 +2116,7 @@ class WelfareDisbursementModal(discord.ui.Modal, title="福利發放"):
                 disbursement_type=disbursement_type,
             )
 
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=(
                     f"✅ 福利發放成功！\n"
@@ -2127,10 +2127,10 @@ class WelfareDisbursementModal(discord.ui.Modal, title="福利發放"):
             )
 
         except (ValueError, PermissionDeniedError, InsufficientFundsError) as e:
-            await _send_message_compat(interaction, content=f"❌ 福利發放失敗：{e}", ephemeral=True)
+            await send_message_compat(interaction, content=f"❌ 福利發放失敗：{e}", ephemeral=True)
         except Exception as e:
             LOGGER.exception("Welfare disbursement failed", error=str(e))
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="❌ 福利發放失敗，請稍後再試。", ephemeral=True
             )
 
@@ -2174,7 +2174,7 @@ class WelfareSettingsModal(discord.ui.Modal, title="福利設定"):
                 welfare_interval_hours=welfare_interval_hours,
             )
 
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=(
                     f"✅ 福利設定更新成功！\n"
@@ -2185,10 +2185,10 @@ class WelfareSettingsModal(discord.ui.Modal, title="福利設定"):
             )
 
         except (ValueError, PermissionDeniedError) as e:
-            await _send_message_compat(interaction, content=f"❌ 設定更新失敗：{e}", ephemeral=True)
+            await send_message_compat(interaction, content=f"❌ 設定更新失敗：{e}", ephemeral=True)
         except Exception as e:
             LOGGER.exception("Welfare settings update failed", error=str(e))
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="❌ 設定更新失敗，請稍後再試。", ephemeral=True
             )
 
@@ -2256,7 +2256,7 @@ class TaxCollectionModal(discord.ui.Modal, title="稅款徵收"):
                 assessment_period=assessment_period,
             )
 
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=(
                     f"✅ 稅款徵收成功！\n"
@@ -2269,10 +2269,10 @@ class TaxCollectionModal(discord.ui.Modal, title="稅款徵收"):
             )
 
         except (ValueError, PermissionDeniedError) as e:
-            await _send_message_compat(interaction, content=f"❌ 稅款徵收失敗：{e}", ephemeral=True)
+            await send_message_compat(interaction, content=f"❌ 稅款徵收失敗：{e}", ephemeral=True)
         except Exception as e:
             LOGGER.exception("Tax collection failed", error=str(e))
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="❌ 稅款徵收失敗，請稍後再試。", ephemeral=True
             )
 
@@ -2316,7 +2316,7 @@ class TaxSettingsModal(discord.ui.Modal, title="稅率設定"):
                 tax_rate_percent=tax_rate_percent,
             )
 
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=(
                     f"✅ 稅率設定更新成功！\n"
@@ -2327,10 +2327,10 @@ class TaxSettingsModal(discord.ui.Modal, title="稅率設定"):
             )
 
         except (ValueError, PermissionDeniedError) as e:
-            await _send_message_compat(interaction, content=f"❌ 設定更新失敗：{e}", ephemeral=True)
+            await send_message_compat(interaction, content=f"❌ 設定更新失敗：{e}", ephemeral=True)
         except Exception as e:
             LOGGER.exception("Tax settings update failed", error=str(e))
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="❌ 設定更新失敗，請稍後再試。", ephemeral=True
             )
 
@@ -2365,7 +2365,7 @@ class ArrestReasonModal(discord.ui.Modal, title="逮捕原因"):
         try:
             reason = str(self.reason_input.value).strip()
             if not reason:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="❌ 逮捕原因不能為空。", ephemeral=True
                 )
                 return
@@ -2423,14 +2423,14 @@ class ArrestReasonModal(discord.ui.Modal, title="逮捕原因"):
                         result_lines.append("附註：已移除『公民』身分組。")
                     else:
                         result_lines.append("附註：『公民』身分組未移除（可能因層級不足）。")
-                await _send_message_compat(
+                await send_message_compat(
                     interaction,
                     content="\n".join(result_lines),
                     ephemeral=True,
                 )
             except Exception:
                 # 後援：維持原本成功訊息
-                await _send_message_compat(
+                await send_message_compat(
                     interaction,
                     content=(
                         f"✅ 逮捕操作完成！\n"
@@ -2442,12 +2442,12 @@ class ArrestReasonModal(discord.ui.Modal, title="逮捕原因"):
                 )
 
         except ValueError as e:
-            await _send_message_compat(interaction, content=f"❌ {e}", ephemeral=True)
+            await send_message_compat(interaction, content=f"❌ {e}", ephemeral=True)
         except PermissionDeniedError as e:
-            await _send_message_compat(interaction, content=f"❌ {e}", ephemeral=True)
+            await send_message_compat(interaction, content=f"❌ {e}", ephemeral=True)
         except Exception as e:
             LOGGER.exception("Arrest failed", error=str(e))
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="❌ 逮捕操作失敗，請稍後再試。", ephemeral=True
             )
 
@@ -2477,20 +2477,18 @@ class ArrestSelectView(discord.ui.View):
 
         async def _on_select(interaction: discord.Interaction) -> None:
             if interaction.user.id != self.author_id:
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
                 )
                 return
 
             if not self._user_select.values:
-                await _send_message_compat(
-                    interaction, content="請選擇一個使用者。", ephemeral=True
-                )
+                await send_message_compat(interaction, content="請選擇一個使用者。", ephemeral=True)
                 return
 
             target_user = self._user_select.values[0]
             if getattr(target_user, "bot", False):
-                await _send_message_compat(
+                await send_message_compat(
                     interaction, content="無法逮捕機器人帳號。", ephemeral=True
                 )
                 return
@@ -2503,7 +2501,7 @@ class ArrestSelectView(discord.ui.View):
                 user_roles=self.user_roles,
                 target_id=int(getattr(target_user, "id", 0)),
             )
-            await _send_modal_compat(interaction, modal)
+            await send_modal_compat(interaction, modal)
 
         self._user_select.callback = _on_select
         self.add_item(self._user_select)
@@ -2563,7 +2561,7 @@ class IdentityManagementModal(discord.ui.Modal, title="身分管理"):
                 reason=reason,
             )
 
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=(
                     f"✅ 身分管理操作完成！\n"
@@ -2575,10 +2573,10 @@ class IdentityManagementModal(discord.ui.Modal, title="身分管理"):
             )
 
         except (ValueError, PermissionDeniedError) as e:
-            await _send_message_compat(interaction, content=f"❌ 操作失敗：{e}", ephemeral=True)
+            await send_message_compat(interaction, content=f"❌ 操作失敗：{e}", ephemeral=True)
         except Exception as e:
             LOGGER.exception("Identity management failed", error=str(e))
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="❌ 操作失敗，請稍後再試。", ephemeral=True
             )
 
@@ -2642,7 +2640,7 @@ class CurrencyIssuanceModal(discord.ui.Modal, title="貨幣發行"):
                 guild_id=self.guild_id
             )
 
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=(
                     f"✅ 貨幣發行成功！\n"
@@ -2654,10 +2652,10 @@ class CurrencyIssuanceModal(discord.ui.Modal, title="貨幣發行"):
             )
 
         except (ValueError, PermissionDeniedError, MonthlyIssuanceLimitExceededError) as e:
-            await _send_message_compat(interaction, content=f"❌ 貨幣發行失敗：{e}", ephemeral=True)
+            await send_message_compat(interaction, content=f"❌ 貨幣發行失敗：{e}", ephemeral=True)
         except Exception as e:
             LOGGER.exception("Currency issuance failed", error=str(e))
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="❌ 貨幣發行失敗，請稍後再試。", ephemeral=True
             )
 
@@ -2692,17 +2690,17 @@ class CurrencySettingsModal(discord.ui.Modal, title="貨幣發行設定"):
                 max_issuance_per_month=max_issuance_per_month,
             )
 
-            await _send_message_compat(
+            await send_message_compat(
                 interaction,
                 content=(f"✅ 貨幣發行設定更新成功！\n每月發行上限：{max_issuance_per_month:,} 幣"),
                 ephemeral=True,
             )
 
         except (ValueError, PermissionDeniedError) as e:
-            await _send_message_compat(interaction, content=f"❌ 設定更新失敗：{e}", ephemeral=True)
+            await send_message_compat(interaction, content=f"❌ 設定更新失敗：{e}", ephemeral=True)
         except Exception as e:
             LOGGER.exception("Currency settings update failed", error=str(e))
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="❌ 設定更新失敗，請稍後再試。", ephemeral=True
             )
 
@@ -2797,10 +2795,10 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
             )
 
         except ValueError as e:
-            await _send_message_compat(interaction, content=f"❌ 匯出失敗：{e}", ephemeral=True)
+            await send_message_compat(interaction, content=f"❌ 匯出失敗：{e}", ephemeral=True)
         except Exception as e:
             LOGGER.exception("Data export failed", error=str(e))
-            await _send_message_compat(
+            await send_message_compat(
                 interaction, content="❌ 匯出失敗，請稍後再試。", ephemeral=True
             )
 
@@ -3485,9 +3483,14 @@ class HomelandSecuritySuspectsPanelView(discord.ui.View):
         if not await self._ensure_author(interaction):
             return
         data: dict[str, Any] = cast(dict[str, Any], interaction.data or {})
-        values = data.get("values") or []
+        raw_values = data.get("values")
+        iterable_values: Sequence[Any]
+        if isinstance(raw_values, (list, tuple, set)):
+            iterable_values = list(raw_values)
+        else:
+            iterable_values = []
         selected: set[int] = set()
-        for raw in values if isinstance(values, (list, tuple, set)) else []:
+        for raw in iterable_values:
             try:
                 selected.add(int(raw))
             except (TypeError, ValueError):
@@ -3573,7 +3576,7 @@ class HomelandSecuritySuspectsPanelView(discord.ui.View):
         if not records:
             await interaction.response.send_message("目前沒有審計記錄。", ephemeral=True)
             return
-        lines = []
+        lines: list[str] = []
         for record in records:
             timestamp = self._format_timestamp(record.performed_at)
             lines.append(
@@ -3590,7 +3593,8 @@ class HomelandSecuritySuspectsPanelView(discord.ui.View):
         if not await self._ensure_author(interaction):
             return
         for item in self.children:
-            item.disabled = True
+            if hasattr(item, "disabled"):
+                cast(_Disableable, item).disabled = True
         embed = self.build_embed()
         embed.set_footer(text="面板已關閉")
         await interaction.response.edit_message(embed=embed, view=self)
@@ -3684,7 +3688,8 @@ class HomelandSecuritySuspectsPanelView(discord.ui.View):
         if not self._message:
             return
         for item in self.children:
-            item.disabled = True
+            if hasattr(item, "disabled"):
+                cast(_Disableable, item).disabled = True
         embed = self.build_embed()
         embed.set_footer(text="面板已逾時，請重新開啟。")
         try:
@@ -3720,7 +3725,7 @@ class SuspectAutoReleaseModal(discord.ui.Modal, title="設定自動釋放"):
     ) -> None:
         super().__init__(title="設定自動釋放")
         self.panel = panel
-        self.scope = scope
+        self.scope: Literal["selected", "all"] = scope
         self.hours_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
             label="自動釋放時限（小時）",
             placeholder="輸入 1-168 的整數",

@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2025-11-13
+
+### 新增
+- **權限服務模組**：新增 `permission_service.py`，提供統一的權限檢查和管理機制
+  - 實作角色權限驗證，支持治理系統的複雜權限需求
+  - 新增國土安全部門特殊權限處理，增強系統安全性
+- **交互兼容層**：新增 `interaction_compat.py`，提供 Discord 交互 API 的兼容性封裝
+  - 支持不同版本的 Discord.py 庫，提升系統兼容性
+  - 簡化交互處理邏輯，改善開發者體驗
+- **資料庫遷移**：新增兩個重要的遷移文件
+  - `040_council_multiple_roles.py`：支持議會多重角色功能
+  - `041_sc_department_multi_roles.py`：支持州議會部門多重角色功能
+
+### 修改
+- **治理系統增強**：大幅改進治理相關的命令和服務
+  - 重構 `council.py`，增強議會管理功能和用戶界面
+  - 更新 `state_council.py`，改進州議會操作流程和權限控制
+  - 改進 `supreme_assembly.py`，提升最高議會的決策和審議功能
+- **服務層優化**：改進多個核心服務模組
+  - 更新 `council_service.py`，增強議會服務的穩定性和性能
+  - 重構 `state_council_service.py`，改善州議會服務的業務邏輯
+  - 優化 `department_registry.py`，改進部門註冊和管理機制
+- **分頁系統改進**：更新所有分頁器組件
+  - 改進 `council_paginator.py`、`supreme_assembly_paginator.py` 和 `paginator.py`
+  - 提升大量數據展示的性能和用戶體驗
+
+### 修復
+- **權限邊界案例**：修復多個權限檢查的邊界案例問題
+  - 新增 `test_permission_boundary_cases.py` 測試確保權限系統穩定性
+  - 修復國土安全部門的權限檢查邏輯
+
+### 清理
+- **備份文件移除**：清理 `backup/` 目錄下的舊版經濟模組文件
+  - 移除超過 3000 行的重複代碼，減少維護負擔
+  - 保留核心邏輯在主代碼庫中，確保系統整潔性
+
+### 測試改進
+- **新增測試文件**：擴展測試覆蓋範圍
+  - `test_council_multiple_roles.py`：測試議會多重角色功能
+  - `test_homeland_security_permission.py`：測試國土安全部門權限
+  - `test_state_council_department_multiple_roles.py`：測試州議會部門多重角色
+
+### 注意
+- 此版本主要專注於治理系統的功能增強和權限管理改進
+- 所有變更均保持向後兼容性，不影響現有系統運行
+- 新增的權限服務將為未來的功能擴展提供堅實基礎
+
 ## [0.17.0] - 2025-11-12
 
 ### 新增

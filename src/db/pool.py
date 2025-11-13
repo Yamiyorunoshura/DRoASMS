@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakKeyDictionary
 
 import asyncpg
@@ -14,8 +14,13 @@ from src.config.db_settings import PoolConfig
 
 LOGGER = structlog.get_logger(__name__)
 
+if TYPE_CHECKING:
+    from asyncpg.connection import Connection as _AsyncpgConnection
+else:
+    _AsyncpgConnection = asyncpg.Connection
 
-class _PatchedConnection(asyncpg.Connection):  # type: ignore[misc]
+
+class _PatchedConnection(_AsyncpgConnection):  # type: ignore[misc]  # asyncpg stubs expose Any
     """Work around asyncpg restriction: prepared statements cannot contain multiple
     commands separated by semicolons. Some tests issue a single execute() call with
     multiple `SELECT ...; SELECT ...;` statements and one parameter list.
@@ -52,13 +57,16 @@ class _PatchedConnection(asyncpg.Connection):  # type: ignore[misc]
 
 _POOL_LOCKS: "WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = WeakKeyDictionary()
 _POOLS: "WeakKeyDictionary[asyncio.AbstractEventLoop, asyncpg.Pool]" = WeakKeyDictionary()
+_LAST_POOL: asyncpg.Pool | None = None
 
 
 async def init_pool(config: PoolConfig | None = None) -> asyncpg.Pool:
     """Initialise the asyncpg pool if it does not already exist."""
+    global _LAST_POOL
     loop = asyncio.get_running_loop()
     existing = _POOLS.get(loop)
     if existing is not None:
+        _LAST_POOL = existing
         return existing
 
     lock = _get_pool_lock(loop)
@@ -84,6 +92,7 @@ async def init_pool(config: PoolConfig | None = None) -> asyncpg.Pool:
             connection_class=_PatchedConnection,
         )
         _POOLS[loop] = pool
+        _LAST_POOL = pool
         # Best-effort: ensure DB schema is migrated for tests/first-run environments.
         # Contract tests may run before dedicated DB test migrations; auto-upgrade here.
         try:
@@ -125,15 +134,19 @@ async def init_pool(config: PoolConfig | None = None) -> asyncpg.Pool:
 
 def get_pool() -> asyncpg.Pool:
     """Return the active pool or raise if it has not been initialised."""
-    loop = asyncio.get_running_loop()
-    pool = _POOLS.get(loop)
-    if pool is None:
-        raise RuntimeError("Database pool not initialised. Call init_pool() first.")
-    return pool
+    loop = _maybe_get_running_loop()
+    if loop is not None:
+        pool = _POOLS.get(loop)
+        if pool is not None:
+            return pool
+    if _LAST_POOL is not None:
+        return _LAST_POOL
+    raise RuntimeError("Database pool not initialised. Call init_pool() first.")
 
 
 async def close_pool() -> None:
     """Close the pool if one exists."""
+    global _LAST_POOL
     loop = asyncio.get_running_loop()
     lock = _get_pool_lock(loop)
 
@@ -142,6 +155,8 @@ async def close_pool() -> None:
 
     if pool is not None:
         await pool.close()
+        if _LAST_POOL is pool:
+            _LAST_POOL = None
         LOGGER.info("db.pool.closed")
 
 
@@ -153,6 +168,13 @@ def _get_pool_lock(loop: asyncio.AbstractEventLoop | None = None) -> asyncio.Loc
         lock = asyncio.Lock()
         _POOL_LOCKS[loop] = lock
     return lock
+
+
+def _maybe_get_running_loop() -> asyncio.AbstractEventLoop | None:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
 
 
 async def _configure_connection(connection: asyncpg.Connection) -> None:

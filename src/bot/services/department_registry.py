@@ -7,7 +7,7 @@ import os
 import pathlib
 from dataclasses import dataclass
 from types import MethodType
-from typing import Any, Sequence, cast
+from typing import Any, Sequence
 
 import structlog
 
@@ -74,23 +74,21 @@ class DepartmentRegistry:
             if not isinstance(raw_loaded, list):
                 raise ValueError("Departments JSON must be a list")
 
-            # 前面已保證為 list，移除冗餘 cast
             raw: list[Any] = raw_loaded
             for obj in raw:
                 if not isinstance(obj, dict):
                     raise ValueError("Each department must be a dict")
-                item = cast(dict[str, Any], obj)
+                item: dict[str, Any] = obj
                 if "id" not in item or "name" not in item or "code" not in item:
                     raise ValueError("Department must have id, name, and code")
                 if not isinstance(item["code"], int) or item["code"] < 0:
                     raise ValueError("Department code must be a non-negative integer")
                 # 類型收斂：subordinates 僅接受字串陣列
                 subs_raw = item.get("subordinates")
-                subordinates: list[str] | None
-                if isinstance(subs_raw, list) and all(isinstance(s, str) for s in subs_raw):
-                    subordinates = list(cast(list[str], subs_raw))
-                else:
-                    subordinates = None
+                subordinates: list[str] | None = None
+                if isinstance(subs_raw, list):
+                    if all(isinstance(s, str) for s in subs_raw):
+                        subordinates = [str(s) for s in subs_raw]
 
                 dept = Department(
                     id=str(item["id"]),
