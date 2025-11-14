@@ -1,60 +1,65 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Sequence, SupportsInt, cast
+from typing import Any, Mapping, Sequence, SupportsInt, cast
 from uuid import UUID
 
+from src.cython_ext.council_governance_models import (
+    CouncilConfig,
+    CouncilRoleConfig,
+    Proposal,
+    Tally,
+)
 from src.infra.types.db import ConnectionProtocol
 
-# --- Data Models ---
+
+def _council_config_from_row(row: Mapping[str, Any]) -> CouncilConfig:
+    return CouncilConfig(
+        guild_id=int(row["guild_id"]),
+        council_role_id=int(row["council_role_id"]),
+        council_account_member_id=int(row["council_account_member_id"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
 
 
-@dataclass(frozen=True, slots=True)
-class CouncilConfig:
-    guild_id: int
-    council_role_id: int  # 保持向下相容，主要使用 council_role_ids
-    council_account_member_id: int
-    created_at: datetime
-    updated_at: datetime
+def _council_role_config_from_row(row: Mapping[str, Any]) -> CouncilRoleConfig:
+    return CouncilRoleConfig(
+        guild_id=int(row["guild_id"]),
+        role_id=int(row["role_id"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        id=cast(int | None, row.get("id")),
+    )
 
 
-@dataclass(frozen=True, slots=True)
-class CouncilRoleConfig:
-    """常任理事身分組配置"""
-
-    guild_id: int
-    role_id: int
-    created_at: datetime
-    updated_at: datetime
-    id: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class Proposal:
-    proposal_id: UUID
-    guild_id: int
-    proposer_id: int
-    target_id: int
-    amount: int
-    description: str | None
-    attachment_url: str | None
-    snapshot_n: int
-    threshold_t: int
-    deadline_at: datetime
-    status: str
-    reminder_sent: bool
-    created_at: datetime
-    updated_at: datetime
-    target_department_id: str | None = None
+def _proposal_from_row(row: Mapping[str, Any]) -> Proposal:
+    return Proposal(
+        proposal_id=cast(UUID, row["proposal_id"]),
+        guild_id=int(row["guild_id"]),
+        proposer_id=int(row["proposer_id"]),
+        target_id=int(row["target_id"]),
+        amount=int(row["amount"]),
+        description=cast(str | None, row["description"]),
+        attachment_url=cast(str | None, row["attachment_url"]),
+        snapshot_n=int(row["snapshot_n"]),
+        threshold_t=int(row["threshold_t"]),
+        deadline_at=row["deadline_at"],
+        status=str(row["status"]),
+        reminder_sent=bool(row["reminder_sent"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        target_department_id=cast(str | None, row.get("target_department_id")),
+    )
 
 
-@dataclass(frozen=True, slots=True)
-class Tally:
-    approve: int
-    reject: int
-    abstain: int
-    total_voted: int
+def _tally_from_row(row: Mapping[str, Any]) -> Tally:
+    return Tally(
+        approve=int(row["approve"]),
+        reject=int(row["reject"]),
+        abstain=int(row["abstain"]),
+        total_voted=int(row["total_voted"]),
+    )
 
 
 class CouncilGovernanceGateway:
@@ -75,13 +80,7 @@ class CouncilGovernanceGateway:
         sql = f"SELECT * FROM {self._schema}.fn_upsert_council_config($1,$2,$3)"
         row = await connection.fetchrow(sql, guild_id, council_role_id, council_account_member_id)
         assert row is not None
-        return CouncilConfig(
-            guild_id=row["guild_id"],
-            council_role_id=row["council_role_id"],
-            council_account_member_id=row["council_account_member_id"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-        )
+        return _council_config_from_row(row)
 
     async def fetch_config(
         self, connection: ConnectionProtocol, *, guild_id: int
@@ -90,13 +89,7 @@ class CouncilGovernanceGateway:
         row = await connection.fetchrow(sql, guild_id)
         if row is None:
             return None
-        return CouncilConfig(
-            guild_id=row["guild_id"],
-            council_role_id=row["council_role_id"],
-            council_account_member_id=row["council_account_member_id"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-        )
+        return _council_config_from_row(row)
 
     # --- Council Role Management ---
     async def get_council_role_ids(
@@ -156,15 +149,7 @@ class CouncilGovernanceGateway:
         )
 
         for row in rows:
-            configs.append(
-                CouncilRoleConfig(
-                    id=row["id"],
-                    guild_id=row["guild_id"],
-                    role_id=row["role_id"],
-                    created_at=row["created_at"],
-                    updated_at=row["updated_at"],
-                )
-            )
+            configs.append(_council_role_config_from_row(row))
 
         return configs
 
@@ -201,23 +186,7 @@ class CouncilGovernanceGateway:
             )
             assert row is not None
 
-        return Proposal(
-            proposal_id=row["proposal_id"],
-            guild_id=row["guild_id"],
-            proposer_id=row["proposer_id"],
-            target_id=row["target_id"],
-            amount=row["amount"],
-            description=row["description"],
-            attachment_url=row["attachment_url"],
-            snapshot_n=row["snapshot_n"],
-            threshold_t=row["threshold_t"],
-            deadline_at=row["deadline_at"],
-            status=row["status"],
-            reminder_sent=row["reminder_sent"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-            target_department_id=row.get("target_department_id"),
-        )
+        return _proposal_from_row(row)
 
     async def fetch_proposal(
         self,
@@ -305,12 +274,7 @@ class CouncilGovernanceGateway:
             f"SELECT * FROM {self._schema}.fn_fetch_tally($1)", proposal_id
         )
         assert row is not None
-        return Tally(
-            approve=int(row["approve"]),
-            reject=int(row["reject"]),
-            abstain=int(row["abstain"]),
-            total_voted=int(row["total_voted"]),
-        )
+        return _tally_from_row(row)
 
     async def fetch_votes_detail(
         self, connection: ConnectionProtocol, *, proposal_id: UUID
@@ -323,69 +287,15 @@ class CouncilGovernanceGateway:
     # --- Queries for scheduler ---
     async def list_due_proposals(self, connection: ConnectionProtocol) -> Sequence[Proposal]:
         rows = await connection.fetch(f"SELECT * FROM {self._schema}.fn_list_due_proposals()")
-        return [
-            Proposal(
-                proposal_id=r["proposal_id"],
-                guild_id=r["guild_id"],
-                proposer_id=r["proposer_id"],
-                target_id=r["target_id"],
-                amount=r["amount"],
-                description=r["description"],
-                attachment_url=r["attachment_url"],
-                snapshot_n=r["snapshot_n"],
-                threshold_t=r["threshold_t"],
-                deadline_at=r["deadline_at"],
-                status=r["status"],
-                reminder_sent=r["reminder_sent"],
-                created_at=r["created_at"],
-                updated_at=r["updated_at"],
-            )
-            for r in rows
-        ]
+        return [_proposal_from_row(r) for r in rows]
 
     async def list_reminder_candidates(self, connection: ConnectionProtocol) -> Sequence[Proposal]:
         rows = await connection.fetch(f"SELECT * FROM {self._schema}.fn_list_reminder_candidates()")
-        return [
-            Proposal(
-                proposal_id=r["proposal_id"],
-                guild_id=r["guild_id"],
-                proposer_id=r["proposer_id"],
-                target_id=r["target_id"],
-                amount=r["amount"],
-                description=r["description"],
-                attachment_url=r["attachment_url"],
-                snapshot_n=r["snapshot_n"],
-                threshold_t=r["threshold_t"],
-                deadline_at=r["deadline_at"],
-                status=r["status"],
-                reminder_sent=r["reminder_sent"],
-                created_at=r["created_at"],
-                updated_at=r["updated_at"],
-            )
-            for r in rows
-        ]
+        return [_proposal_from_row(r) for r in rows]
 
     async def list_active_proposals(self, connection: ConnectionProtocol) -> Sequence[Proposal]:
         rows = await connection.fetch(f"SELECT * FROM {self._schema}.fn_list_active_proposals()")
-        return [
-            Proposal(
-                proposal_id=r["proposal_id"],
-                guild_id=r["guild_id"],
-                proposer_id=r["proposer_id"],
-                target_id=r["target_id"],
-                amount=r["amount"],
-                description=r["description"],
-                attachment_url=r["attachment_url"],
-                snapshot_n=r["snapshot_n"],
-                threshold_t=r["threshold_t"],
-                deadline_at=r["deadline_at"],
-                status=r["status"],
-                reminder_sent=r["reminder_sent"],
-                created_at=r["created_at"],
-                updated_at=r["updated_at"],
-            )
-            for r in rows
-        ]
+        return [_proposal_from_row(r) for r in rows]
 
     async def mark_reminded(self, connection: ConnectionProtocol, *, proposal_id: UUID) -> None:
         await connection.execute(f"SELECT {self._schema}.fn_mark_reminded($1)", proposal_id)

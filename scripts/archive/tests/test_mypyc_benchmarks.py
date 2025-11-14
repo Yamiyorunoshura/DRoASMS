@@ -686,7 +686,8 @@ async def test_governance_modules_comprehensive_performance() -> None:
         stats = metric.get_stats()
         if stats:
             print(
-                f"{name}: 平均延遲 {stats['mean_latency_ms']:.2f}ms, P95延遲 {stats['p95_latency_ms']:.2f}ms"
+                f"{name}: 平均延遲 {stats['mean_latency_ms']:.2f}ms, "
+                f"P95延遲 {stats['p95_latency_ms']:.2f}ms"
             )
 
     # 綜合性能基準驗證

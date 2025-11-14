@@ -1,47 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+# noqa: D104
 from typing import Any
-from uuid import UUID
 
-import asyncpg
-
+from src.cython_ext.economy_transfer_models import (
+    TransferProcedureResult,
+    build_transfer_procedure_result,
+)
 from src.infra.types.db import ConnectionProtocol
-
-
-@dataclass(frozen=True, slots=True)
-class TransferProcedureResult:
-    """Result payload returned by the fn_transfer_currency stored procedure."""
-
-    transaction_id: UUID
-    guild_id: int
-    initiator_id: int
-    target_id: int
-    amount: int
-    direction: str
-    created_at: datetime
-    initiator_balance: int
-    target_balance: int | None
-    throttled_until: datetime | None
-    metadata: dict[str, Any]
-
-    @classmethod
-    def from_record(cls, record: asyncpg.Record) -> "TransferProcedureResult":
-        metadata: dict[str, Any] = dict(record["metadata"] or {})
-        return cls(
-            transaction_id=record["transaction_id"],
-            guild_id=record["guild_id"],
-            initiator_id=record["initiator_id"],
-            target_id=record["target_id"],
-            amount=record["amount"],
-            direction=str(record["direction"]),
-            created_at=record["created_at"],
-            initiator_balance=record["initiator_balance"],
-            target_balance=record["target_balance"],
-            throttled_until=record["throttled_until"],
-            metadata=metadata,
-        )
 
 
 class EconomyTransferGateway:
@@ -71,4 +37,4 @@ class EconomyTransferGateway:
         )
         if record is None:
             raise RuntimeError("fn_transfer_currency returned no result.")
-        return TransferProcedureResult.from_record(record)
+        return build_transfer_procedure_result(record)

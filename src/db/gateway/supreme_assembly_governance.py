@@ -1,61 +1,69 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping, Sequence, cast
 from uuid import UUID
+
+from src.cython_ext.supreme_assembly_models import (
+    Proposal,
+    Summon,
+    SupremeAssemblyConfig,
+    Tally,
+)
 
 # 與專案其他 gateway 一致，改用統一的資料庫連線協定，
 # 以避免 asyncpg.Connection 與自定義 Protocol 在關鍵字參數上出現不相容警告。
 from src.infra.types.db import ConnectionProtocol as AsyncPGConnectionProto
 
-# --- Data Models ---
+
+def _config_from_row(row: Mapping[str, Any]) -> SupremeAssemblyConfig:
+    return SupremeAssemblyConfig(
+        guild_id=int(row["guild_id"]),
+        speaker_role_id=int(row["speaker_role_id"]),
+        member_role_id=int(row["member_role_id"]),
+        created_at=cast(datetime, row["created_at"]),
+        updated_at=cast(datetime, row["updated_at"]),
+    )
 
 
-@dataclass(frozen=True, slots=True)
-class SupremeAssemblyConfig:
-    guild_id: int
-    speaker_role_id: int
-    member_role_id: int
-    created_at: datetime
-    updated_at: datetime
+def _proposal_from_row(row: Mapping[str, Any]) -> Proposal:
+    return Proposal(
+        proposal_id=cast(UUID, row["proposal_id"]),
+        guild_id=int(row["guild_id"]),
+        proposer_id=int(row["proposer_id"]),
+        title=cast(str | None, row["title"]),
+        description=cast(str | None, row["description"]),
+        snapshot_n=int(row["snapshot_n"]),
+        threshold_t=int(row["threshold_t"]),
+        deadline_at=cast(datetime, row["deadline_at"]),
+        status=cast(str, row["status"]),
+        reminder_sent=bool(row["reminder_sent"]),
+        created_at=cast(datetime, row["created_at"]),
+        updated_at=cast(datetime, row["updated_at"]),
+    )
 
 
-@dataclass(frozen=True, slots=True)
-class Proposal:
-    proposal_id: UUID
-    guild_id: int
-    proposer_id: int
-    title: str | None
-    description: str | None
-    snapshot_n: int
-    threshold_t: int
-    deadline_at: datetime
-    status: str
-    reminder_sent: bool
-    created_at: datetime
-    updated_at: datetime
+def _tally_from_row(row: Mapping[str, Any]) -> Tally:
+    return Tally(
+        approve=int(row["approve"]),
+        reject=int(row["reject"]),
+        abstain=int(row["abstain"]),
+        total_voted=int(row["total_voted"]),
+    )
 
 
-@dataclass(frozen=True, slots=True)
-class Tally:
-    approve: int
-    reject: int
-    abstain: int
-    total_voted: int
-
-
-@dataclass(frozen=True, slots=True)
-class Summon:
-    summon_id: UUID
-    guild_id: int
-    invoked_by: int
-    target_id: int
-    target_kind: str  # 'member' | 'official'
-    note: str | None
-    delivered: bool
-    delivered_at: datetime | None
-    created_at: datetime
+def _summon_from_row(row: Mapping[str, Any]) -> Summon:
+    return Summon(
+        summon_id=cast(UUID, row["summon_id"]),
+        guild_id=int(row["guild_id"]),
+        invoked_by=int(row["invoked_by"]),
+        target_id=int(row["target_id"]),
+        target_kind=str(row["target_kind"]),
+        note=cast(str | None, row["note"]),
+        delivered=bool(row["delivered"]),
+        delivered_at=cast(datetime | None, row["delivered_at"]),
+        created_at=cast(datetime, row["created_at"]),
+    )
 
 
 class SupremeAssemblyGovernanceGateway:
@@ -78,13 +86,7 @@ class SupremeAssemblyGovernanceGateway:
             sql, guild_id, speaker_role_id, member_role_id
         )
         assert row is not None
-        return SupremeAssemblyConfig(
-            guild_id=int(row["guild_id"]),
-            speaker_role_id=int(row["speaker_role_id"]),
-            member_role_id=int(row["member_role_id"]),
-            created_at=cast(datetime, row["created_at"]),
-            updated_at=cast(datetime, row["updated_at"]),
-        )
+        return _config_from_row(row)
 
     async def fetch_config(
         self, connection: AsyncPGConnectionProto, *, guild_id: int
@@ -93,13 +95,7 @@ class SupremeAssemblyGovernanceGateway:
         row: Mapping[str, Any] | None = await connection.fetchrow(sql, guild_id)
         if row is None:
             return None
-        return SupremeAssemblyConfig(
-            guild_id=int(row["guild_id"]),
-            speaker_role_id=int(row["speaker_role_id"]),
-            member_role_id=int(row["member_role_id"]),
-            created_at=cast(datetime, row["created_at"]),
-            updated_at=cast(datetime, row["updated_at"]),
-        )
+        return _config_from_row(row)
 
     # --- Accounts ---
     async def fetch_account(
@@ -194,20 +190,7 @@ class SupremeAssemblyGovernanceGateway:
                 """
                 await connection.execute(snapshot_sql, proposal_id, list(snapshot_member_ids))
 
-        return Proposal(
-            proposal_id=cast(UUID, row["proposal_id"]),
-            guild_id=int(row["guild_id"]),
-            proposer_id=int(row["proposer_id"]),
-            title=cast(str | None, row["title"]),
-            description=cast(str | None, row["description"]),
-            snapshot_n=int(row["snapshot_n"]),
-            threshold_t=int(row["threshold_t"]),
-            deadline_at=cast(datetime, row["deadline_at"]),
-            status=cast(str, row["status"]),
-            reminder_sent=bool(row["reminder_sent"]),
-            created_at=cast(datetime, row["created_at"]),
-            updated_at=cast(datetime, row["updated_at"]),
-        )
+        return _proposal_from_row(row)
 
     async def fetch_proposal(
         self,
@@ -225,20 +208,7 @@ class SupremeAssemblyGovernanceGateway:
         row: Mapping[str, Any] | None = await connection.fetchrow(sql, proposal_id)
         if row is None:
             return None
-        return Proposal(
-            proposal_id=cast(UUID, row["proposal_id"]),
-            guild_id=int(row["guild_id"]),
-            proposer_id=int(row["proposer_id"]),
-            title=cast(str | None, row["title"]),
-            description=cast(str | None, row["description"]),
-            snapshot_n=int(row["snapshot_n"]),
-            threshold_t=int(row["threshold_t"]),
-            deadline_at=cast(datetime, row["deadline_at"]),
-            status=cast(str, row["status"]),
-            reminder_sent=bool(row["reminder_sent"]),
-            created_at=cast(datetime, row["created_at"]),
-            updated_at=cast(datetime, row["updated_at"]),
-        )
+        return _proposal_from_row(row)
 
     async def fetch_snapshot(
         self,
@@ -341,12 +311,7 @@ class SupremeAssemblyGovernanceGateway:
         """
         row: Mapping[str, Any] | None = await connection.fetchrow(sql, proposal_id)
         assert row is not None
-        return Tally(
-            approve=int(row["approve"]),
-            reject=int(row["reject"]),
-            abstain=int(row["abstain"]),
-            total_voted=int(row["total_voted"]),
-        )
+        return _tally_from_row(row)
 
     async def fetch_votes_detail(
         self, connection: AsyncPGConnectionProto, *, proposal_id: UUID
@@ -370,23 +335,7 @@ class SupremeAssemblyGovernanceGateway:
             WHERE status = '進行中' AND deadline_at <= timezone('utc', clock_timestamp())
         """
         rows: Sequence[Mapping[str, Any]] = await connection.fetch(sql)
-        return [
-            Proposal(
-                proposal_id=cast(UUID, r["proposal_id"]),
-                guild_id=int(r["guild_id"]),
-                proposer_id=int(r["proposer_id"]),
-                title=cast(str | None, r["title"]),
-                description=cast(str | None, r["description"]),
-                snapshot_n=int(r["snapshot_n"]),
-                threshold_t=int(r["threshold_t"]),
-                deadline_at=cast(datetime, r["deadline_at"]),
-                status=cast(str, r["status"]),
-                reminder_sent=bool(r["reminder_sent"]),
-                created_at=cast(datetime, r["created_at"]),
-                updated_at=cast(datetime, r["updated_at"]),
-            )
-            for r in rows
-        ]
+        return [_proposal_from_row(r) for r in rows]
 
     async def list_reminder_candidates(
         self, connection: AsyncPGConnectionProto
@@ -401,23 +350,7 @@ class SupremeAssemblyGovernanceGateway:
               AND deadline_at - interval '24 hours' <= timezone('utc', clock_timestamp())
         """
         rows: Sequence[Mapping[str, Any]] = await connection.fetch(sql)
-        return [
-            Proposal(
-                proposal_id=cast(UUID, r["proposal_id"]),
-                guild_id=int(r["guild_id"]),
-                proposer_id=int(r["proposer_id"]),
-                title=cast(str | None, r["title"]),
-                description=cast(str | None, r["description"]),
-                snapshot_n=int(r["snapshot_n"]),
-                threshold_t=int(r["threshold_t"]),
-                deadline_at=cast(datetime, r["deadline_at"]),
-                status=cast(str, r["status"]),
-                reminder_sent=bool(r["reminder_sent"]),
-                created_at=cast(datetime, r["created_at"]),
-                updated_at=cast(datetime, r["updated_at"]),
-            )
-            for r in rows
-        ]
+        return [_proposal_from_row(r) for r in rows]
 
     async def list_active_proposals(self, connection: AsyncPGConnectionProto) -> Sequence[Proposal]:
         sql = f"""
@@ -429,23 +362,7 @@ class SupremeAssemblyGovernanceGateway:
             ORDER BY created_at
         """
         rows: Sequence[Mapping[str, Any]] = await connection.fetch(sql)
-        return [
-            Proposal(
-                proposal_id=cast(UUID, r["proposal_id"]),
-                guild_id=int(r["guild_id"]),
-                proposer_id=int(r["proposer_id"]),
-                title=cast(str | None, r["title"]),
-                description=cast(str | None, r["description"]),
-                snapshot_n=int(r["snapshot_n"]),
-                threshold_t=int(r["threshold_t"]),
-                deadline_at=cast(datetime, r["deadline_at"]),
-                status=cast(str, r["status"]),
-                reminder_sent=bool(r["reminder_sent"]),
-                created_at=cast(datetime, r["created_at"]),
-                updated_at=cast(datetime, r["updated_at"]),
-            )
-            for r in rows
-        ]
+        return [_proposal_from_row(r) for r in rows]
 
     async def mark_reminded(self, connection: AsyncPGConnectionProto, *, proposal_id: UUID) -> None:
         sql = f"""
@@ -531,17 +448,7 @@ class SupremeAssemblyGovernanceGateway:
             sql, guild_id, invoked_by, target_id, target_kind, note
         )
         assert row is not None
-        return Summon(
-            summon_id=cast(UUID, row["summon_id"]),
-            guild_id=int(row["guild_id"]),
-            invoked_by=int(row["invoked_by"]),
-            target_id=int(row["target_id"]),
-            target_kind=cast(str, row["target_kind"]),
-            note=cast(str | None, row["note"]),
-            delivered=bool(row["delivered"]),
-            delivered_at=cast(datetime | None, row["delivered_at"]),
-            created_at=cast(datetime, row["created_at"]),
-        )
+        return _summon_from_row(row)
 
     async def mark_summon_delivered(
         self, connection: AsyncPGConnectionProto, *, summon_id: UUID
@@ -565,20 +472,7 @@ class SupremeAssemblyGovernanceGateway:
             LIMIT $2
         """
         rows: Sequence[Mapping[str, Any]] = await connection.fetch(sql, guild_id, limit)
-        return [
-            Summon(
-                summon_id=cast(UUID, r["summon_id"]),
-                guild_id=int(r["guild_id"]),
-                invoked_by=int(r["invoked_by"]),
-                target_id=int(r["target_id"]),
-                target_kind=cast(str, r["target_kind"]),
-                note=cast(str | None, r["note"]),
-                delivered=bool(r["delivered"]),
-                delivered_at=cast(datetime | None, r["delivered_at"]),
-                created_at=cast(datetime, r["created_at"]),
-            )
-            for r in rows
-        ]
+        return [_summon_from_row(r) for r in rows]
 
 
 __all__ = [

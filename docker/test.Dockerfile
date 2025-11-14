@@ -42,7 +42,7 @@ RUN uv venv .venv \
     && . ./.venv/bin/activate \
     && uv sync --frozen --group dev \
     && mkdir -p build/unified \
-    && uv run python scripts/compile_modules.py compile --project-root /app
+    && uv run python scripts/compile_modules.py compile
 
 ENV PATH="/app/.venv/bin:${PATH}"
 # 讓編譯後的擴充模組優先於原始純 Python 版本

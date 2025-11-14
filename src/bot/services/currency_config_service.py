@@ -3,22 +3,14 @@
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass
 
 import structlog
 
+from src.cython_ext.currency_models import CurrencyConfigResult
 from src.db.gateway.economy_configuration import EconomyConfigurationGateway
 from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class CurrencyConfigResult:
-    """Result of currency configuration operations."""
-
-    currency_name: str
-    currency_icon: str
 
 
 class CurrencyConfigService:

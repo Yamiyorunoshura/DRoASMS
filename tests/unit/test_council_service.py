@@ -250,8 +250,16 @@ class _FakeTransferService:
 
 
 def dataclass_replace(obj: Any, **changes: Any) -> Any:
-    """使用 dataclasses.replace 支援 slots 資料類別。"""
-    return dc_replace(obj, **changes)
+    """使用 dataclasses.replace 支援 slots 資料類別和 Cython cdef class。"""
+    # 首先嘗試使用 dataclasses.replace（適用於標準 dataclass）
+    try:
+        return dc_replace(obj, **changes)
+    except TypeError:
+        # 如果失敗，檢查是否有內建的 replace 方法（我們添加給 Cython 類的）
+        if hasattr(obj, "replace") and callable(obj.replace):
+            return obj.replace(**changes)
+        # 如果所有方法都失敗，重新拋出原始錯誤
+        raise
 
 
 # ---- Tests ----

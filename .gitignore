@@ -14,6 +14,11 @@ build/
 htmlcov/
 *.pyc
 
+# Cython build artifacts
+src/cython_ext/*.c
+src/cython_ext/*.html
+src/cython_ext/*.so
+
 # Env & secrets
 .env
 .env.*
@@ -61,3 +66,6 @@ backup/
 
 # cov
 htmlcov_council/
+
+# Windsurf
+.windsurf/

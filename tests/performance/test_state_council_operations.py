@@ -165,7 +165,6 @@ async def test_state_council_tax_collection_latency_p95_under_2s() -> None:
         tax_amount=100,
         tax_type="所得稅",
         assessment_period="2025-01",
-        created_at=datetime.now(timezone.utc),
     )
     gateway.create_tax_record.return_value = mock_tax
     transfer_service.transfer_currency = AsyncMock()
@@ -248,12 +247,12 @@ async def test_state_council_currency_issuance_latency_p95_under_2s() -> None:
     gateway.sum_monthly_issuance.return_value = 0
 
     mock_issuance = CurrencyIssuance(
-        id=1,
+        issuance_id=1,
         guild_id=100,
         amount=1000,
         reason="performance test",
         month_period="2025-01",
-        issued_by=10,
+        performed_by=10,
         created_at=datetime.now(timezone.utc),
     )
     gateway.create_currency_issuance.return_value = mock_issuance

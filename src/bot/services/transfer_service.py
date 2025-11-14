@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
 import asyncpg
 import structlog
-from mypy_extensions import mypyc_attr
 
+from src.cython_ext.economy_transfer_models import (
+    TransferResult,
+    transfer_result_from_procedure,
+)
 from src.db.gateway.economy_pending_transfers import PendingTransferGateway
 from src.db.gateway.economy_transfers import (
     EconomyTransferGateway,
@@ -19,45 +21,20 @@ from src.infra.types.db import ConnectionProtocol, PoolProtocol
 LOGGER = structlog.get_logger(__name__)
 
 
-@mypyc_attr(native_class=False)
 class TransferError(RuntimeError):
     """Base error raised for transfer-related failures."""
 
 
-@mypyc_attr(native_class=False)
 class TransferValidationError(TransferError):
     """Raised when validation fails before reaching the database."""
 
 
-@mypyc_attr(native_class=False)
 class InsufficientBalanceError(TransferError):
     """Raised when the initiator lacks sufficient balance."""
 
 
-@mypyc_attr(native_class=False)
 class TransferThrottleError(TransferError):
     """Raised when the initiator is throttled by daily limits."""
-
-
-@dataclass(frozen=True, slots=True)
-class TransferResult:
-    """Value object returned after a successful transfer.
-
-    為了相容單元測試，此資料類別的部分欄位提供預設值，
-    測試可以略過 `direction` 與 `throttled_until` 等欄位。
-    """
-
-    transaction_id: UUID | None
-    guild_id: int
-    initiator_id: int
-    target_id: int
-    amount: int
-    initiator_balance: int
-    target_balance: int | None
-    direction: str = "transfer"
-    created_at: datetime | None = None
-    throttled_until: datetime | None = None
-    metadata: dict[str, Any] = None  # type: ignore[assignment]
 
 
 class TransferService:
@@ -181,21 +158,7 @@ class TransferService:
         return self._to_result(result)
 
     def _to_result(self, db_result: TransferProcedureResult) -> TransferResult:
-        target_balance = db_result.target_balance if db_result.target_balance is not None else 0
-        metadata = dict(db_result.metadata or {})
-        return TransferResult(
-            transaction_id=db_result.transaction_id,
-            guild_id=db_result.guild_id,
-            initiator_id=db_result.initiator_id,
-            target_id=db_result.target_id,
-            amount=db_result.amount,
-            initiator_balance=db_result.initiator_balance,
-            target_balance=target_balance,
-            direction=db_result.direction,
-            created_at=db_result.created_at,
-            throttled_until=db_result.throttled_until,
-            metadata=metadata,
-        )
+        return transfer_result_from_procedure(db_result)
 
     async def _create_pending_transfer(
         self,

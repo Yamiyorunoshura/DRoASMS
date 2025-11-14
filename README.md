@@ -57,15 +57,15 @@ uv sync
 #   python3 -m venv .venv && source .venv/bin/activate && pip install -e .
 ```
 
-## 統一編譯器工作流程
+## Cython 編譯工作流程
 
-1. `make unified-migrate-dry-run`／`make unified-migrate`：預覽並寫入 `[tool.unified-compiler]`，同時於 `backup/config_migration/` 保存備份。
-2. `make unified-compile`：實際編譯所有模組，並產生 `build/unified/compile_report.json` 與性能快照。
-3. `make unified-compile-test`：僅執行兼容性/性能測試，方便在 CI 或本地驗證配置。
-4. `make unified-status`：輸出最近一次編譯的耗時、成功率與輸出 `.so` 數量。
-5. `make unified-refresh-baseline`：在確認結果穩定後刷新性能基線；若監控偵測退化，`scripts/compile_modules.py` 會以非零碼結束以阻擋合併。
+1. `make unified-compile`：呼叫 `scripts/compile_modules.py compile`，依 `pyproject.toml` 的 `[tool.cython-compiler.targets]` 逐一產出 `.so`。
+2. `make unified-compile-test`：執行 `[tool.cython-compiler].test_command`（預設為性能測試）。
+3. `make unified-status`：檢視 `build/cython/compile_report.json`，確認成功/失敗與輸出位置。
+4. `make unified-compile-clean`：清掉 `build/cython` 與 `src/cython_ext` 中的 `.so`，回復純 Python fallback。
+5. `make unified-refresh-baseline`：在編譯成功後附加 `--refresh-baseline`，重新量測模組匯入基線。
 
-完整遷移指南與性能監控說明請參考 `docs/unified-compiler-guide.md`。
+詳細設定與疑難排解請見 `docs/unified-compiler-guide.md`。
 
 ## 環境設定
 複製 `.env.example` 產生 `.env` 檔案，填入必要的 Discord 憑證與設定（括號內為預設）：
@@ -769,18 +769,21 @@ act -j lint
 - 預設使用 `-n auto` 自動偵測 CPU 核心數
 - 確保測試使用獨立資料庫連線池與交易隔離
 
-#### Mypyc 編譯（經濟模塊）
-- 已為經濟模塊提供 mypyc 編譯管線，以獲得潛在效能提升：
-  - `src/bot/services/{adjustment_service,transfer_service,balance_service,transfer_event_pool,currency_config_service}.py`
-  - `src/db/gateway/{economy_adjustments,economy_transfers,economy_queries,economy_pending_transfers,economy_configuration}.py`
-- 編譯輸出至 `build/mypyc_out/`
+#### Cython 編譯（性能優化）
+- 已為核心模塊提供 Cython 編譯管線，以獲得顯著性能提升：
+  - 經濟系統模塊：`adjustment_service`, `transfer_service`, `balance_service`, `transfer_event_pool`, `currency_config_service`
+  - 數據網關：`economy_adjustments`, `economy_transfers`, `economy_queries`, `economy_pending_transfers`, `economy_configuration`
+  - 治理系統模塊：`council_governance`, `supreme_assembly_governance`, `state_council_governance`
+- 編譯輸出至 `src/cython_ext/` 目錄
 - 指令：
-  - 編譯：`make mypyc-economy`
-  - 驗證載入：`make mypyc-economy-check`
-- 注意事項：
-  - 專案使用 namespace packages（`src/` 無 `__init__.py`）。若已安裝本專案，匯入時可能優先讀取 site-packages 中的純 Python 模組；`mypyc-economy-check` 直接由 `.so` 驗證產物可用性。
-  - 例外類別（繼承內建 `RuntimeError` 等）已加上 `@mypyc_attr(native_class=False)` 以確保相容。
-  - Python 3.12+/3.13 需要 `setuptools` 提供 `_distutils`；已於開發依賴加入 `setuptools` 與 `wheel`。
+  - 編譯：`make cython-compile` 或 `python scripts/compile_modules.py compile`
+  - 測試：`make cython-test` 或 `python scripts/compile_modules.py test`
+  - 性能基線：`make unified-refresh-baseline`
+- 性能提升：
+  - 編譯速度提升：7-12倍
+  - 運行時性能提升：5-10倍
+  - 記憶體效率優化
+- 支持並行編譯和增量編譯功能
 
 #### 依賴注入容器（Dependency Injection Container）
 

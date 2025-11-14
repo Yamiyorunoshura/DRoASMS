@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
-from uuid import UUID
 
 import asyncpg
 import structlog
-from mypy_extensions import mypyc_attr
 
+from src.cython_ext.economy_adjustment_models import (
+    AdjustmentResult,
+    adjustment_result_from_procedure,
+)
 from src.db.gateway.economy_adjustments import (
     AdjustmentProcedureResult,
     EconomyAdjustmentGateway,
@@ -18,34 +18,16 @@ from src.infra.types.db import ConnectionProtocol, PoolProtocol
 LOGGER = structlog.get_logger(__name__)
 
 
-@mypyc_attr(native_class=False)
 class AdjustmentError(RuntimeError):
     """Base error raised for adjustment-related failures."""
 
 
-@mypyc_attr(native_class=False)
 class UnauthorizedAdjustmentError(AdjustmentError):
     """Raised when a requester lacks permission to perform adjustments."""
 
 
-@mypyc_attr(native_class=False)
 class ValidationError(AdjustmentError):
     """Raised when validation fails before reaching the database."""
-
-
-@dataclass(frozen=True, slots=True)
-class AdjustmentResult:
-    """Value object returned after a successful admin adjustment."""
-
-    transaction_id: UUID
-    guild_id: int
-    admin_id: int
-    target_id: int
-    amount: int
-    direction: str
-    created_at: datetime
-    target_balance_after: int
-    metadata: dict[str, Any]
 
 
 class AdjustmentService:
@@ -112,14 +94,4 @@ class AdjustmentService:
         raise AdjustmentError("Unexpected error while applying adjustment.") from exc
 
     def _to_result(self, record: AdjustmentProcedureResult) -> AdjustmentResult:
-        return AdjustmentResult(
-            transaction_id=record.transaction_id,
-            guild_id=record.guild_id,
-            admin_id=record.admin_id,
-            target_id=record.target_id,
-            amount=record.amount,
-            direction=record.direction,
-            created_at=record.created_at,
-            target_balance_after=record.target_balance_after,
-            metadata=record.metadata,
-        )
+        return adjustment_result_from_procedure(record)

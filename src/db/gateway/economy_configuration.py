@@ -2,27 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Mapping
 
+from src.cython_ext.economy_configuration_models import CurrencyConfig
 from src.infra.types.db import ConnectionProtocol as AsyncPGConnectionProto
 
 
-@dataclass(frozen=True, slots=True)
-class CurrencyConfig:
-    """Currency configuration for a guild."""
-
-    guild_id: int
-    currency_name: str
-    currency_icon: str
-
-    @classmethod
-    def from_record(cls, record: Mapping[str, Any]) -> "CurrencyConfig":
-        return cls(
-            guild_id=int(record["guild_id"]),
-            currency_name=str(record["currency_name"]),
-            currency_icon=str(record["currency_icon"]),
-        )
+def _currency_config_from_record(record: Mapping[str, Any]) -> CurrencyConfig:
+    return CurrencyConfig(
+        int(record["guild_id"]),
+        str(record["currency_name"]),
+        str(record["currency_icon"]),
+    )
 
 
 class EconomyConfigurationGateway:
@@ -46,7 +37,7 @@ class EconomyConfigurationGateway:
         record = await connection.fetchrow(sql, guild_id)
         if record is None:
             return None
-        return CurrencyConfig.from_record(record)
+        return _currency_config_from_record(record)
 
     async def update_currency_config(
         self,
@@ -108,7 +99,7 @@ class EconomyConfigurationGateway:
 
         if record is None:
             raise RuntimeError("Failed to update currency configuration.")
-        return CurrencyConfig.from_record(record)
+        return _currency_config_from_record(record)
 
 
 __all__ = ["CurrencyConfig", "EconomyConfigurationGateway"]

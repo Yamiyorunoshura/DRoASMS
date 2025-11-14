@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Mapping, cast
 from uuid import UUID
@@ -10,10 +9,9 @@ import asyncpg
 import structlog
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from src.cython_ext.transfer_pool_core import TransferCheckStateStore
 from src.db import pool as db_pool
-from src.db.gateway.economy_pending_transfers import (
-    PendingTransferGateway,
-)
+from src.db.gateway.economy_pending_transfers import PendingTransferGateway
 from src.db.gateway.economy_transfers import EconomyTransferGateway
 from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
@@ -33,8 +31,7 @@ class TransferEventPoolCoordinator:
         self._pool: PoolProtocol | None = pool
         self._pending_gateway = pending_gateway or PendingTransferGateway()
         self._transfer_gateway = transfer_gateway or EconomyTransferGateway()
-        # Track check states: transfer_id -> {check_type: result}
-        self._check_states: dict[UUID, dict[str, int]] = defaultdict(dict)
+        self._check_store = TransferCheckStateStore()
         # Track retry tasks: transfer_id -> asyncio.Task
         self._retry_tasks: dict[UUID, asyncio.Task[None]] = {}
         self._cleanup_task: asyncio.Task[None] | None = None
@@ -83,7 +80,7 @@ class TransferEventPoolCoordinator:
             except asyncio.CancelledError:
                 pass
 
-        self._check_states.clear()
+        self._check_store.clear()
         LOGGER.info("transfer_event_pool.coordinator.stopped")
 
     async def handle_check_result(
@@ -97,19 +94,11 @@ class TransferEventPoolCoordinator:
         if not self._running:
             return
 
-        # Update check state
-        self._check_states[transfer_id][check_type] = result
-
-        # Check if all checks are complete
-        check_state = self._check_states[transfer_id]
-        required_checks = {"balance", "cooldown", "daily_limit"}
-
-        if not required_checks.issubset(check_state.keys()):
-            # Not all checks received yet
+        all_received = self._check_store.record(transfer_id, check_type, result)
+        if not all_received:
             return
 
-        # All checks received, check if all passed
-        all_passed = all(check_state[check] == 1 for check in required_checks)
+        all_passed = self._check_store.all_passed(transfer_id)
 
         if all_passed:
             # 等待資料庫層發出的 transfer_check_approved 事件再觸發執行，
@@ -331,8 +320,7 @@ class TransferEventPoolCoordinator:
                     await c.execute("SELECT economy.fn_check_transfer_daily_limit($1)", transfer_id)
 
                     # Clear check state to allow fresh evaluation
-                    if transfer_id in self._check_states:
-                        del self._check_states[transfer_id]
+                    self._check_store.remove(transfer_id)
 
                     LOGGER.debug(
                         "transfer_event_pool.retry.checks_triggered",
@@ -351,8 +339,7 @@ class TransferEventPoolCoordinator:
                 await conn.execute("SELECT economy.fn_check_transfer_daily_limit($1)", transfer_id)
 
                 # Clear check state to allow fresh evaluation
-                if transfer_id in self._check_states:
-                    del self._check_states[transfer_id]
+                self._check_store.remove(transfer_id)
 
                 LOGGER.debug("transfer_event_pool.retry.checks_triggered", transfer_id=transfer_id)
         except Exception:

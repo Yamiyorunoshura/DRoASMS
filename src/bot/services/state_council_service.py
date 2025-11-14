@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import TracebackType
 from typing import Any, Sequence, cast
@@ -9,7 +8,6 @@ from unittest.mock import AsyncMock
 from uuid import UUID
 
 import structlog
-from mypy_extensions import mypyc_attr
 
 from src.bot.services.adjustment_service import AdjustmentService
 from src.bot.services.department_registry import DepartmentRegistry
@@ -17,6 +15,12 @@ from src.bot.services.transfer_service import (
     InsufficientBalanceError,
     TransferError,
     TransferService,
+)
+from src.cython_ext.state_council_models import (
+    DepartmentStats,
+    StateCouncilSummary,
+    SuspectProfile,
+    SuspectReleaseResult,
 )
 from src.db.gateway.economy_queries import EconomyQueryGateway
 from src.db.gateway.state_council_governance import (
@@ -98,63 +102,20 @@ class _AcquireConnectionContext:
         return None
 
 
-@mypyc_attr(native_class=False)
 class StateCouncilNotConfiguredError(RuntimeError):
     pass
 
 
-@mypyc_attr(native_class=False)
 class PermissionDeniedError(RuntimeError):
     pass
 
 
-@mypyc_attr(native_class=False)
 class InsufficientFundsError(RuntimeError):
     pass
 
 
-@mypyc_attr(native_class=False)
 class MonthlyIssuanceLimitExceededError(RuntimeError):
     pass
-
-
-@dataclass(frozen=True, slots=True)
-class DepartmentStats:
-    department: str
-    balance: int
-    total_welfare_disbursed: int
-    total_tax_collected: int
-    identity_actions_count: int
-    currency_issued: int
-
-
-@dataclass(frozen=True, slots=True)
-class StateCouncilSummary:
-    leader_id: int | None
-    leader_role_id: int | None
-    total_balance: int
-    department_stats: dict[str, DepartmentStats]
-    recent_transfers: Sequence[InterdepartmentTransfer]
-
-
-@dataclass(frozen=True, slots=True)
-class SuspectProfile:
-    member_id: int
-    display_name: str
-    joined_at: datetime | None
-    arrested_at: datetime | None
-    arrest_reason: str | None
-    auto_release_at: datetime | None
-    auto_release_hours: int | None
-
-
-@dataclass(frozen=True, slots=True)
-class SuspectReleaseResult:
-    suspect_id: int
-    display_name: str | None
-    released: bool
-    reason: str | None = None
-    error: str | None = None
 
 
 class StateCouncilService:

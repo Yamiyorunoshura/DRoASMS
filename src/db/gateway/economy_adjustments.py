@@ -1,43 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+# noqa: D104
 from typing import Any
-from uuid import UUID
 
-import asyncpg
-
+from src.cython_ext.economy_adjustment_models import (
+    AdjustmentProcedureResult,
+    build_adjustment_procedure_result,
+)
 from src.infra.types.db import ConnectionProtocol
-
-
-@dataclass(frozen=True, slots=True)
-class AdjustmentProcedureResult:
-    """Result payload returned by fn_adjust_balance stored procedure."""
-
-    transaction_id: UUID
-    guild_id: int
-    admin_id: int
-    target_id: int
-    amount: int
-    direction: str
-    created_at: datetime
-    target_balance_after: int
-    metadata: dict[str, Any]
-
-    @classmethod
-    def from_record(cls, record: asyncpg.Record) -> "AdjustmentProcedureResult":
-        metadata: dict[str, Any] = dict(record["metadata"] or {})
-        return cls(
-            transaction_id=record["transaction_id"],
-            guild_id=record["guild_id"],
-            admin_id=record["admin_id"],
-            target_id=record["target_id"],
-            amount=record["amount"],
-            direction=str(record["direction"]),
-            created_at=record["created_at"],
-            target_balance_after=record["target_balance_after"],
-            metadata=metadata,
-        )
 
 
 class EconomyAdjustmentGateway:
@@ -63,4 +33,4 @@ class EconomyAdjustmentGateway:
         )
         if record is None:
             raise RuntimeError("fn_adjust_balance returned no result.")
-        return AdjustmentProcedureResult.from_record(record)
+        return build_adjustment_procedure_result(record)

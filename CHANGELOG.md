@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2025-11-14
+
+### 新增
+- **Cython 編譯器系統**：完整的 Cython 擴展模組架構，提升性能優化能力
+  - 新增 `src/cython_ext/` 目錄，包含 13 個核心模組的 Cython 實現
+  - 經濟模組：`currency_models`、`economy_configuration_models`、`economy_query_models`、`economy_balance_models`、`economy_transfer_models`、`economy_adjustment_models`、`pending_transfer_models`、`transfer_pool_core`
+  - 治理模組：`council_governance_models`、`supreme_assembly_models`、`state_council_models`、`government_registry_models`
+  - 每個模組都有對應的 `.pyx` 來源檔案和 `.py` 包裝檔案
+- **性能基線測試工具**：新增完整的性能監控和基準測試框架
+  - `scripts/performance_baseline_test.py`：主要性能基線測試工具，包含編譯時間、執行時間、記憶體使用等多項指標
+  - `scripts/compile_time_benchmark.py`：專門測試編譯時間的基準工具
+  - `scripts/concurrency_performance_test.py`：並發性能測試工具
+  - `scripts/memory_leak_test.py`：記憶體洩漏檢測工具
+  - `scripts/cython_compiler.py`：Cython 編譯器輔助工具
+- **Cython 運行時測試**：新增 `tests/performance/test_cython_runtime.py` 測試編譯後模組的運行時性能
+- **政府註冊表模組**：新增 `src/db/gateway/government_registry.py` 提供統一的政府註冊表管理
+- **基線資料**：新增 `docs/baselines/cython_pre_migration.json` 作為遷移前的性能基線參考
+- **依賴管理**：新增 `requirements.txt` 簡化依賴管理
+
+### 修改
+- **編譯器工作流程**：從 mypc 編譯器完全遷移到 Cython 編譯器
+  - 移除 `.github/workflows/mypc-compile.yml`，新增 `.github/workflows/cython-compile.yml`
+  - 更新 `Makefile` 支援 Cython 編譯流程
+  - 更新 `docker/Dockerfile` 和 `docker/test.Dockerfile` 支援 Cython 模組編譯
+- **統一編譯器配置**：大幅擴展 `pyproject.toml` 中的編譯器配置
+  - 新增完整的 `[tool.cython-compiler]` 配置區段
+  - 支援多階段編譯（week1、week2）
+  - 包含性能監控、基線比較、錯誤閾值等進階功能
+  - 定義 13 個編譯目標，涵蓋所有核心業務模組
+- **文檔更新**：更新 `docs/unified-compiler-guide.md` 反映新的 Cython 編譯器架構
+- **服務層優化**：更新多個服務模組以配合 Cython 編譯器
+  - 優化 `src/bot/services/` 下的所有核心服務
+  - 更新 `src/db/gateway/` 下的資料庫存取層
+- **測試擴充**：更新現有測試檔案支援新的編譯器架構
+
+### 修復
+- **類型安全改進**：修復多個模組中的類型提示問題，提升代碼品質
+- **錯誤處理優化**：改進編譯過程中的錯誤處理和回報機制
+
+### 清理
+- **舊檔案歸檔**：將不再需要的舊編譯器相關檔案移至 `scripts/archive/` 目錄
+  - `bench_economy.py` → `scripts/archive/bench_economy.py`
+  - `migrate_unified_config.py` → `scripts/archive/migrate_unified_config.py`
+  - `test_mypyc_benchmarks.py` → `scripts/archive/tests/test_mypyc_benchmarks.py`
+- **測試腳本移除**：刪除 `tests/scripts/test_performance_monitor.py`，由新的性能測試框架取代
+
+### 注意
+- 此版本為重大架構升級，從 mypc 編譯器完全遷移到 Cython
+- 所有變更保持向後相容性，未編譯的 Python 版本仍可正常運行
+- 新的性能基線測試工具將為後續的性能優化提供數據支撐
+- 編譯過程包含完整的錯誤處理和性能監控機制
+
 ## [0.18.1] - 2025-11-13
 
 ### 修改

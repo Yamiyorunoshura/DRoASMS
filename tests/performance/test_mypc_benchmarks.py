@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import gc
 import time
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -61,6 +62,15 @@ try:
     MYPYC_STATE_COUNCIL_AVAILABLE = True
 except ImportError:
     MYPYC_STATE_COUNCIL_AVAILABLE = False
+
+try:
+    from src.cython_ext.economy_balance_models import BalanceSnapshot
+    from src.cython_ext.economy_transfer_models import TransferResult
+    from src.cython_ext.transfer_pool_core import TransferCheckStateStore
+
+    CYTHON_MODELS_AVAILABLE = True
+except ImportError:
+    CYTHON_MODELS_AVAILABLE = False
 
 
 @pytest.mark.skipif(not COUNCIL_AVAILABLE, reason="Council governance module not available")
@@ -566,6 +576,47 @@ class TestGovernanceModulesPerformanceBenchmark:
         assert (
             state_council_memory / objects_count < 300
         ), "StateCouncilConfig should be memory efficient"
+
+
+@pytest.mark.skipif(not CYTHON_MODELS_AVAILABLE, reason="Cython economy models not available")
+class TestCythonEconomyModels:
+    """Basic smoke tests for the new Cython-backed economy modules."""
+
+    def test_balance_snapshot_reacts_to_throttle(self) -> None:
+        future = datetime.now(timezone.utc)
+        snapshot = BalanceSnapshot(
+            guild_id=1,
+            member_id=2,
+            balance=500,
+            throttled_until=future,
+        )
+        assert snapshot.guild_id == 1
+        assert snapshot.member_id == 2
+        assert isinstance(snapshot.is_throttled, bool)
+
+    def test_transfer_result_protects_metadata(self) -> None:
+        data = {"note": "original"}
+        result = TransferResult(
+            transaction_id=uuid4(),
+            guild_id=1,
+            initiator_id=10,
+            target_id=20,
+            amount=100,
+            initiator_balance=900,
+            target_balance=100,
+            metadata=data,
+        )
+        data["note"] = "mutated"
+        assert result.metadata["note"] == "original"
+
+    def test_transfer_check_state_store_flow(self) -> None:
+        store = TransferCheckStateStore()
+        transfer_id = uuid4()
+        assert store.record(transfer_id, "balance", 1) is False
+        assert store.record(transfer_id, "cooldown", 1) is False
+        assert store.record(transfer_id, "daily_limit", 1) is True
+        assert store.all_passed(transfer_id) is True
+        assert store.remove(transfer_id) is True
 
 
 if __name__ == "__main__":

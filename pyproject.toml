@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "droasms-bot"
-version = "0.18.1"
+version = "0.19.0"
 description = "Discord bot economy foundations."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -25,6 +25,7 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "tenacity>=9.0.0",
     "dpy-paginator @ git+https://github.com/Seniatical/dpy-paginator/",
+    "Cython>=3.0.8,<4.0.0",
 ]
 
 [dependency-groups]
@@ -48,6 +49,7 @@ dev = [
     "types-setuptools>=80.9.0.20250822",
     "pylance>=0.39.0",
     "pyright>=1.1.407",
+    "psutil>=6.0.0",
 ]
 
 [tool.hatch.metadata]
@@ -218,192 +220,119 @@ exclude_lines = [
     "@(abc\\.)?abstractmethod",
 ]
 
-# 預先配置 mypyc（未在本變更中啟用實際編譯，僅提供基本設定以利未來優化）
-[tool.mypyc]
-# 經濟模塊 + 治理模塊啟用 mypyc 編譯（漸進式導入）
-# 如需擴大範圍，請更新此清單。
-targets = [
-    # 經濟模塊
-    "src/bot/services/adjustment_service.py",
-    "src/bot/services/transfer_service.py",
-    "src/bot/services/balance_service.py",
-    "src/bot/services/transfer_event_pool.py",
-    "src/bot/services/currency_config_service.py",
-    "src/db/gateway/economy_adjustments.py",
-    "src/db/gateway/economy_transfers.py",
-    "src/db/gateway/economy_queries.py",
-    "src/db/gateway/economy_pending_transfers.py",
-    "src/db/gateway/economy_configuration.py",
-    # 治理模塊（Phase 2 新增）
-    "src/db/gateway/council_governance.py",
-    "src/db/gateway/supreme_assembly_governance.py",
-    "src/db/gateway/state_council_governance_mypc.py",
-    "src/db/gateway/state_council_governance.py",
-    "src/bot/services/state_council_service.py",
-    "src/bot/services/supreme_assembly_service.py",
-]
+# 全新的 Cython 編譯器配置
+[tool.cython-compiler]
+build_dir = "build/cython"
+cache_dir = "build/cython/.cache"
+annotate = true
+language_level = 3
+parallel = "auto"  # auto模式測試結果顯示最佳性能（5.5%提升）
+force_rebuild = false
+line_directives = false
+profile = true  # 啟用性能分析以監控熱點函數
+baseline_file = "build/cython/baseline_pre_migration.json"
+environment_file = "build/cython/environment.json"
+test_command = ["pytest", "-m", "performance", "--maxfail=1", "-q"]
+summary_file = "build/cython/compile_report.json"
+metrics = ["compile_time_seconds", "success_rate", "peak_memory_mb"]
 
-# 編譯選項（預設在本地開發可輕量化，CI/生產可視需要調高）
-opt_level = 3
-debug_level = 1
-strict_dunder_typing = false
-log_trace = false
+[tool.cython-compiler.alert-thresholds]
+compile_time_percent = 10.0
+success_rate_percent = 2.0
+peak_memory_mb = 2048.0
 
-# 排除測試與遷移腳本
-exclude = ["tests", "src/db/migrations", "alembic"]
+[[tool.cython-compiler.targets]]
+name = "currency-config-models"
+group = "economy"
+source = "src/cython_ext/currency_models.pyx"
+module = "src.cython_ext.currency_models"
+description = "Dataclasses and helpers shared by currency configuration services"
+stage = "week1"
 
-# 治理模塊專用 mypyc 配置
-[tool.mypyc.governance]
-# 針對治理模塊的特定編譯選項
-opt_level = 3
-debug_level = 0  # 生產環境不包含調試符號
-strict_dunder_typing = true
-log_trace = false
+[[tool.cython-compiler.targets]]
+name = "economy-configuration-models"
+group = "economy"
+source = "src/cython_ext/economy_configuration_models.pyx"
+module = "src.cython_ext.economy_configuration_models"
+description = "Gateway dataclasses for economy configuration tables"
+stage = "week1"
 
-# 治理模塊特有目標
-governance_targets = [
-    "src/db/gateway/council_governance.py",
-    "src/db/gateway/supreme_assembly_governance.py",
-    "src/db/gateway/state_council_governance_mypc.py",
-    "src/db/gateway/state_council_governance.py",
-    "src/bot/services/state_council_service.py",
-    "src/bot/services/supreme_assembly_service.py",
-]
+[[tool.cython-compiler.targets]]
+name = "economy-query-models"
+group = "economy"
+source = "src/cython_ext/economy_query_models.pyx"
+module = "src.cython_ext.economy_query_models"
+description = "Balance and history record containers"
+stage = "week1"
 
-# 統一編譯器配置 - 整合 mypyc 和 mypc 配置
-[tool.unified-compiler]
-# 預設編譯後端 ("mypyc" 或 "mypc")
-default_backend = "mypyc"
+[[tool.cython-compiler.targets]]
+name = "council-governance-models"
+group = "governance"
+source = "src/cython_ext/council_governance_models.pyx"
+module = "src.cython_ext.council_governance_models"
+description = "Council governance dataclasses"
+stage = "week1"
 
-# 編譯優化級別 (0-3)
-opt_level = 3
+[[tool.cython-compiler.targets]]
+name = "supreme-assembly-governance-models"
+group = "governance"
+source = "src/cython_ext/supreme_assembly_models.pyx"
+module = "src.cython_ext.supreme_assembly_models"
+description = "Supreme assembly governance dataclasses"
+stage = "week1"
 
-# 是否包含調試符號
-debug = false
+[[tool.cython-compiler.targets]]
+name = "government-registry-models"
+group = "governance"
+source = "src/cython_ext/government_registry_models.pyx"
+module = "src.cython_ext.government_registry_models"
+description = "Shared registry DTOs"
+stage = "week1"
 
-# 是否顯示編譯警告
-show_warnings = true
+[[tool.cython-compiler.targets]]
+name = "economy-balance-models"
+group = "economy"
+source = "src/cython_ext/economy_balance_models.pyx"
+module = "src.cython_ext.economy_balance_models"
+description = "Balance snapshot/history data containers and helpers"
+stage = "week2"
 
-# 並行編譯工作進程數量 (0 表示自動檢測)
-parallel_jobs = 0
+[[tool.cython-compiler.targets]]
+name = "economy-transfer-models"
+group = "economy"
+source = "src/cython_ext/economy_transfer_models.pyx"
+module = "src.cython_ext.economy_transfer_models"
+description = "Transfer procedure/result conversion helpers"
+stage = "week2"
 
-# 編譯器選項
-cflags = ["-O3", "-march=native"]
+[[tool.cython-compiler.targets]]
+name = "economy-adjustment-models"
+group = "economy"
+source = "src/cython_ext/economy_adjustment_models.pyx"
+module = "src.cython_ext.economy_adjustment_models"
+description = "Adjustment procedure/result conversion helpers"
+stage = "week2"
 
-# 模組配置
-[tool.unified-compiler.modules]
-# 經濟模組 - 使用 mypyc 編譯器
-economy_modules = [
-    "src.bot.services.adjustment_service",
-    "src.bot.services.transfer_service",
-    "src.bot.services.balance_service",
-    "src.bot.services.transfer_event_pool",
-    "src.bot.services.currency_config_service",
-    "src.db.gateway.economy_adjustments",
-    "src.db.gateway.economy_transfers",
-    "src.db.gateway.economy_queries",
-    "src.db.gateway.economy_pending_transfers",
-    "src.db.gateway.economy_configuration",
-]
+[[tool.cython-compiler.targets]]
+name = "pending-transfer-models"
+group = "economy"
+source = "src/cython_ext/pending_transfer_models.pyx"
+module = "src.cython_ext.pending_transfer_models"
+description = "Pending transfer record container"
+stage = "week2"
 
-# 治理模組 - 使用 mypc 編譯器
-governance_modules = [
-    "src.db.gateway.council_governance",
-    "src.db.gateway.supreme_assembly_governance",
-    "src.db.gateway.state_council_governance_mypc",
-    "src.db.gateway.state_council_governance",
-    "src.bot.services.state_council_service",
-    "src.bot.services.supreme_assembly_service",
-]
+[[tool.cython-compiler.targets]]
+name = "transfer-pool-core"
+group = "economy"
+source = "src/cython_ext/transfer_pool_core.pyx"
+module = "src.cython_ext.transfer_pool_core"
+description = "Transfer event pool check state tracker"
+stage = "week2"
 
-# 排除的模組
-exclude_modules = [
-]
-
-# 編譯後端配置
-[tool.unified-compiler.backends.mypyc]
-# mypyc 特定配置
-opt_level = 3
-debug_level = 1
-strict_dunder_typing = false
-log_trace = false
-strip_asserts = true
-
-[tool.unified-compiler.backends.mypc]
-# mypc 特定配置
-opt_level = 2
-debug_level = 0
-strict_dunder_typing = true
-log_trace = false
-
-# 性能目標
-[tool.unified-compiler.performance]
-# 目標性能提升倍數 (相對於純 Python)
-target_speedup = 5.0
-
-# 記憶體使用目標 (相對於純 Python)
-memory_efficiency = 0.8
-
-# 啟動時間目標 (毫秒)
-startup_time_target = 100
-
-# 輸出配置
-[tool.unified-compiler.output]
-# 編譯後模組的輸出目錄
-build_dir = "build/unified"
-
-# 是否保留中間文件
-keep_intermediate = false
-
-# 是否生成性能報告
-generate_profile = true
-
-# 輸出日誌級別
-log_level = "INFO"
-
-# 測試配置
-[tool.unified-compiler.testing]
-# 編譯後是否自動運行測試
-auto_test = true
-
-# 性能基準測試
-benchmark_tests = [
-    "tests/performance/test_mypc_benchmarks.py",
-]
-
-# 兼容性測試
-compatibility_tests = [
-    "tests/unit/test_council_governance.py",
-    "tests/unit/test_supreme_assembly_governance.py",
-    "tests/unit/test_state_council_service.py",
-]
-
-# 部署配置
-[tool.unified-compiler.deployment]
-# 生產環境部署策略
-strategy = "gradual"
-
-# 是否保留 Python 版本作為備份
-keep_python_fallback = true
-
-# 回滾條件 (如果性能下降超過此百分比，則回滾)
-rollback_threshold = 20
-
-# 監控配置
-[tool.unified-compiler.monitoring]
-# 是否啟用性能監控
-enable_monitoring = true
-
-# 性能基準檔案與回歸閾值
-baseline_file = "build/unified/perf_baseline.json"
-regression_threshold_percent = 5.0
-
-# 監控指標
-metrics = [
-    "compile_time_seconds",
-    "success_rate",
-    "peak_memory_mb",
-]
-
-# 警告閾值（絕對值/百分比）
-alert_thresholds = { compile_time_percent = 10.0, success_rate_percent = 2.0, peak_memory_mb = 2048.0 }
+[[tool.cython-compiler.targets]]
+name = "state-council-models"
+group = "governance"
+source = "src/cython_ext/state_council_models.pyx"
+module = "src.cython_ext.state_council_models"
+description = "State council governance/shared DTOs"
+stage = "week2"

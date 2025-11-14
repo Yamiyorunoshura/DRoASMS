@@ -106,33 +106,32 @@ unified-migrate-dry-run: ## 試運行配置遷移（不修改文件）
 	@echo "試運行配置遷移..."
 	uv run python scripts/migrate_unified_config.py --dry-run
 
-unified-compile: ## 使用統一編譯器編譯所有模組
-	@echo "使用統一編譯器編譯模組..."
+unified-compile: ## 使用 Cython 編譯器編譯所有模組
+	@echo "使用 Cython 編譯器編譯模組..."
 	uv run python scripts/compile_modules.py compile
 
-unified-compile-test: ## 測試統一編譯器配置
-	@echo "測試統一編譯器配置..."
+unified-compile-test: ## 執行 Cython 專用測試
+	@echo "執行 Cython 專用測試..."
 	uv run python scripts/compile_modules.py test
 
-unified-compile-clean: ## 清理統一編譯器文件
-	@echo "清理統一編譯器文件..."
+unified-compile-clean: ## 清理 Cython 產物
+	@echo "清理 Cython 產物..."
 	uv run python scripts/compile_modules.py clean
 
 unified-refresh-baseline: ## 重新編譯並刷新性能監控基線（確保結果穩定後再執行）
-	@echo "刷新統一編譯器性能基線..."
+	@echo "刷新 Cython 編譯性能基線..."
 	uv run python scripts/compile_modules.py compile --refresh-baseline
 
-unified-status: ## 顯示統一編譯器狀態
-	@echo "=== 統一編譯器狀態 ==="
-	@if [ -f "build/unified/compile_report.json" ]; then \
+unified-status: ## 顯示 Cython 編譯狀態
+	@echo "=== Cython 編譯狀態 ==="
+	@if [ -f "build/cython/compile_report.json" ]; then \
 		echo "編譯報告: ✅ 存在"; \
-		echo "編譯時間: $$(grep '"compile_time_seconds"' build/unified/compile_report.json | cut -d':' -f2 | tr -d ' ,')"; \
-		echo "成功率: $$(grep '"success_rate"' build/unified/compile_report.json | cut -d':' -f2 | tr -d ' ,')"; \
+		cat build/cython/compile_report.json; \
 	else \
 		echo "編譯報告: ❌ 不存在"; \
 	fi
-	@if [ -d "build/unified" ]; then \
-		echo "編譯模組: $$(find build/unified -name "*.so" | wc -l | tr -d ' ') 個"; \
+	@if [ -d "build/cython" ]; then \
+		echo "編譯模組: $$(find build/cython -name "*.so" | wc -l | tr -d ' ') 個"; \
 	else \
 		echo "編譯模組: 0 個"; \
 	fi

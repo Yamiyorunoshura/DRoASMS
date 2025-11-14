@@ -1,0 +1,55 @@
+{
+  "timestamp": "2025-11-14T10:27:24.530513",
+  "python_version": "3.13.8 (main, Oct 10 2025, 12:46:18) [Clang 20.1.4 ]",
+  "modules": {
+    "src.cython_ext.currency_models": {
+      "import_time_seconds": 0.020804882049560547,
+      "memory_usage_mb": 20.96875,
+      "import_successful": true
+    },
+    "src.cython_ext.economy_configuration_models": {
+      "import_time_seconds": 0.018713712692260742,
+      "memory_usage_mb": 20.96875,
+      "import_successful": true
+    },
+    "src.cython_ext.economy_query_models": {
+      "import_time_seconds": 0.020315170288085938,
+      "memory_usage_mb": 21.03125,
+      "import_successful": true
+    },
+    "src.cython_ext.council_governance_models": {
+      "import_time_seconds": 0.019730091094970703,
+      "memory_usage_mb": 21.03125,
+      "import_successful": true
+    },
+    "src.cython_ext.supreme_assembly_models": {
+      "import_time_seconds": 0.019959211349487305,
+      "memory_usage_mb": 21.046875,
+      "import_successful": true
+    },
+    "src.cython_ext.government_registry_models": {
+      "import_time_seconds": 0.018201828002929688,
+      "memory_usage_mb": 21.0625,
+      "import_successful": true
+    }
+  },
+  "summary": {
+    "total_modules": 6,
+    "successful_imports": 6,
+    "average_import_time": 0.019620815912882488,
+    "total_memory_usage": 126.109375,
+    "average_memory_usage": 21.018229166666668
+  },
+  "meta": {
+    "modules": [
+      "src.cython_ext.currency_models",
+      "src.cython_ext.economy_configuration_models",
+      "src.cython_ext.economy_query_models",
+      "src.cython_ext.council_governance_models",
+      "src.cython_ext.supreme_assembly_models",
+      "src.cython_ext.government_registry_models"
+    ],
+    "pyproject": "pyproject.toml",
+    "cwd": "/Users/tszkinlai/Coding/DRoASMS"
+  }
+}

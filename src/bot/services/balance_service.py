@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Sequence, TypeVar, cast
-from uuid import UUID
+from datetime import datetime
+from typing import Awaitable, Callable, TypeVar, cast
 
-from mypy_extensions import mypyc_attr
-
+from src.cython_ext.economy_balance_models import (
+    BalanceSnapshot,
+    HistoryEntry,
+    HistoryPage,
+    ensure_view_permission,
+    make_balance_snapshot,
+    make_history_entry,
+)
 from src.db.gateway.economy_queries import (
     BalanceRecord,
     EconomyQueryGateway,
@@ -19,89 +23,12 @@ from src.infra.types.db import ConnectionProtocol, PoolProtocol
 T = TypeVar("T")
 
 
-@mypyc_attr(native_class=False)
 class BalanceError(RuntimeError):
     """Base error raised for balance-related failures."""
 
 
-@mypyc_attr(native_class=False)
 class BalancePermissionError(BalanceError):
     """Raised when a caller attempts to access another member without permission."""
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class BalanceSnapshot:
-    """Value object describing a member's current balance state."""
-
-    guild_id: int = 0
-    member_id: int = 0
-    balance: int = 0
-    # 使用 default_factory 以避免在模組匯入時計算時間
-    last_modified_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    throttled_until: datetime | None = None
-
-    def __init__(
-        self,
-        *,
-        guild_id: int = 0,
-        member_id: int = 0,
-        balance: int = 0,
-        last_modified_at: datetime | None = None,
-        throttled_until: datetime | None = None,
-        # 測試相容性：允許傳入 is_throttled 但不存儲（改用屬性計算）
-        is_throttled: bool | None = None,
-    ) -> None:
-        if last_modified_at is None:
-            last_modified_at = datetime.now(timezone.utc)
-
-        object.__setattr__(self, "guild_id", guild_id)
-        object.__setattr__(self, "member_id", member_id)
-        object.__setattr__(self, "balance", balance)
-        object.__setattr__(self, "last_modified_at", last_modified_at)
-        object.__setattr__(self, "throttled_until", throttled_until)
-
-    @property
-    def is_throttled(self) -> bool:
-        """Return True if the member remains under an active throttle window."""
-        if self.throttled_until is None:
-            return False
-        return self.throttled_until > datetime.now(tz=timezone.utc)
-
-
-@dataclass(frozen=True, slots=True)
-class HistoryEntry:
-    """Represents a single transaction affecting the requested member."""
-
-    transaction_id: UUID
-    guild_id: int
-    member_id: int
-    initiator_id: int
-    target_id: int | None
-    amount: int
-    direction: str
-    reason: str | None
-    created_at: datetime
-    metadata: dict[str, Any]
-    balance_after_initiator: int
-    balance_after_target: int | None
-
-    @property
-    def is_credit(self) -> bool:
-        """True when the member received funds for this transaction."""
-        return self.target_id == self.member_id
-
-    @property
-    def is_debit(self) -> bool:
-        """True when the member spent funds for this transaction."""
-        return self.initiator_id == self.member_id and not self.is_credit
-
-
-@dataclass(frozen=True, slots=True)
-class HistoryPage:
-    """Paginated slice of transaction history."""
-
-    items: Sequence[HistoryEntry]
-    next_cursor: datetime | None
 
 
 class BalanceService:
@@ -193,10 +120,12 @@ class BalanceService:
         target_id: int,
         can_view_others: bool,
     ) -> None:
-        if requester_id != target_id and not can_view_others:
-            raise BalancePermissionError(
-                "You do not have permission to view other members' balances."
-            )
+        ensure_view_permission(
+            requester_id,
+            target_id,
+            can_view_others,
+            BalancePermissionError,
+        )
 
     async def _with_connection(
         self,
@@ -210,30 +139,11 @@ class BalanceService:
             return await func(pooled_connection)
 
     def _to_snapshot(self, record: BalanceRecord) -> BalanceSnapshot:
-        return BalanceSnapshot(
-            guild_id=record.guild_id,
-            member_id=record.member_id,
-            balance=record.balance,
-            last_modified_at=record.last_modified_at,
-            throttled_until=record.throttled_until,
-        )
+        return make_balance_snapshot(record)
 
     def _to_history_entry(
         self,
         record: HistoryRecord,
         member_id: int,
     ) -> HistoryEntry:
-        return HistoryEntry(
-            transaction_id=record.transaction_id,
-            guild_id=record.guild_id,
-            member_id=member_id,
-            initiator_id=record.initiator_id,
-            target_id=record.target_id,
-            amount=record.amount,
-            direction=record.direction,
-            reason=record.reason,
-            created_at=record.created_at,
-            metadata=dict(record.metadata or {}),
-            balance_after_initiator=record.balance_after_initiator,
-            balance_after_target=record.balance_after_target,
-        )
+        return make_history_entry(record, member_id)

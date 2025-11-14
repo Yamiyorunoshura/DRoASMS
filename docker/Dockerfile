@@ -27,7 +27,7 @@ RUN uv venv .venv \
     && . ./.venv/bin/activate \
     && uv sync --frozen --no-dev
 
-# 單獨建置 dev 工具環境供 mypyc 編譯使用，避免在執行期保留多餘套件
+# 單獨建置 dev 工具環境供 Cython 編譯使用，避免在執行期保留多餘套件
 RUN uv venv /tmp/dev-venv \
     && . /tmp/dev-venv/bin/activate \
     && uv sync --frozen --group dev --active
@@ -39,7 +39,7 @@ RUN mkdir -p build/unified
 
 # 以 dev 環境執行統一編譯腳本並清理暫存
 RUN . /tmp/dev-venv/bin/activate \
-    && python scripts/compile_modules.py compile --project-root /app \
+    && python scripts/compile_modules.py compile \
     && rm -rf /tmp/dev-venv backup/python_modules
 
 FROM python:3.13-slim AS runtime

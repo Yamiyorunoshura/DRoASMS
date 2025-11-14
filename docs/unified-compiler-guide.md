@@ -1,33 +1,65 @@
-# 統一編譯器指南
+# Cython 編譯指南
 
-統一編譯器將原本散落於 `pyproject.toml`、`mypc.toml` 與多個腳本中的編譯設定整合為單一入口，並提供性能監控、基線比較與回歸偵測。本文檔說明如何遷移、編譯、監控以及維護統一配置。
+新的 Cython 編譯器取代 mypyc/mypc 雙後端，所有設定集中在 `pyproject.toml` 的 `[tool.cython-compiler]`。本指南涵蓋設定檔格式、常用指令、性能基線以及 CI 中的使用方式。
 
-## 遷移流程
+## 核心組件
 
-1. `make unified-migrate-dry-run`：預覽 pyproject 將新增/更新的 `[tool.unified-compiler]` 區段。
-2. `make unified-migrate`：實際寫入統一配置並在 `backup/config_migration/` 產生備份。
-3. 確認 `pyproject.toml` 中的模組列表、後端設定與 `monitoring` 參數是否符合需求。
-4. 刪除 `mypc.toml`（若尚未移除），並確保 CI/部署腳本不再引用舊檔。
-5. 依據下節流程執行測試與編譯以驗證遷移結果。
+- **設定檔**：`pyproject.toml` 中的 `[tool.cython-compiler]` 描述建置資料夾、併發程度、測試指令與 target 列表。
+- **腳本**：`scripts/compile_modules.py` 負責編譯、清理、查詢狀態與執行測試。
+- **產物**：所有 `.so` 先寫入 `build/cython/lib/<target>/`，再複製到 `src/cython_ext` 以便執行期直接匯入；純 Python fallback 仍可正常運作。
 
-## 編譯與測試
+### `pyproject.toml` 片段
 
-- `make unified-compile`：根據 `[tool.unified-compiler]` 編譯所有模組，並自動備份純 Python 版本。
-- `make unified-compile-test`：只執行設定中的兼容性/性能測試，用於 CI smoke 或本地驗證。
-- `make unified-compile-clean`：清理 `build/unified`、測試報告與暫存檔。
-- `make unified-status`：讀取 `build/unified/compile_report.json`，顯示最新的編譯耗時與成功率。
-- `make unified-refresh-baseline`：在確認結果穩定後刷新性能基線（詳見下一節）。
-## 性能監控與回歸偵測
+```toml
+[tool.cython-compiler]
+build_dir = "build/cython"
+cache_dir = "build/cython/.cache"
+parallel = "auto"
+annotate = true
+language_level = 3
+summary_file = "build/cython/compile_report.json"
+test_command = ["pytest", "-m", "performance", "-q"]
 
-統一編譯器在 `build/unified/compile_report.json` 中輸出兩段資訊：
+[[tool.cython-compiler.targets]]
+name = "currency-config-models"
+module = "src.cython_ext.currency_models"
+source = "src/cython_ext/currency_models.pyx"
+group = "economy"
+stage = "week1"
+description = "Currency configuration dataclasses"
+```
 
-- `performance`：包含本次編譯耗時、成功率、峰值記憶體與編譯上下文。
-- `monitoring`：紀錄是否建立/刷新基線、偵測到的回歸項目，以及絕對警示（例如峰值記憶體超標）。
+## 常用指令
 
-基線檔路徑由 `[tool.unified-compiler.monitoring].baseline_file` 控制，預設為 `build/unified/perf_baseline.json`。當首次執行或舊檔不存在時會自動建立；若需要更新基準，請在穩定版本上執行 `make unified-refresh-baseline`。若監控偵測到超過 `regression_threshold_percent` 的退化，`scripts/compile_modules.py` 會回傳非零狀態以阻止 CI 合併。
+| 指令 | 作法 |
+| --- | --- |
+| 編譯全部 | `make unified-compile` 或 `python scripts/compile_modules.py compile` |
+| 指定 target | `python scripts/compile_modules.py compile --module currency-config-models` |
+| 清理產物 | `make unified-compile-clean` 或 `python scripts/compile_modules.py clean` |
+| 狀態總覽 | `make unified-status` 或 `python scripts/compile_modules.py status` |
+| 重新建立性能基線 | `python scripts/compile_modules.py compile --refresh-baseline` |
+| 專用測試 | `make unified-compile-test`（呼叫 `[tool.cython-compiler].test_command`） |
 
-## 舊腳本與降級策略
+## 性能基線與監控
 
-- 原 `scripts/compile_governance_modules.py`、`scripts/mypyc_economy_setup.py` 與 `scripts/deploy_governance_modules.sh` 已移至 `scripts/archive/`，並留下一個會提示錯誤的 stub。
-- 如需比對歷史邏輯，可直接檢視該目錄的原始碼；新流程僅支援 `scripts/compile_modules.py`。
-- 若需要回退，可保留 `build/unified` 生成的 `.so` 之外，仍可將 `deployment.keep_python_fallback` 設為 `true` 以確保 Python 版本存在。
+- `scripts/performance_baseline_test.py` 會從 `pyproject` 自動載入 target 列表並量測匯入時間／記憶體，輸出到 `build/cython/baseline_pre_migration.json`。
+- `compile` 指令加上 `--refresh-baseline` 時會在全部 target 成功後自動執行上述腳本。
+- `build/cython/compile_report.json` 儲存每次編譯狀態，可配合 `make unified-status` 查看最近紀錄。
+
+## CI 調整
+
+1. Workflow 直接執行 `python scripts/compile_modules.py compile --force`，不再依賴 `mypc.toml`。
+2. 編譯完成後可將 `build/cython/lib` 及報告上傳成 artifact；部署階段透過 artifact 或本地重新編譯取得 `.so`。
+3. 需要性能監控時，在 CI 中追加 `--refresh-baseline` 或獨立呼叫 `scripts/performance_baseline_test.py`。
+
+## 疑難排解
+
+- **未安裝 Cython**：`uv pip install 'Cython>=3.0.8,<4.0.0'` 或 `uv sync`。
+- **匯入 `.so` 失敗**：檢查 target `module` 路徑是否以 `src.` 開頭並與實際檔案結構一致；若懷疑快取，改用 `--force` 重新編譯。
+- **仍需純 Python 版本**：刪除 `src/cython_ext/*.so` 或執行 `make unified-compile-clean` 即可回退到 fallback 模組。
+
+## 從舊流程遷移
+
+1. 將原本 `mypc.toml` 或 `tool.unified-compiler` 的模組清單搬到 `[tool.cython-compiler.targets]`。
+2. 刪除已不用的 mypyc 專屬腳本（仍保留於 `backup/mypyc_legacy/` 供比對）。
+3. 更新文件與 CI（見上方）後，執行 `make unified-compile` 確認產物與性能基線。

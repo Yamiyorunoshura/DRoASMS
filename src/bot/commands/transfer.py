@@ -313,7 +313,8 @@ def _format_success_message(
         f"✅ 已成功將 {result.amount:,} {currency_display} 轉給 {_mention_of(target)}。",
         f"👉 你目前的餘額為 {result.initiator_balance:,} {currency_display}。",
     ]
-    reason = result.metadata.get("reason")
+    metadata = result.metadata or {}
+    reason = metadata.get("reason")
     if reason:
         parts.append(f"📝 備註：{reason}")
     return "\n".join(parts)

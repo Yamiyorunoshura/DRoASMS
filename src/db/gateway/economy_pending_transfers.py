@@ -1,50 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+# noqa: D104
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-import asyncpg
-
+from src.cython_ext.pending_transfer_models import (
+    PendingTransfer,
+    build_pending_transfer,
+)
 from src.infra.types.db import ConnectionProtocol
-
-
-@dataclass(frozen=True, slots=True)
-class PendingTransfer:
-    """Data class representing a pending transfer record."""
-
-    transfer_id: UUID
-    guild_id: int
-    initiator_id: int
-    target_id: int
-    amount: int
-    status: str
-    checks: dict[str, Any]
-    retry_count: int
-    expires_at: datetime | None
-    metadata: dict[str, Any]
-    created_at: datetime
-    updated_at: datetime
-
-    @classmethod
-    def from_record(cls, record: asyncpg.Record) -> "PendingTransfer":
-        checks: dict[str, Any] = dict(record["checks"] or {})
-        metadata: dict[str, Any] = dict(record["metadata"] or {})
-        return cls(
-            transfer_id=record["transfer_id"],
-            guild_id=record["guild_id"],
-            initiator_id=record["initiator_id"],
-            target_id=record["target_id"],
-            amount=record["amount"],
-            status=str(record["status"]),
-            checks=checks,
-            retry_count=record["retry_count"],
-            expires_at=record["expires_at"],
-            metadata=metadata,
-            created_at=record["created_at"],
-            updated_at=record["updated_at"],
-        )
 
 
 class PendingTransferGateway:
@@ -93,7 +58,7 @@ class PendingTransferGateway:
         record = await connection.fetchrow(sql, transfer_id)
         if record is None:
             return None
-        return PendingTransfer.from_record(record)
+        return build_pending_transfer(record)
 
     async def list_pending_transfers(
         self,
@@ -107,7 +72,7 @@ class PendingTransferGateway:
         """List pending transfers with filtering and pagination."""
         sql = f"SELECT * FROM {self._schema}.fn_list_pending_transfers($1, $2, $3, $4)"
         records = await connection.fetch(sql, guild_id, status, limit, offset)
-        return [PendingTransfer.from_record(record) for record in records]
+        return [build_pending_transfer(record) for record in records]
 
     async def update_status(
         self,

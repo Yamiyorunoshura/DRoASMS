@@ -1,140 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Sequence
-from uuid import UUID
 
+from src.cython_ext.state_council_models import (
+    CurrencyIssuance,
+    DepartmentConfig,
+    GovernmentAccount,
+    IdentityRecord,
+    InterdepartmentTransfer,
+    StateCouncilConfig,
+    TaxRecord,
+    WelfareDisbursement,
+)
 from src.infra.types.db import ConnectionProtocol
-
-# --- Data Models ---
-
-
-@dataclass(frozen=True, slots=True)
-class StateCouncilConfig:
-    """國務院（伺服器）層級的治理設定。
-
-    注意：`citizen_role_id` 與 `suspect_role_id` 在有些資料庫版本/測試替身中
-    可能不存在，因此這兩個欄位必須是可選且具備預設值，以相容舊資料與單元測試。
-    將其移到最後並提供 `None` 預設，可讓測試以關鍵字參數省略它們。
-    """
-
-    guild_id: int
-    leader_id: int | None
-    leader_role_id: int | None
-    internal_affairs_account_id: int
-    finance_account_id: int
-    security_account_id: int
-    central_bank_account_id: int
-    created_at: datetime
-    updated_at: datetime
-    # 可選欄位放最後並提供預設值，避免 KeyError/TypeError
-    citizen_role_id: int | None = None
-    suspect_role_id: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class DepartmentConfig:
-    id: int
-    guild_id: int
-    department: str
-    role_id: int | None
-    welfare_amount: int
-    welfare_interval_hours: int
-    tax_rate_basis: int
-    tax_rate_percent: int
-    max_issuance_per_month: int
-    created_at: datetime
-    updated_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class GovernmentAccount:
-    account_id: int
-    guild_id: int
-    department: str
-    balance: int
-    created_at: datetime
-    updated_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class WelfareDisbursement:
-    """Mypc-compatible version of WelfareDisbursement.
-
-    Simplified for mypyc compatibility - removed init=False and custom __init__.
-    """
-
-    disbursement_id: UUID | int
-    guild_id: int
-    recipient_id: int
-    amount: int
-    disbursement_type: str | None = None
-    reference_id: str | None = None
-    disbursed_at: datetime | None = None
-    period: str | None = None
-    reason: str | None = None
-    disbursed_by: int | None = None
-    created_at: datetime | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class TaxRecord:
-    """Mypc-compatible version of TaxRecord.
-
-    Simplified for mypyc compatibility - removed init=False and custom __init__.
-    """
-
-    tax_id: UUID | int
-    guild_id: int
-    taxpayer_id: int
-    tax_amount: int
-    tax_type: str
-    assessment_period: str
-    taxable_amount: int | None = None
-    tax_rate_percent: int | None = None
-    collected_at: datetime | None = None
-    collected_by: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class IdentityRecord:
-    record_id: UUID
-    guild_id: int
-    target_id: int
-    action: str
-    reason: str | None
-    performed_by: int
-    performed_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class CurrencyIssuance:
-    """Mypc-compatible version of CurrencyIssuance.
-
-    Simplified for mypyc compatibility - removed init=False and custom __init__.
-    """
-
-    issuance_id: UUID | int
-    guild_id: int
-    amount: int
-    reason: str
-    month_period: str
-    performed_by: int | None = None
-    issued_at: datetime | None = None
-    created_at: datetime | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class InterdepartmentTransfer:
-    transfer_id: UUID
-    guild_id: int
-    from_department: str
-    to_department: str
-    amount: int
-    reason: str
-    performed_by: int
-    transferred_at: datetime
 
 
 def _safe_row_get(row: Any, key: str, default: Any | None = None) -> Any | None:
