@@ -186,14 +186,14 @@ class _FakeGateway(StateCouncilGovernanceGateway):
         tax_id = self._next_id
         self._next_id += 1
         tax = TaxRecord(
-            id=tax_id,
             guild_id=guild_id,
             taxpayer_id=taxpayer_id,
             tax_amount=tax_amount,
             tax_type=tax_type,
             assessment_period=assessment_period,
             collected_by=collected_by,
-            created_at=datetime.now(timezone.utc),
+            id=tax_id,
+            collected_at=datetime.now(timezone.utc),
         )
         self._taxes[tax_id] = tax
         return tax
@@ -236,13 +236,13 @@ class _FakeGateway(StateCouncilGovernanceGateway):
         issuance_id = self._next_id
         self._next_id += 1
         issuance = CurrencyIssuance(
-            id=issuance_id,
+            issuance_id=issuance_id,
             guild_id=guild_id,
             amount=amount,
             reason=reason,
             month_period=month_period,
-            issued_by=issued_by,
-            created_at=datetime.now(timezone.utc),
+            performed_by=issued_by,
+            issued_at=datetime.now(timezone.utc),
         )
         self._issuances[issuance_id] = issuance
         return issuance

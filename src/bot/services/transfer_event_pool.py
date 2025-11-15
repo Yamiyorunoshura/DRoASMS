@@ -37,6 +37,16 @@ class TransferEventPoolCoordinator:
         self._cleanup_task: asyncio.Task[None] | None = None
         self._running = False
 
+    @property
+    def _check_states(self) -> Mapping[UUID, Mapping[str, int]]:
+        """向後相容的檢查狀態快照，供既有單元測試使用。
+
+        內部實作已改為使用 TransferCheckStateStore，但測試仍直接存取
+        `_check_states` 字典，因此提供唯讀樣式的對應視圖。
+        """
+        # snapshot() 會回傳一個淺拷貝，避免外部程式意外修改內部狀態。
+        return cast(Mapping[UUID, Mapping[str, int]], self._check_store.snapshot())
+
     async def start(self) -> None:
         """Start the coordinator and begin periodic cleanup."""
         if self._running:

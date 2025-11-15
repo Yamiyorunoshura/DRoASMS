@@ -29,6 +29,10 @@ class TransferCheckStateStore:
             return False
         return all(state.get(name) == 1 for name in self._required)
 
+    def snapshot(self) -> Mapping[object, Mapping[str, int]]:
+        """Return a shallow copy of all states for inspection/testing."""
+        return {k: dict(v) for k, v in self._states.items()}
+
     def remove(self, transfer_id: object) -> bool:
         return self._states.pop(transfer_id, None) is not None
 

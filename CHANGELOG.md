@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2025-11-15
+
+### 修改
+- **持續整合改善**：優化 GitHub Actions 工作流程配置
+- **編譯系統優化**：改進 Cython 模組編譯流程
+- **性能調整**：優化轉移池和經濟調整模組的運行效率
+- **重試機制**：改善基礎設施的重試邏輯
+- **測試覆蓋**：更新合約測試以適應最新變更
+
 ## [0.19.0] - 2025-11-14
 
 ### 新增

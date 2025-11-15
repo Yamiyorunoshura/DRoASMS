@@ -24,6 +24,11 @@ class PendingTransfer:
     created_at: datetime
     updated_at: datetime
 
+    @classmethod
+    def from_record(cls, record: Any) -> "PendingTransfer":
+        """建構 PendingTransfer，提供與 gateway 測試相容的簡易工廠。"""
+        return build_pending_transfer(record)
+
 
 class _PendingTransferRecordLike(Protocol):
     transfer_id: UUID
@@ -41,15 +46,30 @@ class _PendingTransferRecordLike(Protocol):
 
 
 def _as_pending_transfer_record_like(record: Any) -> _PendingTransferRecordLike:
-    if isinstance(record, dict):
-        return cast(_PendingTransferRecordLike, SimpleNamespace(**record))
+    # 已經是具備屬性存取的物件（例如測試中的 MagicMock）
+    if hasattr(record, "transfer_id") and hasattr(record, "guild_id"):
+        return cast(_PendingTransferRecordLike, record)
+
+    if isinstance(record, Mapping):
+        # asyncpg.Record 或一般 dict 皆實作 Mapping 介面：
+        # 轉成 SimpleNamespace 以支援屬性存取模式。
+        mapping = cast(Mapping[str, Any], record)
+        return cast(_PendingTransferRecordLike, SimpleNamespace(**dict(mapping)))
+
+    # 部分實作僅提供 keys/__getitem__，但未註冊為 Mapping
+    if hasattr(record, "keys") and hasattr(record, "__getitem__"):
+        data: dict[str, Any] = {str(k): record[k] for k in record.keys()}
+        return cast(_PendingTransferRecordLike, SimpleNamespace(**data))
+
     return cast(_PendingTransferRecordLike, record)
 
 
 def build_pending_transfer(record: Any) -> PendingTransfer:
     rec = _as_pending_transfer_record_like(record)
-    checks = dict(rec.checks or {})
-    metadata = dict(rec.metadata or {})
+    # 某些查詢（例如合約測試中的 fn_get_pending_transfer）可能尚未包含 checks 欄位，
+    # 因此這裡以 getattr 提供向後相容的預設值。
+    checks = dict(getattr(rec, "checks", {}) or {})
+    metadata = dict(getattr(rec, "metadata", {}) or {})
     return PendingTransfer(
         transfer_id=rec.transfer_id,
         guild_id=int(rec.guild_id),

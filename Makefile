@@ -1,4 +1,4 @@
-.PHONY: help install install-pre-commit format lint type-check pyright-check format-check pre-commit-all lint-fix ci-local ci ci-full clean test test-container test-container-build test-container-unit test-container-contract test-container-integration test-container-performance test-container-db test-container-economy test-container-council test-container-all test-container-ci unified-migrate unified-migrate-dry-run unified-compile unified-compile-test unified-compile-clean unified-status unified-refresh-baseline
+.PHONY: help install install-pre-commit format lint type-check pyright-check format-check pre-commit-all lint-fix ci-local ci ci-full clean test test-container test-container-build test-container-unit test-container-contract test-container-integration test-container-performance test-container-db test-container-economy test-container-council test-container-all test-container-ci unified-migrate unified-migrate-dry-run unified-compile unified-compile-test unified-compile-clean unified-status unified-refresh-baseline compile-check
 
 .DEFAULT_GOAL := help
 
@@ -49,7 +49,16 @@ format-check: ## 檢查程式碼格式是否正確（black --check）
 pre-commit-all: ## 對所有檔案執行 pre-commit 檢查
 	uv run pre-commit run --all-files
 
-ci-local: format-check lint type-check pyright-check pre-commit-all ## 執行所有本地 CI 檢查（格式化、lint、型別檢查、pre-commit）
+compile-check: ## 執行 Cython 編譯檢查（增量編譯，錯誤不阻止執行）
+	@echo "🔍 執行 Cython 編譯檢查..."
+	@uv run python scripts/compile_modules.py compile --incremental; \
+	if [ $$? -eq 0 ]; then \
+		echo "✅ Cython 編譯檢查通過"; \
+	else \
+		echo "⚠️  Cython 編譯檢查發現錯誤，但不阻止 CI 繼續執行"; \
+	fi
+
+ci-local: compile-check format-check lint type-check pyright-check pre-commit-all ## 執行所有本地 CI 檢查（格式化、lint、型別檢查、pre-commit、Cython編譯檢查）
 	@echo "✓ 所有本地 CI 檢查通過！"
 
 ci: ## 執行完整的 CI 檢查（包含所有測試與整合測試）

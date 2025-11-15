@@ -623,7 +623,10 @@ make pyright-check
 # 檢查格式化（不修改檔案）
 make format-check
 
-# 執行所有本地 CI 檢查（格式化、lint、MyPy、Pyright、pre-commit）
+# 執行 Cython 編譯檢查（增量編譯，錯誤不阻止執行）
+make compile-check
+
+# 執行所有本地 CI 檢查（格式化、lint、MyPy、Pyright、pre-commit、Cython編譯檢查）
 make ci-local
 
 # 執行所有測試（不含整合測試）

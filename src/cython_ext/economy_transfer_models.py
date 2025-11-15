@@ -59,15 +59,25 @@ class _TransferRecordLike(Protocol):
 
 
 def _as_transfer_record_like(record: Any) -> _TransferRecordLike:
-    if isinstance(record, dict):
-        return cast(_TransferRecordLike, SimpleNamespace(**record))
+    # 已經是具備屬性存取的物件（例如測試中的 MagicMock）
+    if hasattr(record, "transaction_id") and hasattr(record, "guild_id"):
+        return cast(_TransferRecordLike, record)
+
+    if isinstance(record, Mapping):
+        mapping = cast(Mapping[str, Any], record)
+        return cast(_TransferRecordLike, SimpleNamespace(**dict(mapping)))
+
+    if hasattr(record, "keys") and hasattr(record, "__getitem__"):
+        data: dict[str, Any] = {str(k): record[k] for k in record.keys()}
+        return cast(_TransferRecordLike, SimpleNamespace(**data))
+
     return cast(_TransferRecordLike, record)
 
 
 def build_transfer_procedure_result(record: Any) -> TransferProcedureResult:
     # Create deep copy of metadata to prevent mutation
     rec = _as_transfer_record_like(record)
-    metadata = dict(rec.metadata or {})
+    metadata = dict(getattr(rec, "metadata", {}) or {})
     return TransferProcedureResult(
         transaction_id=rec.transaction_id,
         guild_id=int(rec.guild_id),

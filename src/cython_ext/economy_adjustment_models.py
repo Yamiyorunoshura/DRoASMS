@@ -53,15 +53,24 @@ class _AdjustmentRecordLike(Protocol):
 
 
 def _as_adjustment_record_like(record: Any) -> _AdjustmentRecordLike:
-    if isinstance(record, dict):
-        # asyncpg.Record and plain dict can both be converted safely
-        return cast(_AdjustmentRecordLike, SimpleNamespace(**record))
+    # 已經是具備屬性存取的物件（例如測試中的 MagicMock）
+    if hasattr(record, "transaction_id") and hasattr(record, "guild_id"):
+        return cast(_AdjustmentRecordLike, record)
+
+    if isinstance(record, Mapping):
+        mapping = cast(Mapping[str, Any], record)
+        return cast(_AdjustmentRecordLike, SimpleNamespace(**dict(mapping)))
+
+    if hasattr(record, "keys") and hasattr(record, "__getitem__"):
+        data: dict[str, Any] = {str(k): record[k] for k in record.keys()}
+        return cast(_AdjustmentRecordLike, SimpleNamespace(**data))
+
     return cast(_AdjustmentRecordLike, record)
 
 
 def build_adjustment_procedure_result(record: Any) -> AdjustmentProcedureResult:
     rec = _as_adjustment_record_like(record)
-    metadata = dict(rec.metadata or {})
+    metadata = dict(getattr(rec, "metadata", {}) or {})
     return AdjustmentProcedureResult(
         transaction_id=rec.transaction_id,
         guild_id=int(rec.guild_id),

@@ -6,8 +6,8 @@ from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
+    wait_fixed,
 )
-from tenacity.wait import wait_fixed
 
 T = TypeVar("T")
 
