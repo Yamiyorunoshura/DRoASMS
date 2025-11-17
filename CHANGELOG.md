@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2025-11-17
+
+### 新增
+- **司法系統模組**：完整的司法部門管理功能
+  - 新增 `src/bot/services/justice_service.py`：司法服務核心邏輯
+  - 新增 `src/db/gateway/justice_governance.py`：司法治理資料庫閘道
+  - 新增資料庫遷移：`042_add_justice_department_suspects.py` 和 `043_add_charge_actions_to_identity_records.py`
+- **結果類型系統**：新增 `src/infra/result.py` 提供統一的結果處理機制
+- **測試覆蓋**：新增司法系統相關測試檔案
+  - `tests/unit/test_justice_service.py`
+  - `tests/unit/test_result_types.py`
+  - 更新 `tests/unit/test_suspects_management.py`
+
+### 修改
+- **州議會命令擴展**：大幅擴展 `src/bot/commands/state_council.py` 支援司法領導權限檢查
+- **調整命令優化**：更新 `src/bot/commands/adjust.py` 支援司法部門調整權限
+- **部門註冊表更新**：擴展 `src/bot/services/department_registry.py` 支援司法部門
+- **轉移池改進**：優化 `src/bot/services/transfer_event_pool.py` 的錯誤處理
+- **配置更新**：更新 `src/config/departments.json` 新增司法部門配置
+- **Cython 模組同步**：更新 `src/cython_ext/council_governance_models.py` 配合新功能
+- **重試機制優化**：改進 `src/infra/retry.py` 的重試邏輯
+- **測試更新**：更新 `tests/db/test_fn_create_identity_record.sql` 支援新的身份記錄功能
+
+### 修復
+- **依賴鎖定**：更新 `uv.lock` 確保依賴一致性
+
 ## [0.20.0] - 2025-11-15
 
 ### 修改

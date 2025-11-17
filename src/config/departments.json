@@ -18,7 +18,8 @@
       "interior_affairs",
       "finance",
       "homeland_security",
-      "central_bank"
+      "central_bank",
+      "justice_department"
     ]
   },
   {
@@ -50,6 +51,14 @@
     "name": "中央銀行",
     "code": 4,
     "emoji": "🏦",
+    "level": "department",
+    "parent": "state_council"
+  },
+  {
+    "id": "justice_department",
+    "name": "法務部",
+    "code": 5,
+    "emoji": "⚖️",
     "level": "department",
     "parent": "state_council"
   }

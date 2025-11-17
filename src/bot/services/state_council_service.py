@@ -11,6 +11,7 @@ import structlog
 
 from src.bot.services.adjustment_service import AdjustmentService
 from src.bot.services.department_registry import DepartmentRegistry
+from src.bot.services.justice_service import JusticeService
 from src.bot.services.transfer_service import (
     InsufficientBalanceError,
     TransferError,
@@ -1031,7 +1032,31 @@ class StateCouncilService:
         summary: list[SuspectReleaseResult] = []
         release_reason = reason or ("面板釋放" if audit_source == "manual" else "自動釋放")
 
+        justice_service = JusticeService()
+
         for suspect_id in suspect_ids:
+            # 檢查是否為已起訴的嫌犯（法務部管理）
+            try:
+                if await justice_service.is_member_charged(
+                    guild_id=guild_id,
+                    member_id=suspect_id,
+                ):
+                    member = guild.get_member(suspect_id) if hasattr(guild, "get_member") else None
+                    display_name = getattr(member, "display_name", None)
+                    summary.append(
+                        SuspectReleaseResult(
+                            suspect_id=int(suspect_id),
+                            display_name=display_name,
+                            released=False,
+                            error="該嫌犯已被起訴，無法釋放",
+                        )
+                    )
+                    self._cancel_auto_release_job(guild_id, suspect_id)
+                    continue
+            except Exception:
+                # 如果檢查失敗，繼續原有的釋放流程
+                pass
+
             member = guild.get_member(suspect_id) if hasattr(guild, "get_member") else None
             display_name = getattr(member, "display_name", None)
             if member is None:
@@ -1061,6 +1086,20 @@ class StateCouncilService:
                     reason=release_reason,
                     performed_by=performed_by,
                 )
+
+                # 同步司法系統中的嫌犯狀態為 released（僅釋放未起訴嫌犯）
+                try:
+                    await justice_service.mark_member_released_from_security(
+                        guild_id=guild_id,
+                        member_id=suspect_id,
+                    )
+                except Exception:
+                    # 司法同步失敗不阻斷既有釋放流程，但保留日誌供追蹤
+                    LOGGER.warning(
+                        "state_council.release.mark_released_failed",
+                        guild_id=guild_id,
+                        suspect_id=suspect_id,
+                    )
 
                 self._cancel_auto_release_job(guild_id, suspect_id)
                 summary.append(
@@ -1193,6 +1232,16 @@ class StateCouncilService:
                     return acc.account_id
         # 測試或資料尚未初始化時，採用可重現的推導方式
         return self.derive_department_account_id(guild_id, department)
+
+    async def fetch_department_configs(self, *, guild_id: int) -> Sequence[DepartmentConfig]:
+        """列出指定公會的所有部門設定。
+
+        提供給指令層（例如 adjust 命令）使用的薄包裝，實際資料來源為 gateway。
+        """
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        cm = await self._pool_acquire_cm(pool)
+        async with cm as conn:
+            return await self._gateway.fetch_department_configs(conn, guild_id=guild_id)
 
     # --- Department Configuration ---
     async def update_department_config(
@@ -1784,7 +1833,7 @@ class StateCouncilService:
             except Exception:
                 pass
 
-        # Create identity record
+            # Create identity record
         pool: PoolProtocol = cast(PoolProtocol, get_pool())
         cm = await self._pool_acquire_cm(pool)
         async with cm as conn:
@@ -1796,34 +1845,57 @@ class StateCouncilService:
                 reason=reason,
                 performed_by=user_id,
             )
-            # 契約相容：_FakeGateway 以 dict 回傳
-            if isinstance(rv, dict):
-                try:
-                    d = cast(dict[str, Any], rv)
-                    rid_raw = d.get("id") or d.get("record_id")
-                    if rid_raw is None:
-                        raise ValueError("Missing record_id")
-                    rid = UUID(str(rid_raw))
-                    performed_at_val = d.get("created_at")
-                    performed_at_dt = (
-                        performed_at_val
-                        if isinstance(performed_at_val, datetime)
-                        else datetime.now(timezone.utc)
-                    )
-                    return IdentityRecord(
-                        record_id=rid,
-                        guild_id=int(d["guild_id"]),
-                        target_id=int(d["target_id"]),
-                        action=str(d["action"]),
-                        reason=cast(str | None, d.get("reason")),
-                        performed_by=int(d.get("performed_by", user_id)),
-                        performed_at=performed_at_dt,
-                    )
-                except Exception:
-                    from types import SimpleNamespace
 
-                    return cast(IdentityRecord, SimpleNamespace(**rv))
-            return rv
+        identity_record: IdentityRecord
+        # 契約相容：_FakeGateway 以 dict 回傳
+        if isinstance(rv, dict):
+            try:
+                d = cast(dict[str, Any], rv)
+                rid_raw = d.get("id") or d.get("record_id")
+                if rid_raw is None:
+                    raise ValueError("Missing record_id")
+                rid = UUID(str(rid_raw))
+                performed_at_val = d.get("created_at")
+                performed_at_dt = (
+                    performed_at_val
+                    if isinstance(performed_at_val, datetime)
+                    else datetime.now(timezone.utc)
+                )
+                identity_record = IdentityRecord(
+                    record_id=rid,
+                    guild_id=int(d["guild_id"]),
+                    target_id=int(d["target_id"]),
+                    action=str(d["action"]),
+                    reason=cast(str | None, d.get("reason")),
+                    performed_by=int(d.get("performed_by", user_id)),
+                    performed_at=performed_at_dt,
+                )
+            except Exception:
+                from types import SimpleNamespace
+
+                identity_record = cast(IdentityRecord, SimpleNamespace(**rv))
+        else:
+            identity_record = rv
+
+        # 創建法務部嫌犯記錄（最佳努力，不影響既有逮捕流程）
+        try:
+            justice_service = JusticeService()
+            await justice_service.create_suspect_on_arrest(
+                guild_id=guild_id,
+                member_id=target_id,
+                arrested_by=user_id,
+                arrest_reason=reason,
+            )
+        except Exception as exc:
+            # 記錄但不影響逮捕流程
+            LOGGER.warning(
+                "state_council.arrest.suspect_creation_failed",
+                guild_id=guild_id,
+                target_id=target_id,
+                error=str(exc),
+            )
+
+        return identity_record
 
     async def record_identity_action(
         self,
@@ -1874,6 +1946,34 @@ class StateCouncilService:
 
                     return cast(IdentityRecord, SimpleNamespace(**rv))
             return rv
+
+    async def get_member_identity_history(
+        self,
+        *,
+        guild_id: int,
+        target_id: int,
+        limit: int = 500,
+    ) -> Sequence[IdentityRecord]:
+        """取得指定成員的司法/身分操作歷史，按時間倒序排列。"""
+        pool = get_pool()
+        cm = await self._pool_acquire_cm(pool)
+        async with cm as conn:
+            records = await self._gateway.fetch_identity_records(
+                conn,
+                guild_id=guild_id,
+                limit=limit,
+                offset=0,
+            )
+            filtered = [
+                record
+                for record in records
+                if int(getattr(record, "target_id", 0)) == int(target_id)
+            ]
+            return sorted(
+                filtered,
+                key=lambda r: getattr(r, "performed_at", datetime.now(timezone.utc)),
+                reverse=True,
+            )
 
     # --- Currency Issuance (Central Bank) ---
     async def issue_currency(

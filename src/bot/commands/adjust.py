@@ -134,6 +134,50 @@ def build_adjust_command(
 
         has_right = predicate(interaction)
 
+        # 檢查法務部特殊權限（以國務院領袖身分作為判定基準）
+        is_justice_leader = False
+        justice_can_adjust_target = False
+        justice_target_is_department = False
+        try:
+            sc_service = StateCouncilService()
+            user_roles_ids = [
+                getattr(role, "id", 0) for role in (getattr(interaction.user, "roles", []) or [])
+            ]
+            is_justice_leader = await sc_service.check_leader_permission(
+                guild_id=guild_id,
+                user_id=interaction.user.id,
+                user_roles=user_roles_ids,
+            )
+
+            # 如果是法務部領導人，檢查目標權限
+            if is_justice_leader:
+                if isinstance(target, discord.Role):
+                    # 法務部不能調整其他政府部門
+                    target_dept = await sc_service.find_department_by_role(
+                        guild_id=guild_id, role_id=target.id
+                    )
+                    if target_dept is None:
+                        # 不是部門角色，法務部領導人可以調整
+                        justice_can_adjust_target = True
+                    else:
+                        # 目標為其他政府部門帳戶，記錄以便回報專用錯誤訊息
+                        justice_target_is_department = True
+                else:
+                    # 目標是個人成員，法務部領導人可以調整
+                    justice_can_adjust_target = True
+        except Exception:
+            # 未設定國務院或檢查過程出現任何錯誤時，略過法務部特殊權限檢查，
+            # 僅依照基本管理員權限與下游 service 的 UnauthorizedAdjustmentError 處理。
+            pass
+
+        # 僅在「法務部領導人嘗試調整其他部門餘額、且本身不是管理員」時，提前回傳專用錯誤訊息；
+        # 其他情況一律交由 service 透過 can_adjust 與 UnauthorizedAdjustmentError 處理。
+        if is_justice_leader and justice_target_is_department and not has_right:
+            await interaction.response.send_message(
+                content="法務部無權調整其他部門餘額", ephemeral=True
+            )
+            return
+
         # 支援以下映射：
         # - 常任理事會身分組 -> 理事會公共帳戶
         # - 部門領導人身分組 -> 對應部門政府帳戶
@@ -186,7 +230,7 @@ def build_adjust_command(
                 target_id=target_id,
                 amount=amount,
                 reason=reason,
-                can_adjust=has_right,
+                can_adjust=has_right or (is_justice_leader and justice_can_adjust_target),
                 connection=None,
             )
         except UnauthorizedAdjustmentError as exc:

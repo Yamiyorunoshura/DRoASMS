@@ -2,7 +2,7 @@
 
 BEGIN;
 
-SELECT plan(7);
+SELECT plan(9);
 SELECT set_config('search_path', 'pgtap, governance, public', false);
 
 SELECT has_function(
@@ -114,6 +114,44 @@ SELECT is(
     ),
     5::bigint,
     'multiple records can be created'
+);
+
+-- Test 6: Supports Chinese charge action
+DROP TABLE IF EXISTS result;
+CREATE TEMP TABLE result AS
+    SELECT * FROM governance.fn_create_identity_record(
+        2120000000000000000::bigint,
+        2120000000000000011::bigint,
+        '起訴嫌犯',
+        '測試起訴',
+        2120000000000000012::bigint
+    )
+
+;
+
+SELECT is(
+    (SELECT action FROM result),
+    '起訴嫌犯',
+    'supports charge suspect action'
+);
+
+-- Test 7: Supports Chinese revoke charge action
+DROP TABLE IF EXISTS result;
+CREATE TEMP TABLE result AS
+    SELECT * FROM governance.fn_create_identity_record(
+        2120000000000000000::bigint,
+        2120000000000000013::bigint,
+        '撤銷起訴',
+        '測試撤銷起訴',
+        2120000000000000014::bigint
+    )
+
+;
+
+SELECT is(
+    (SELECT action FROM result),
+    '撤銷起訴',
+    'supports revoke charge action'
 );
 
 SELECT finish();

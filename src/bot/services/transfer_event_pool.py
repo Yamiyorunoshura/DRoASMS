@@ -34,6 +34,9 @@ class TransferEventPoolCoordinator:
         self._check_store = TransferCheckStateStore()
         # Track retry tasks: transfer_id -> asyncio.Task
         self._retry_tasks: dict[UUID, asyncio.Task[None]] = {}
+        # 每一筆 transfer 綁定一把鎖，避免同一 transfer_id 的事件並行處理導致
+        # 重複排程重試（例如多個 transfer_check_result 幾乎同時抵達）。
+        self._locks: dict[UUID, asyncio.Lock] = {}
         self._cleanup_task: asyncio.Task[None] | None = None
         self._running = False
 
@@ -93,6 +96,18 @@ class TransferEventPoolCoordinator:
         self._check_store.clear()
         LOGGER.info("transfer_event_pool.coordinator.stopped")
 
+    def _get_lock(self, transfer_id: UUID) -> asyncio.Lock:
+        """取得指定 transfer 的鎖，用於序列化同一筆轉帳的事件處理。
+
+        asyncio 單執行緒事件迴圈下，dict 存取本身是原子的，因此這裡不需要
+        額外的 async 鎖來保護 self._locks，本函式內也不進行 await。
+        """
+        lock = self._locks.get(transfer_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[transfer_id] = lock
+        return lock
+
     async def handle_check_result(
         self,
         *,
@@ -104,19 +119,22 @@ class TransferEventPoolCoordinator:
         if not self._running:
             return
 
-        all_received = self._check_store.record(transfer_id, check_type, result)
-        if not all_received:
-            return
+        # 將同一 transfer_id 的檢查結果序列化處理，避免多個
+        # transfer_check_result 同時抵達時重複排程重試。
+        async with self._get_lock(transfer_id):
+            all_received = self._check_store.record(transfer_id, check_type, result)
+            if not all_received:
+                return
 
-        all_passed = self._check_store.all_passed(transfer_id)
+            all_passed = self._check_store.all_passed(transfer_id)
 
-        if all_passed:
-            # 等待資料庫層發出的 transfer_check_approved 事件再觸發執行，
-            # 這裡不直接執行以避免與核准事件重入造成重複轉帳。
-            return
-        else:
-            # Some checks failed, schedule retry
-            await self._schedule_retry(transfer_id)
+            if all_passed:
+                # 等待資料庫層發出的 transfer_check_approved 事件再觸發執行，
+                # 這裡不直接執行以避免與核准事件重入造成重複轉帳。
+                return
+            else:
+                # 某些檢查失敗，排程重試（指數退避）
+                await self._schedule_retry(transfer_id)
 
     async def handle_check_approved(
         self,
@@ -127,7 +145,10 @@ class TransferEventPoolCoordinator:
         if not self._running:
             return
 
-        await self._execute_transfer(transfer_id)
+        # 和檢查結果共用同一把鎖，避免在極端情況下「核准事件」與
+        # 「最後一個檢查結果」交錯造成競爭條件。
+        async with self._get_lock(transfer_id):
+            await self._execute_transfer(transfer_id)
 
     async def _execute_transfer(self, transfer_id: UUID) -> None:
         """Execute the approved transfer."""

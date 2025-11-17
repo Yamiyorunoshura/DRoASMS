@@ -528,7 +528,7 @@ class StateCouncilPanelView(discord.ui.View):
         self._unsubscribe: Callable[[], Awaitable[None]] | None = None
         self._update_lock = asyncio.Lock()
         self.current_page = "總覽"
-        self.departments = ["內政部", "財政部", "國土安全部", "中央銀行"]
+        self.departments = ["內政部", "財政部", "國土安全部", "中央銀行", "法務部"]
         self._last_allowed_departments: list[str] = []
         # 供總覽頁設定部門領導用之選擇狀態
         self.config_target_department: str | None = None
@@ -987,6 +987,17 @@ class StateCouncilPanelView(discord.ui.View):
             currency_settings_btn.callback = self._currency_settings_callback
             self.add_item(currency_settings_btn)
 
+        elif department == "法務部":
+            # View Suspects (Justice Department)
+            justice_suspects_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label="嫌犯列表",
+                style=discord.ButtonStyle.primary,
+                custom_id="justice_suspects_list",
+                row=1,
+            )
+            justice_suspects_btn.callback = self._justice_suspects_callback
+            self.add_item(justice_suspects_btn)
+
     def _build_help_embed(self) -> discord.Embed:
         """依目前頁面（總覽或部門）產生使用指引。"""
         title = ""
@@ -1375,6 +1386,55 @@ class StateCouncilPanelView(discord.ui.View):
         except Exception:
             pass
 
+    async def _justice_suspects_callback(self, interaction: discord.Interaction) -> None:
+        from src.bot.services.justice_service import JusticeService
+
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+
+        # 檢查法務部權限
+        has_permission = await self.service.check_department_permission(
+            guild_id=self.guild_id,
+            user_id=self.author_id,
+            department="法務部",
+            user_roles=self.user_roles,
+        )
+        if not has_permission:
+            await send_message_compat(
+                interaction,
+                content="您沒有權限訪問法務部功能",
+                ephemeral=True,
+            )
+            return
+
+        justice_service = JusticeService()
+        view = JusticeSuspectsPanelView(
+            justice_service=justice_service,
+            guild=self.guild,
+            guild_id=self.guild_id,
+            author_id=self.author_id,
+            user_roles=self.user_roles,
+        )
+
+        try:
+            await view.prepare()
+            embed = view.build_embed()
+        except Exception as exc:
+            await send_message_compat(
+                interaction,
+                content=f"載入法務部嫌犯面板失敗：{exc}",
+                ephemeral=True,
+            )
+            return
+
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        try:
+            msg = await interaction.original_response()
+            view.set_message(msg)
+        except Exception:
+            pass
+
     async def _currency_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
             await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
@@ -1422,7 +1482,7 @@ class InterdepartmentTransferModal(discord.ui.Modal, title="部門轉帳"):
         if not self.preset_from_department:
             self.from_input = discord.ui.TextInput(
                 label="來源部門",
-                placeholder="輸入來源部門（內政部/財政部/國土安全部/中央銀行）",
+                placeholder="輸入來源部門（內政部/財政部/國土安全部/中央銀行/法務部）",
                 required=True,
                 style=discord.TextStyle.short,
             )
@@ -1432,7 +1492,7 @@ class InterdepartmentTransferModal(discord.ui.Modal, title="部門轉帳"):
         to_placeholder = (
             f"將自『{self.preset_from_department}』轉出 → 請輸入目標部門"
             if self.preset_from_department
-            else "輸入目標部門（內政部/財政部/國土安全部/中央銀行）"
+            else "輸入目標部門（內政部/財政部/國土安全部/中央銀行/法務部）"
         )
         self.to_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
             label="目標部門",
@@ -3755,6 +3815,772 @@ class SuspectSearchModal(discord.ui.Modal, title="搜尋嫌疑人"):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         keyword = str(self.keyword_input.value).strip() or None
         await self.panel.apply_search(interaction, keyword)
+
+
+class JusticeSuspectsPanelView(discord.ui.View):
+    def __init__(
+        self,
+        *,
+        justice_service: Any,  # JusticeService
+        guild: discord.Guild,
+        guild_id: int,
+        author_id: int,
+        user_roles: Sequence[int],
+        page_size: int = 10,
+    ) -> None:
+        super().__init__(timeout=600)
+        self.justice_service = justice_service
+        self.guild = guild
+        self.guild_id = guild_id
+        self.author_id = author_id
+        self.user_roles = list(user_roles)
+        self.page_size = max(5, page_size)
+        self.current_page = 0
+        self._suspects: list[Any] = []  # list[Suspect]
+        self._total_count = 0
+        self._message: discord.Message | None = None
+        self._error_message: str | None = None
+        # 以 suspect_id（UUID 字串）追蹤目前選取的嫌犯
+        self._selected_ids: set[str] = set()
+        # 狀態篩選（None 表示僅顯示未釋放：detained/charged）
+        self._status_filter: str | None = None
+
+    async def prepare(self) -> None:
+        await self.reload()
+
+    async def reload(self) -> None:
+        try:
+            self._suspects, self._total_count = await self.justice_service.get_active_suspects(
+                guild_id=self.guild_id,
+                page=self.current_page + 1,
+                page_size=self.page_size,
+                status=self._status_filter,
+            )
+            self._error_message = None
+        except Exception as exc:
+            self._suspects = []
+            self._total_count = 0
+            self._error_message = str(exc)
+        self._sanitize_state()
+        self._refresh_components()
+
+    def set_message(self, message: discord.Message) -> None:
+        self._message = message
+
+    def _sanitize_state(self) -> None:
+        total_pages = self.total_pages
+        if self.current_page >= total_pages:
+            self.current_page = max(total_pages - 1, 0)
+        # 僅保留目前頁面存在的嫌犯選取狀態
+        valid_ids = {str(suspect.id) for suspect in self._suspects}
+        self._selected_ids &= valid_ids
+
+    @property
+    def total_pages(self) -> int:
+        if self._total_count == 0:
+            return 1
+        return (self._total_count + self.page_size - 1) // self.page_size
+
+    def _current_page_suspects(self) -> list[Any]:
+        # gateway 已依 page/page_size 做分頁，因此直接回傳列表即可
+        return list(self._suspects)
+
+    def _refresh_components(self) -> None:
+        self.clear_items()
+
+        # Suspect selection menu
+        self._add_select_menu()
+
+        # Navigation buttons
+        if self.current_page > 0:
+            prev_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label="上一頁",
+                custom_id="prev_page",
+                row=1,
+            )
+            prev_btn.callback = self._prev_page
+            self.add_item(prev_btn)
+
+        if self.current_page < self.total_pages - 1:
+            next_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label="下一頁",
+                custom_id="next_page",
+                row=1,
+            )
+            next_btn.callback = self._next_page
+            self.add_item(next_btn)
+
+        # Refresh button
+        refresh_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="重新整理",
+            custom_id="refresh",
+            row=1,
+            style=discord.ButtonStyle.secondary,
+        )
+        refresh_btn.callback = self._refresh_callback
+        self.add_item(refresh_btn)
+
+        # Action buttons for suspects
+        if self._suspects:
+            charge_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label="起訴嫌犯",
+                custom_id="charge_suspect",
+                row=2,
+                style=discord.ButtonStyle.success,
+            )
+            charge_btn.callback = self._charge_suspect
+            self.add_item(charge_btn)
+
+            revoke_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label="撤銷起訴",
+                custom_id="revoke_charge",
+                row=2,
+                style=discord.ButtonStyle.secondary,
+            )
+            revoke_btn.callback = self._revoke_charge
+            self.add_item(revoke_btn)
+
+            release_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label="釋放嫌犯",
+                custom_id="release_suspect",
+                row=2,
+                style=discord.ButtonStyle.danger,
+            )
+            release_btn.callback = self._release_suspect
+            self.add_item(release_btn)
+
+            details_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label="查看詳情",
+                custom_id="view_details",
+                row=2,
+                style=discord.ButtonStyle.secondary,
+            )
+            details_btn.callback = self._view_details
+            self.add_item(details_btn)
+
+        # Status filter menu（獨立一列，避免與按鈕同列超出寬度限制）
+        self._add_status_filter_menu()
+
+    def _add_status_filter_menu(self) -> None:
+        """狀態篩選選單：支援 detained/charged/released 與預設未釋放列表。"""
+        # 目前僅一個選單，獨立放在第 3 列，避免與按鈕同列超出寬度
+        current = self._status_filter or "active"
+        options = [
+            discord.SelectOption(
+                label="未釋放（detained + charged）",
+                value="active",
+                default=current == "active",
+            ),
+            discord.SelectOption(
+                label="僅拘留中（detained）",
+                value="detained",
+                default=current == "detained",
+            ),
+            discord.SelectOption(
+                label="已起訴（charged）",
+                value="charged",
+                default=current == "charged",
+            ),
+            discord.SelectOption(
+                label="已釋放（released）",
+                value="released",
+                default=current == "released",
+            ),
+        ]
+
+        status_select: discord.ui.Select[Any] = discord.ui.Select(
+            placeholder="依狀態篩選嫌犯…",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=3,
+        )
+
+        async def _on_status_change(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction,
+                    content="僅限面板開啟者操作。",
+                    ephemeral=True,
+                )
+                return
+            value = (status_select.values[0] if status_select.values else "active") or "active"
+            self._status_filter = None if value == "active" else value
+            self.current_page = 0
+            await self.reload()
+            await self._update_interaction(interaction)
+
+        status_select.callback = _on_status_change
+        self.add_item(status_select)
+
+    def _add_select_menu(self) -> None:
+        options: list[discord.SelectOption] = []
+        for suspect in self._current_page_suspects():
+            member = self.guild.get_member(suspect.member_id)
+            member_name = member.display_name if member else f"用戶 ID: {suspect.member_id}"
+            status_emoji = {
+                "detained": "🔒",
+                "charged": "⚖️",
+                "released": "✅",
+            }.get(suspect.status, "❓")
+            arrested_at = (
+                suspect.arrested_at.strftime("%Y-%m-%d %H:%M")
+                if getattr(suspect, "arrested_at", None)
+                else "N/A"
+            )
+            description = f"{status_emoji} {suspect.status}｜逮捕 {arrested_at}"
+            options.append(
+                discord.SelectOption(
+                    label=member_name[:95],
+                    description=description[:95],
+                    value=str(suspect.id),
+                )
+            )
+
+        if not options:
+            select: discord.ui.Select[Any] = discord.ui.Select(
+                placeholder="目前沒有嫌犯記錄",
+                min_values=1,
+                max_values=1,
+                options=[
+                    discord.SelectOption(
+                        label="等待新的嫌犯記錄",
+                        description="目前沒有嫌犯記錄",
+                        value="none",
+                    )
+                ],
+                row=0,
+            )
+            select.disabled = True
+        else:
+            max_values = min(len(options), 25)
+            select = discord.ui.Select(
+                placeholder="選擇要操作的嫌犯（可多選）",
+                min_values=1,
+                max_values=max_values,
+                options=options,
+                row=0,
+            )
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def _prev_page(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+        self.current_page = max(0, self.current_page - 1)
+        await self.reload()
+        await self._update_interaction(interaction)
+
+    async def _next_page(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+        self.current_page = min(self.total_pages - 1, self.current_page + 1)
+        await self.reload()
+        await self._update_interaction(interaction)
+
+    async def _refresh_callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+        await self.reload()
+        await self._update_interaction(interaction)
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+        data = cast(dict[str, Any], interaction.data or {})
+        raw_values = cast(Sequence[Any] | None, data.get("values"))
+        values: list[str] = []
+        if isinstance(raw_values, (list, tuple, set)):
+            values = [str(v) for v in raw_values]
+        selected: set[str] = set()
+        for raw in values:
+            value = str(raw)
+            if value and value != "none":
+                selected.add(value)
+        self._selected_ids = selected
+        await edit_message_compat(interaction, embed=self.build_embed(), view=self)
+
+    async def _charge_suspect(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+        if not self._selected_ids:
+            await send_message_compat(interaction, content="請先選擇要起訴的嫌犯。", ephemeral=True)
+            return
+        await send_modal_compat(interaction, JusticeChargeModal(panel=self))
+
+    async def _revoke_charge(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+        if not self._selected_ids:
+            await send_message_compat(
+                interaction, content="請先選擇要撤銷起訴的嫌犯。", ephemeral=True
+            )
+            return
+        await send_modal_compat(interaction, JusticeRevokeChargeModal(panel=self))
+
+    async def _view_details(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+        if not self._selected_ids:
+            await send_message_compat(
+                interaction, content="請先選擇一名嫌犯查看詳情。", ephemeral=True
+            )
+            return
+        if len(self._selected_ids) > 1:
+            await send_message_compat(
+                interaction,
+                content="一次僅支援查看一名嫌犯的詳情，請只勾選一名。",
+                ephemeral=True,
+            )
+            return
+
+        suspect_id_str = next(iter(self._selected_ids))
+        suspect = next(
+            (s for s in self._suspects if str(getattr(s, "id", "")) == suspect_id_str),
+            None,
+        )
+        if suspect is None:
+            await send_message_compat(interaction, content="找不到選取的嫌犯記錄。", ephemeral=True)
+            return
+
+        # 基本身分與狀態資訊
+        member = self.guild.get_member(suspect.member_id)
+        member_name = getattr(member, "display_name", f"用戶 ID: {suspect.member_id}")
+
+        status_emoji = {"detained": "🔒", "charged": "⚖️", "released": "✅"}.get(
+            suspect.status, "❓"
+        )
+        status_text = {
+            "detained": "拘留中",
+            "charged": "已起訴",
+            "released": "已釋放",
+        }.get(suspect.status, suspect.status)
+
+        arrested_at = (
+            suspect.arrested_at.strftime("%Y-%m-%d %H:%M")
+            if getattr(suspect, "arrested_at", None)
+            else "N/A"
+        )
+        arrest_reason = getattr(suspect, "arrest_reason", None) or "未提供"
+        arrest_by_member = (
+            self.guild.get_member(suspect.arrested_by)
+            if hasattr(self.guild, "get_member")
+            else None
+        )
+        arrest_by_name = getattr(arrest_by_member, "display_name", f"ID: {suspect.arrested_by}")
+
+        # 起訴相關資訊：優先從身分紀錄中取得起訴人與時間
+        prosecutor_name = "未起訴"
+        charged_at = (
+            suspect.charged_at.strftime("%Y-%m-%d %H:%M")
+            if getattr(suspect, "charged_at", None)
+            else None
+        )
+        last_charge_reason = None
+
+        try:
+            sc_service = StateCouncilService()
+            history = await sc_service.get_member_identity_history(
+                guild_id=self.guild_id,
+                target_id=int(suspect.member_id),
+            )
+            charge_record = next(
+                (r for r in history if getattr(r, "action", "") == "起訴嫌犯"),
+                None,
+            )
+            if charge_record is not None:
+                charged_at = charge_record.performed_at.strftime("%Y-%m-%d %H:%M")
+                prosecutor = (
+                    self.guild.get_member(charge_record.performed_by)
+                    if hasattr(self.guild, "get_member")
+                    else None
+                )
+                prosecutor_name = getattr(
+                    prosecutor, "display_name", f"ID: {charge_record.performed_by}"
+                )
+                last_charge_reason = getattr(charge_record, "reason", None)
+        except Exception:
+            # 取得歷史紀錄失敗時，以 suspects 表與預設文字為主
+            pass
+
+        embed = discord.Embed(
+            title=f"⚖️ 嫌犯詳情｜{member_name}",
+            color=discord.Color.gold(),
+        )
+        embed.add_field(
+            name="當前狀態",
+            value=f"{status_emoji} {status_text}",
+            inline=False,
+        )
+        embed.add_field(
+            name="逮捕資訊",
+            value=(
+                f"• 逮捕原因：{arrest_reason}\n"
+                f"• 逮捕時間：{arrested_at}\n"
+                f"• 逮捕人：{arrest_by_name}"
+            ),
+            inline=False,
+        )
+
+        if charged_at or prosecutor_name != "未起訴":
+            charge_lines = [
+                f"• 起訴狀態：{'已起訴' if suspect.status == 'charged' else status_text}",
+                f"• 起訴時間：{charged_at or 'N/A'}",
+                f"• 起訴人：{prosecutor_name}",
+            ]
+            if last_charge_reason:
+                charge_lines.append(f"• 起訴理由：{last_charge_reason}")
+            embed.add_field(name="起訴資訊", value="\n".join(charge_lines), inline=False)
+
+        embed.set_footer(text="僅法務部領導人可查看此面板")
+        await send_message_compat(interaction, embed=embed, ephemeral=True)
+
+    async def _release_suspect(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+        if not self._selected_ids:
+            await send_message_compat(interaction, content="請先選擇要釋放的嫌犯。", ephemeral=True)
+            return
+        await send_modal_compat(interaction, JusticeReleaseModal(panel=self))
+
+    async def _update_interaction(self, interaction: discord.Interaction) -> None:
+        embed = self.build_embed()
+        await edit_message_compat(interaction, embed=embed, view=self)
+
+    async def handle_charge(self, interaction: discord.Interaction, reason: str | None) -> None:
+        if not self._selected_ids:
+            await interaction.response.send_message("請先選擇要起訴的嫌犯。", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        selected_map = {str(suspect.id): suspect for suspect in self._suspects}
+        success = 0
+        failures: list[str] = []
+
+        for suspect_id_str in list(self._selected_ids):
+            suspect = selected_map.get(suspect_id_str)
+            if suspect is None:
+                continue
+            member = self.guild.get_member(suspect.member_id)
+            member_name = getattr(member, "display_name", f"用戶 ID: {suspect.member_id}")
+            try:
+                await self.justice_service.charge_suspect(
+                    guild_id=self.guild_id,
+                    suspect_id=int(suspect_id_str),
+                    justice_member_id=self.author_id,
+                    justice_member_roles=self.user_roles,
+                )
+                # 記錄審計軌跡（最佳努力）
+                try:
+                    service = StateCouncilService()
+                    await service.record_identity_action(
+                        guild_id=self.guild_id,
+                        target_id=int(suspect.member_id),
+                        action="起訴嫌犯",
+                        reason=reason,
+                        performed_by=self.author_id,
+                    )
+                except Exception:
+                    LOGGER.warning(
+                        "state_council.justice.charge.audit_failed",
+                        guild_id=self.guild_id,
+                        target_id=suspect.member_id,
+                    )
+                success += 1
+            except PermissionError as exc:
+                failures.append(f"{member_name}：{exc}")
+            except Exception as exc:  # pragma: no cover - 防禦性日誌
+                LOGGER.warning(
+                    "state_council.justice.charge_failed",
+                    guild_id=self.guild_id,
+                    suspect_id=str(suspect.id),
+                    error=str(exc),
+                )
+                failures.append(f"{member_name}：{exc}")
+
+        self._selected_ids.clear()
+        await self.reload()
+        if self._message is not None:
+            await self._message.edit(embed=self.build_embed(), view=self)
+
+        parts: list[str] = []
+        if success:
+            parts.append(f"成功起訴 {success} 名嫌犯。")
+        if failures:
+            parts.append(f"失敗 {len(failures)} 名：{'; '.join(failures[:5])}")
+        summary = " ".join(parts) if parts else "沒有任何嫌犯被起訴。"
+        await interaction.followup.send(summary, ephemeral=True)
+
+    async def handle_revoke_charge(
+        self,
+        interaction: discord.Interaction,
+        reason: str | None,
+    ) -> None:
+        if not self._selected_ids:
+            await interaction.response.send_message("請先選擇要撤銷起訴的嫌犯。", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        selected_map = {str(suspect.id): suspect for suspect in self._suspects}
+        success = 0
+        failures: list[str] = []
+
+        for suspect_id_str in list(self._selected_ids):
+            suspect = selected_map.get(suspect_id_str)
+            if suspect is None:
+                continue
+            member = self.guild.get_member(suspect.member_id)
+            member_name = getattr(member, "display_name", f"用戶 ID: {suspect.member_id}")
+            try:
+                await self.justice_service.revoke_charge(
+                    guild_id=self.guild_id,
+                    suspect_id=int(suspect_id_str),
+                    justice_member_id=self.author_id,
+                    justice_member_roles=self.user_roles,
+                )
+                # 審計紀錄：撤銷起訴
+                try:
+                    service = StateCouncilService()
+                    await service.record_identity_action(
+                        guild_id=self.guild_id,
+                        target_id=int(suspect.member_id),
+                        action="撤銷起訴",
+                        reason=reason,
+                        performed_by=self.author_id,
+                    )
+                except Exception:
+                    LOGGER.warning(
+                        "state_council.justice.revoke_charge.audit_failed",
+                        guild_id=self.guild_id,
+                        target_id=suspect.member_id,
+                    )
+                success += 1
+            except PermissionError as exc:
+                failures.append(f"{member_name}：{exc}")
+            except ValueError as exc:
+                failures.append(f"{member_name}：{exc}")
+            except Exception as exc:  # pragma: no cover - 防禦性日誌
+                LOGGER.warning(
+                    "state_council.justice.revoke_charge_failed",
+                    guild_id=self.guild_id,
+                    suspect_id=str(getattr(suspect, "id", None)),
+                    error=str(exc),
+                )
+                failures.append(f"{member_name}：{exc}")
+
+        self._selected_ids.clear()
+        await self.reload()
+        if self._message is not None:
+            await self._message.edit(embed=self.build_embed(), view=self)
+
+        parts: list[str] = []
+        if success:
+            parts.append(f"成功撤銷起訴 {success} 名嫌犯。")
+        if failures:
+            parts.append(f"失敗 {len(failures)} 名：{'; '.join(failures[:5])}")
+        summary = " ".join(parts) if parts else "沒有任何嫌犯被撤銷起訴。"
+        await interaction.followup.send(summary, ephemeral=True)
+
+    async def handle_release(self, interaction: discord.Interaction, reason: str | None) -> None:
+        if not self._selected_ids:
+            await interaction.response.send_message("請先選擇要釋放的嫌犯。", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        selected_map = {str(suspect.id): suspect for suspect in self._suspects}
+        member_ids: list[int] = []
+        failures: list[str] = []
+
+        # 先更新司法系統中的嫌犯狀態
+        for suspect_id_str in list(self._selected_ids):
+            suspect = selected_map.get(suspect_id_str)
+            if suspect is None:
+                continue
+            member = self.guild.get_member(suspect.member_id)
+            member_name = getattr(member, "display_name", f"用戶 ID: {suspect.member_id}")
+            try:
+                await self.justice_service.release_suspect(
+                    guild_id=self.guild_id,
+                    suspect_id=int(suspect_id_str),
+                    justice_member_id=self.author_id,
+                    justice_member_roles=self.user_roles,
+                )
+                member_ids.append(int(suspect.member_id))
+            except PermissionError as exc:
+                failures.append(f"{member_name}：{exc}")
+            except Exception as exc:  # pragma: no cover - 防禦性日誌
+                LOGGER.warning(
+                    "state_council.justice.release_failed",
+                    guild_id=self.guild_id,
+                    suspect_id=str(suspect.id),
+                    error=str(exc),
+                )
+                failures.append(f"{member_name}：{exc}")
+
+        released_results: list[SuspectReleaseResult] = []
+        if member_ids:
+            try:
+                sc_service = StateCouncilService()
+                released_results = await sc_service.release_suspects(
+                    guild=self.guild,
+                    guild_id=self.guild_id,
+                    department="國土安全部",
+                    user_id=self.author_id,
+                    user_roles=self.user_roles,
+                    suspect_ids=member_ids,
+                    reason=reason or "法務部釋放",
+                    audit_source="justice",
+                    skip_permission=True,
+                )
+            except Exception as exc:  # pragma: no cover - 防禦性日誌
+                LOGGER.warning(
+                    "state_council.justice.release_state_flow_failed",
+                    guild_id=self.guild_id,
+                    suspect_ids=member_ids,
+                    error=str(exc),
+                )
+                failures.append(f"國土安全部釋放流程失敗：{exc}")
+
+        # 合併來自 StateCouncilService 的結果
+        success = 0
+        for result in released_results:
+            if result.released:
+                success += 1
+            elif result.error:
+                name = result.display_name or f"嫌疑人 {result.suspect_id}"
+                failures.append(f"{name}：{result.error}")
+
+        self._selected_ids.clear()
+        await self.reload()
+        if self._message is not None:
+            await self._message.edit(embed=self.build_embed(), view=self)
+
+        parts: list[str] = []
+        if success:
+            parts.append(f"成功釋放 {success} 名嫌犯。")
+        if failures:
+            parts.append(f"失敗 {len(failures)} 名：{'; '.join(failures[:5])}")
+        summary = " ".join(parts) if parts else "沒有任何嫌犯被釋放。"
+        await interaction.followup.send(summary, ephemeral=True)
+
+    def build_embed(self) -> discord.Embed:
+        embed = discord.Embed(
+            title="⚖️ 法務部嫌犯管理",
+            color=discord.Color.gold(),
+        )
+
+        if self._error_message:
+            embed.description = f"❌ 載入失敗：{self._error_message}"
+            embed.color = discord.Color.red()
+        elif not self._suspects:
+            embed.description = "目前沒有活躍的嫌犯記錄。"
+        else:
+            embed.description = (
+                f"📋 第 {self.current_page + 1} 頁，共 {self.total_pages} 頁"
+                f"（總計 {self._total_count} 筆記錄，已選擇 {len(self._selected_ids)} 名）"
+            )
+
+            for idx, suspect in enumerate(self._suspects, 1):
+                member = self.guild.get_member(suspect.member_id)
+                member_name = member.display_name if member else f"用戶 ID: {suspect.member_id}"
+
+                status_emoji = {"detained": "🔒", "charged": "⚖️", "released": "✅"}.get(
+                    suspect.status, "❓"
+                )
+
+                arrest_by_member = (
+                    self.guild.get_member(suspect.arrested_by)
+                    if hasattr(self.guild, "get_member")
+                    else None
+                )
+                arrest_by_name = getattr(
+                    arrest_by_member,
+                    "display_name",
+                    f"ID: {getattr(suspect, 'arrested_by', 'N/A')}",
+                )
+
+                field_value = (
+                    f"**狀態**: {status_emoji} {suspect.status}\n"
+                    f"**逮捕原因**: {suspect.arrest_reason}\n"
+                    f"**逮捕時間**: {suspect.arrested_at.strftime('%Y-%m-%d %H:%M') if suspect.arrested_at else 'N/A'}\n"
+                    f"**逮捕人**: {arrest_by_name}"
+                )
+
+                if suspect.charged_at:
+                    field_value += (
+                        f"\n**起訴時間**: {suspect.charged_at.strftime('%Y-%m-%d %H:%M')}"
+                    )
+
+                embed.add_field(
+                    name=f"{idx}. {member_name}",
+                    value=field_value,
+                    inline=False,
+                )
+
+        embed.set_footer(text="僅法務部領導人可查看此面板")
+        return embed
+
+
+class JusticeChargeModal(discord.ui.Modal, title="起訴嫌犯"):
+    def __init__(self, panel: JusticeSuspectsPanelView) -> None:
+        super().__init__(title="起訴嫌犯")
+        self.panel = panel
+        self.reason_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="起訴理由（可選）",
+            placeholder="將記錄在審計或日誌中",
+            required=False,
+            style=discord.TextStyle.paragraph,
+        )
+        self.add_item(self.reason_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        reason = str(self.reason_input.value).strip() or None
+        await self.panel.handle_charge(interaction, reason)
+
+
+class JusticeRevokeChargeModal(discord.ui.Modal, title="撤銷起訴"):
+    def __init__(self, panel: JusticeSuspectsPanelView) -> None:
+        super().__init__(title="撤銷起訴")
+        self.panel = panel
+        self.reason_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="撤銷原因（可選）",
+            placeholder="將記錄在審計或日誌中",
+            required=False,
+            style=discord.TextStyle.paragraph,
+        )
+        self.add_item(self.reason_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        reason = str(self.reason_input.value).strip() or None
+        await self.panel.handle_revoke_charge(interaction, reason)
+
+
+class JusticeReleaseModal(discord.ui.Modal, title="釋放嫌犯"):
+    def __init__(self, panel: JusticeSuspectsPanelView) -> None:
+        super().__init__(title="釋放嫌犯")
+        self.panel = panel
+        self.reason_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="釋放理由（可選）",
+            placeholder="預設為『法務部釋放』",
+            required=False,
+            style=discord.TextStyle.paragraph,
+        )
+        self.add_item(self.reason_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        reason = str(self.reason_input.value).strip() or None
+        await self.panel.handle_release(interaction, reason)
 
 
 # --- Background Scheduler Integration ---

@@ -117,6 +117,21 @@ async def test_release_suspects_updates_roles(monkeypatch: pytest.MonkeyPatch) -
     guild.get_role.side_effect = lambda rid: suspect_role if rid == 11 else citizen_role
     guild.get_member.return_value = member
 
+    # JusticeService 替身：視所有嫌疑人為未起訴，並避免觸發真實資料庫
+    class _FakeJusticeService:
+        async def is_member_charged(self, *, guild_id: int, member_id: int) -> bool:  # noqa: D401
+            return False
+
+        async def mark_member_released_from_security(
+            self, *, guild_id: int, member_id: int
+        ) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "src.bot.services.state_council_service.JusticeService",
+        _FakeJusticeService,
+    )
+
     results = await service.release_suspects(
         guild=guild,
         guild_id=999,
@@ -194,3 +209,60 @@ async def test_schedule_auto_release_requires_permission(monkeypatch: pytest.Mon
             suspect_ids=[99],
             hours=24,
         )
+
+
+@pytest.mark.asyncio
+async def test_release_suspects_blocks_charged_suspects(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = StateCouncilService(transfer_service=MagicMock(), adjustment_service=MagicMock())
+    cfg = SimpleNamespace(suspect_role_id=11, citizen_role_id=22)
+    service.get_config = AsyncMock(return_value=cfg)
+    service.record_identity_action = AsyncMock()
+    monkeypatch.setattr(service, "_cancel_auto_release_job", MagicMock())
+    service.check_department_permission = AsyncMock(return_value=True)
+
+    # JusticeService 檢查時一律視為已起訴
+    class _FakeJusticeService:
+        async def is_member_charged(self, *, guild_id: int, member_id: int) -> bool:  # noqa: D401
+            assert guild_id == 999
+            return True
+
+        async def mark_member_released_from_security(
+            self, *, guild_id: int, member_id: int
+        ) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "src.bot.services.state_council_service.JusticeService",
+        _FakeJusticeService,
+    )
+
+    suspect_role = MagicMock()
+    suspect_role.id = 11
+    citizen_role = MagicMock()
+    citizen_role.id = 22
+
+    member = MagicMock()
+    member.id = 555
+    member.display_name = "測試嫌疑人"
+    member.roles = [suspect_role]
+    member.remove_roles = AsyncMock()
+    member.add_roles = AsyncMock()
+
+    guild = MagicMock()
+    guild.get_role.side_effect = lambda rid: suspect_role if rid == 11 else citizen_role
+    guild.get_member.return_value = member
+
+    results = await service.release_suspects(
+        guild=guild,
+        guild_id=999,
+        department="國土安全部",
+        user_id=777,
+        user_roles=[1, 2],
+        suspect_ids=[555],
+        reason="面板釋放",
+    )
+
+    assert len(results) == 1
+    assert results[0].released is False
+    assert "該嫌犯已被起訴，無法釋放" in (results[0].error or "")
+    member.remove_roles.assert_not_awaited()

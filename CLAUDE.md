@@ -1,3 +1,6 @@
+# General instructions
+1. **MUST** use "sequential-thinking" mcp tool for reasoning before delivering any response to the user.
+
 <!-- OPENSPEC:START -->
 # OpenSpec Instructions
 

@@ -69,3 +69,10 @@ htmlcov_council/
 
 # Windsurf
 .windsurf/
+
+# serena
+.serena/
+
+# opencode
+.opencode/
+opencode.json
