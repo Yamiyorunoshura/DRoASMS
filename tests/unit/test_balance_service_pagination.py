@@ -7,6 +7,7 @@ import pytest
 
 from src.bot.services.balance_service import BalanceService
 from src.db.gateway.economy_queries import EconomyQueryGateway, HistoryRecord
+from src.infra.result import Ok
 
 
 class _FakeGateway:
@@ -88,7 +89,7 @@ async def test_history_pagination_calls_db_has_more(monkeypatch: pytest.MonkeyPa
 
     svc = BalanceService(fake_pool, gateway=cast(EconomyQueryGateway, _FakeGateway(items)))
 
-    page = await svc.get_history(
+    result = await svc.get_history(
         guild_id=1,
         requester_id=42,
         target_member_id=42,
@@ -96,6 +97,9 @@ async def test_history_pagination_calls_db_has_more(monkeypatch: pytest.MonkeyPa
         limit=3,
         cursor=None,
     )
+
+    assert isinstance(result, Ok)
+    page = result.unwrap()
 
     assert page.items and page.next_cursor is not None
     # 驗證經由 SQL 函式觸發 has_more 判斷
@@ -111,7 +115,7 @@ async def test_history_no_next_cursor_when_less_than_limit(monkeypatch: pytest.M
     fake_pool = _FakePool(fake_conn)
     svc = BalanceService(fake_pool, gateway=cast(EconomyQueryGateway, _FakeGateway(items)))
 
-    page = await svc.get_history(
+    result = await svc.get_history(
         guild_id=1,
         requester_id=42,
         target_member_id=42,
@@ -119,6 +123,9 @@ async def test_history_no_next_cursor_when_less_than_limit(monkeypatch: pytest.M
         limit=3,
         cursor=None,
     )
+
+    assert isinstance(result, Ok)
+    page = result.unwrap()
 
     assert page.items and page.next_cursor is None
     assert fake_conn.sql_seen is None

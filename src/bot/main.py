@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from src.bot.services.transfer_event_pool import TransferEventPoolCoordinator
 from src.config.settings import BotSettings
 from src.db import pool as db_pool
-from src.infra.di.bootstrap import bootstrap_container
+from src.infra.di.bootstrap import bootstrap_result_container
 from src.infra.di.container import DependencyContainer
 from src.infra.logging.config import configure_logging
 from src.infra.telemetry.listener import TelemetryListener
@@ -55,8 +55,9 @@ class EconomyBot(discord.Client):
         """Run once when the bot starts up to prepare global services."""
         await db_pool.init_pool()
 
-        # Bootstrap dependency injection container
-        self._container = bootstrap_container()
+        # Bootstrap dependency injection container with Result-based services enabled
+        base_container, _ = bootstrap_result_container()
+        self._container = base_container
 
         # Start transfer event pool coordinator if enabled
         if self._transfer_coordinator is not None:

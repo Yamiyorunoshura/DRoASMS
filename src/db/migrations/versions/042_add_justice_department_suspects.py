@@ -12,7 +12,9 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = "042_add_justice_department_suspects"
+# 注意：revision ID 長度必須在 alembic_version.version_num 欄位限制（目前為 VARCHAR(32)）以內
+# 因此此處使用較短的識別字串，並與現有資料庫中的 version_num 對齊。
+revision = "042_add_justice_department"
 down_revision = "041_sc_department_multi_roles"
 branch_labels = None
 depends_on = None

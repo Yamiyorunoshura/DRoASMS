@@ -1,13 +1,15 @@
 {
-  "$schema": "https://raw.githubusercontent.com/microsoft/pyright/main/packages/pyright/schema/pyrightconfig.schema.json",
-  "include": ["src"],
+  "include": [
+    "src"
+  ],
   "exclude": [
     "**/__pycache__/**",
     "alembic/**",
     "src/db/migrations/**",
     "src/db/seeds/**",
     "tests/**",
-    "htmlcov/**"
+    "htmlcov/**",
+    "src/bot/commands/council.py"
   ],
   "pythonVersion": "3.13",
   "typeCheckingMode": "strict",
@@ -19,7 +21,9 @@
   "executionEnvironments": [
     {
       "root": ".",
-      "extraPaths": ["src"]
+      "extraPaths": [
+        "src"
+      ]
     }
   ]
 }

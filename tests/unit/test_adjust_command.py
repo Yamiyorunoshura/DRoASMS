@@ -14,13 +14,13 @@ from src.bot.commands.adjust import build_adjust_command
 from src.bot.services.adjustment_service import (
     AdjustmentResult,
     AdjustmentService,
-    UnauthorizedAdjustmentError,
     ValidationError,
 )
 from src.bot.services.currency_config_service import (
     CurrencyConfigResult,
     CurrencyConfigService,
 )
+from src.infra.result import Err, Ok
 
 
 def _snowflake() -> int:
@@ -69,8 +69,9 @@ async def test_adjust_command_validates_admin_permission() -> None:
     admin_id = _snowflake()
     target_id = _snowflake()
 
+    # 使用 Result 模式模擬服務端的權限錯誤
     service = SimpleNamespace(
-        adjust_balance=AsyncMock(side_effect=UnauthorizedAdjustmentError("權限不足"))
+        adjust_balance=AsyncMock(return_value=Err(ValidationError("權限不足")))
     )
     currency_service = SimpleNamespace(get_currency_config=AsyncMock())
 
@@ -97,7 +98,10 @@ async def test_adjust_command_validates_amount() -> None:
     admin_id = _snowflake()
     target_id = _snowflake()
 
-    service = SimpleNamespace(adjust_balance=AsyncMock(side_effect=ValidationError("金額無效")))
+    # 使用 Result 模式模擬服務端的金額驗證錯誤
+    service = SimpleNamespace(
+        adjust_balance=AsyncMock(return_value=Err(ValidationError("金額無效")))
+    )
     currency_service = SimpleNamespace(get_currency_config=AsyncMock())
 
     command = build_adjust_command(
@@ -125,16 +129,18 @@ async def test_adjust_command_calls_service_with_correct_parameters() -> None:
 
     service = SimpleNamespace(
         adjust_balance=AsyncMock(
-            return_value=AdjustmentResult(
-                transaction_id=None,
-                guild_id=guild_id,
-                admin_id=admin_id,
-                target_id=target_id,
-                amount=150,
-                target_balance_after=350,
-                direction="adjustment_grant",
-                created_at=None,
-                metadata={"reason": "Bonus"},
+            return_value=Ok(
+                AdjustmentResult(
+                    transaction_id=None,
+                    guild_id=guild_id,
+                    admin_id=admin_id,
+                    target_id=target_id,
+                    amount=150,
+                    target_balance_after=350,
+                    direction="adjustment_grant",
+                    created_at=None,
+                    metadata={"reason": "Bonus"},
+                )
             )
         )
     )
@@ -177,16 +183,18 @@ async def test_adjust_command_uses_currency_config() -> None:
 
     service = SimpleNamespace(
         adjust_balance=AsyncMock(
-            return_value=AdjustmentResult(
-                transaction_id=None,
-                guild_id=guild_id,
-                admin_id=admin_id,
-                target_id=target_id,
-                amount=150,
-                target_balance_after=350,
-                direction="adjustment_grant",
-                created_at=None,
-                metadata={"reason": "Bonus"},
+            return_value=Ok(
+                AdjustmentResult(
+                    transaction_id=None,
+                    guild_id=guild_id,
+                    admin_id=admin_id,
+                    target_id=target_id,
+                    amount=150,
+                    target_balance_after=350,
+                    direction="adjustment_grant",
+                    created_at=None,
+                    metadata={"reason": "Bonus"},
+                )
             )
         )
     )

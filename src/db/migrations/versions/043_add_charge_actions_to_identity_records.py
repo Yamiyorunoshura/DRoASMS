@@ -1,14 +1,15 @@
 """Add charge / revoke_charge actions to identity action enum.
 
-Revision ID: 043_add_charge_actions_to_identity_records
-Revises: 042_add_justice_department_suspects
+Revision ID: 043_add_charge_actions
+Revises: 042_add_justice_department
 Create Date: 2025-11-17 00:00:00.000000
 """
 
 from alembic import op
 
-revision = "043_add_charge_actions_to_identity_records"
-down_revision = "042_add_justice_department_suspects"
+# 注意：revision ID 長度必須在 alembic_version.version_num 欄位限制（目前為 VARCHAR(32)）以內
+revision = "043_add_charge_actions"
+down_revision = "042_add_justice_department"
 branch_labels = None
 depends_on = None
 

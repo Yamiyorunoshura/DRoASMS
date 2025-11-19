@@ -13,6 +13,8 @@ from src.infra.result import (
     Result,
     async_returns_result,
     collect,
+    get_error_metrics,
+    reset_error_metrics,
     result_from_exception,
     returns_result,
     safe_async_call,
@@ -27,6 +29,8 @@ def test_ok_and_err_basic_methods() -> None:
     assert ok_value.is_ok()
     assert not ok_value.is_err()
     assert ok_value.unwrap() == 10
+    # 迭代支援：Ok 應該產出單一值
+    assert list(ok_value) == [10]
 
     err_value: Result[int, Error] = Err(Error("failure"))
     assert not err_value.is_ok()
@@ -34,6 +38,8 @@ def test_ok_and_err_basic_methods() -> None:
     assert err_value.unwrap_err().message == "failure"
     with pytest.raises(RuntimeError):
         err_value.unwrap()
+    # 迭代支援：Err 視為空集合
+    assert list(err_value) == []
 
 
 @pytest.mark.unit
@@ -117,6 +123,29 @@ async def test_async_result_map_and_map_err() -> None:
 
 
 @pytest.mark.unit
+def test_returns_result_with_exception_map() -> None:
+    class CustomDatabaseError(Error):
+        """自定義錯誤型別，用於測試 exception_map。"""
+
+    @returns_result(exception_map={ValueError: CustomDatabaseError})
+    def may_fail(flag: bool) -> int:
+        if flag:
+            raise ValueError("bad")
+        raise RuntimeError("boom")
+
+    err_on_value: Result[int, Error] = may_fail(True)
+    assert isinstance(err_on_value, Err)
+    mapped_error = err_on_value.unwrap_err()
+    assert isinstance(mapped_error, CustomDatabaseError)
+
+    err_on_runtime: Result[int, Error] = may_fail(False)
+    assert isinstance(err_on_runtime, Err)
+    default_error = err_on_runtime.unwrap_err()
+    # RuntimeError 應使用預設 Error 型別
+    assert type(default_error) is Error
+
+
+@pytest.mark.unit
 def test_result_from_exception_and_decorators() -> None:
     exc = RuntimeError("db down")
     err_result = result_from_exception(exc, default_error=DatabaseError)
@@ -151,3 +180,42 @@ async def test_async_returns_result_decorator() -> None:
 
     err_res = await async_may_fail(True)
     assert isinstance(err_res, Err)
+
+
+@pytest.mark.asyncio
+async def test_async_returns_result_with_exception_map() -> None:
+    class CustomDatabaseError(Error):
+        """自定義錯誤型別，用於測試 async exception_map。"""
+
+    @async_returns_result(exception_map={ValueError: CustomDatabaseError})
+    async def async_may_fail(flag: bool) -> str:
+        if flag:
+            raise ValueError("bad")
+        raise RuntimeError("boom")
+
+    err_on_value = await async_may_fail(True)
+    assert isinstance(err_on_value, Err)
+    mapped_error = err_on_value.unwrap_err()
+    assert isinstance(mapped_error, CustomDatabaseError)
+
+    err_on_runtime = await async_may_fail(False)
+    assert isinstance(err_on_runtime, Err)
+    default_error = err_on_runtime.unwrap_err()
+    assert type(default_error) is Error
+
+
+@pytest.mark.unit
+def test_error_metrics_counter_updates() -> None:
+    reset_error_metrics()
+
+    def fail(_: int) -> int:
+        raise ValueError("boom")
+
+    # 觸發一次 safe_call 失敗
+    result = safe_call(fail, 1)
+    assert isinstance(result, Err)
+
+    metrics = get_error_metrics()
+    # 至少應該有一筆 Error 類型與總計
+    assert metrics.get("Error", 0) >= 1
+    assert metrics.get("__total__", 0) >= metrics.get("Error", 0)

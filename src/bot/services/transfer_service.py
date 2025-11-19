@@ -16,6 +16,7 @@ from src.db.gateway.economy_transfers import (
     EconomyTransferGateway,
     TransferProcedureResult,
 )
+from src.infra.result import BusinessLogicError, DatabaseError, Err, Ok, Result, ValidationError
 from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
@@ -69,7 +70,8 @@ class TransferService:
     ) -> TransferResult | UUID:
         """Transfer currency.
 
-        Returns TransferResult if sync mode, UUID (transfer_id) if event pool mode.
+        Returns TransferResult in同步模式，或在事件池模式下回傳 transfer_id(UUID)。
+        發生錯誤時以 TransferError / ValidationError / DatabaseError 等例外表示。
         """
         if initiator_id == target_id:
             raise TransferValidationError("Initiator and target must be different members.")
@@ -87,20 +89,10 @@ class TransferService:
                 hours = expires_hours if expires_hours is not None else self._default_expires_hours
                 expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
 
-            if connection is not None:
-                transfer_id = await self._create_pending_transfer(
-                    connection,
-                    guild_id=guild_id,
-                    initiator_id=initiator_id,
-                    target_id=target_id,
-                    amount=amount,
-                    metadata=transfer_metadata,
-                    expires_at=expires_at,
-                )
-            else:
-                async with self._pool.acquire() as pooled_connection:
+            try:
+                if connection is not None:
                     transfer_id = await self._create_pending_transfer(
-                        pooled_connection,
+                        connection,
                         guild_id=guild_id,
                         initiator_id=initiator_id,
                         target_id=target_id,
@@ -108,11 +100,25 @@ class TransferService:
                         metadata=transfer_metadata,
                         expires_at=expires_at,
                     )
-            return transfer_id
+                else:
+                    async with self._pool.acquire() as pooled_connection:
+                        transfer_id = await self._create_pending_transfer(
+                            pooled_connection,
+                            guild_id=guild_id,
+                            initiator_id=initiator_id,
+                            target_id=target_id,
+                            amount=amount,
+                            metadata=transfer_metadata,
+                            expires_at=expires_at,
+                        )
+                return transfer_id
+            except Exception as e:
+                LOGGER.exception("transfer_service.pending_transfer_error")
+                raise TransferError(f"Failed to create pending transfer: {e}") from e
 
         # Synchronous mode (original behavior)
         if connection is not None:
-            return await self._execute_transfer(
+            base_result = await self._execute_transfer(
                 connection,
                 guild_id=guild_id,
                 initiator_id=initiator_id,
@@ -120,16 +126,34 @@ class TransferService:
                 amount=amount,
                 metadata=transfer_metadata,
             )
+        else:
+            async with self._pool.acquire() as pooled_connection:
+                base_result = await self._execute_transfer(
+                    pooled_connection,
+                    guild_id=guild_id,
+                    initiator_id=initiator_id,
+                    target_id=target_id,
+                    amount=amount,
+                    metadata=transfer_metadata,
+                )
+        # 依 Result 映射為例外或成功結果
+        if base_result.is_err():
+            error = base_result.unwrap_err()
+            # 驗證錯誤 → 轉成 TransferValidationError
+            if isinstance(error, ValidationError):
+                raise TransferValidationError(error.message)
+            # 業務邏輯錯誤：依 context 映射為特定 TransferError
+            if isinstance(error, BusinessLogicError):
+                err_type = error.context.get("error_type")
+                if err_type == "insufficient_balance":
+                    raise InsufficientBalanceError(error.message)
+                if err_type == "throttle":
+                    raise TransferThrottleError(error.message)
+                raise TransferError(error.message)
+            # 其餘資料庫錯誤 → 一律視為 TransferError 包裝
+            raise TransferError(getattr(error, "message", str(error)))
 
-        async with self._pool.acquire() as pooled_connection:
-            return await self._execute_transfer(
-                pooled_connection,
-                guild_id=guild_id,
-                initiator_id=initiator_id,
-                target_id=target_id,
-                amount=amount,
-                metadata=transfer_metadata,
-            )
+        return base_result.unwrap()
 
     async def _execute_transfer(
         self,
@@ -140,22 +164,58 @@ class TransferService:
         target_id: int,
         amount: int,
         metadata: dict[str, Any],
-    ) -> TransferResult:
-        async with connection.transaction():
-            try:
-                result = await self._gateway.transfer_currency(
-                    connection,
-                    guild_id=guild_id,
-                    initiator_id=initiator_id,
-                    target_id=target_id,
-                    amount=amount,
-                    metadata=metadata,
-                )
-            except asyncpg.PostgresError as exc:
-                self._handle_postgres_error(exc)
-                raise  # pragma: no cover
+    ) -> Result[TransferResult, DatabaseError | BusinessLogicError | ValidationError]:
+        """Execute the transfer and map DB errors to domain errors.
 
-        return self._to_result(result)
+        注意：EconomyTransferGateway.transfer_currency 已透過 async_returns_result
+        轉為 Result 介面。我們在這裡自行管理一層 transaction/savepoint：
+        - 成功時 commit，讓變更持久化於目前測試交易中；
+        - 失敗時 rollback，此時仍保留 gateway 回傳的錯誤內容，以避免僅看到
+          `InFailedSQLTransactionError` 而遺失真正的失敗原因（例如餘額不足）。
+        """
+        tx = connection.transaction()
+        await tx.start()
+        try:
+            gateway_result = await self._gateway.transfer_currency(
+                connection,
+                guild_id=guild_id,
+                initiator_id=initiator_id,
+                target_id=target_id,
+                amount=amount,
+                metadata=metadata,
+            )
+
+            # EconomyTransferGateway is decorated with async_returns_result, so it always
+            # returns Result[TransferProcedureResult, Error] rather than raising.
+            if gateway_result.is_err():
+                error = gateway_result.unwrap_err()
+                cause = getattr(error, "cause", None)
+
+                # If the underlying cause was a PostgresError, map it to business/validation errors.
+                if isinstance(cause, asyncpg.PostgresError):
+                    mapped_error = self._handle_postgres_error(cause)
+                    await tx.rollback()
+                    return Err(mapped_error)
+
+                # Otherwise propagate DatabaseError as-is when possible.
+                if isinstance(error, DatabaseError):
+                    await tx.rollback()
+                    return Err(error)
+
+                # Fallback: wrap unknown Error into DatabaseError while preserving message.
+                await tx.rollback()
+                return Err(DatabaseError(f"Unexpected database error: {error}"))
+
+            db_result = gateway_result.unwrap()
+            await tx.commit()
+            return Ok(self._to_result(db_result))
+        except Exception as e:  # pragma: no cover - 防禦性日誌
+            try:
+                await tx.rollback()
+            except Exception:
+                pass
+            LOGGER.exception("transfer_service.execute_transfer_internal_error")
+            return Err(DatabaseError(f"Transaction failed: {e}"))
 
     def _to_result(self, db_result: TransferProcedureResult) -> TransferResult:
         return transfer_result_from_procedure(db_result)
@@ -209,15 +269,26 @@ class TransferService:
             )
 
     @staticmethod
-    def _handle_postgres_error(exc: asyncpg.PostgresError) -> None:
+    def _handle_postgres_error(
+        exc: asyncpg.PostgresError,
+    ) -> BusinessLogicError | ValidationError | DatabaseError:
         message = (exc.args[0] if exc.args else "").lower()
         sqlstate = getattr(exc, "sqlstate", None)
         if sqlstate == "P0001" and "insufficient" in message:
-            raise InsufficientBalanceError(exc.args[0]) from exc
+            return BusinessLogicError(
+                message=exc.args[0],
+                context={"sqlstate": sqlstate, "error_type": "insufficient_balance"},
+            )
         if sqlstate == "P0001" and "throttle" in message:
-            raise TransferThrottleError(exc.args[0]) from exc
+            return BusinessLogicError(
+                message=exc.args[0],
+                context={"sqlstate": sqlstate, "error_type": "throttle"},
+            )
         if sqlstate == "22023":
-            raise TransferValidationError(exc.args[0]) from exc
+            return ValidationError(
+                message=exc.args[0],
+                context={"sqlstate": sqlstate, "error_type": "validation"},
+            )
 
         LOGGER.exception("transfer_service.database_error", sqlstate=sqlstate)
-        raise TransferError("Transfer failed due to an unexpected database error.") from exc
+        return DatabaseError("Transfer failed due to an unexpected database error.")

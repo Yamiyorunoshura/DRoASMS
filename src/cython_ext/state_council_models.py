@@ -33,6 +33,9 @@ class StateCouncilConfig:
     central_bank_account_id: int
     created_at: datetime
     updated_at: datetime
+    treasury_account_id: int | None = None
+    welfare_account_id: int | None = None
+    auto_release_hours: int | None = None
     citizen_role_id: int | None = None
     suspect_role_id: int | None = None
 
@@ -74,7 +77,7 @@ class GovernmentAccount:
 
 @dataclass(slots=True, frozen=True)
 class IdentityRecord:
-    record_id: UUID
+    record_id: UUID | int
     guild_id: int
     target_id: int
     action: str
@@ -97,7 +100,7 @@ class CurrencyIssuance:
 
 @dataclass(slots=True, frozen=True)
 class InterdepartmentTransfer:
-    transfer_id: UUID
+    transfer_id: UUID | int
     guild_id: int
     from_department: str
     to_department: str
@@ -218,6 +221,13 @@ class SuspectProfile:
     arrest_reason: str | None
     auto_release_at: datetime | None
     auto_release_hours: int | None
+    is_detained: bool = False
+    detained_at: datetime | None = None
+    detained_by: int | None = None
+    reason: str | None = None
+    evidence: str | None = None
+    released_by: int | None = None
+    release_reason: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -225,5 +235,9 @@ class SuspectReleaseResult:
     suspect_id: int
     display_name: str | None
     released: bool
+    was_detained: bool = False
+    released_by: int | None = None
+    release_reason: str | None = None
+    detention_duration_hours: int | None = None
     reason: str | None = None
     error: str | None = None

@@ -67,9 +67,6 @@ backup/
 # cov
 htmlcov_council/
 
-# Windsurf
-.windsurf/
-
 # serena
 .serena/
 

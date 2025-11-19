@@ -10,7 +10,6 @@ from src.bot.commands.help_data import HelpData
 from src.bot.services.adjustment_service import (
     AdjustmentResult,
     AdjustmentService,
-    UnauthorizedAdjustmentError,
     ValidationError,
 )
 from src.bot.services.council_service import CouncilService, GovernanceNotConfiguredError
@@ -29,6 +28,7 @@ from src.bot.services.supreme_assembly_service import (
     SupremeAssemblyService,
 )
 from src.infra.di.container import DependencyContainer
+from src.infra.result import Err, Ok
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -223,8 +223,10 @@ def build_adjust_command(
                     )
         else:
             target_id = target.id
+
+        # 呼叫服務層：同時支援 Result 模式與舊版直接回傳 AdjustmentResult 的實作
         try:
-            result = await service.adjust_balance(
+            raw_result: Any = await service.adjust_balance(
                 guild_id=guild_id,
                 admin_id=interaction.user.id,
                 target_id=target_id,
@@ -233,24 +235,44 @@ def build_adjust_command(
                 can_adjust=has_right or (is_justice_leader and justice_can_adjust_target),
                 connection=None,
             )
-        except UnauthorizedAdjustmentError as exc:
-            await interaction.response.send_message(content=str(exc), ephemeral=True)
-            return
         except ValidationError as exc:
+            # 權限 / 參數驗證錯誤：直接顯示訊息
             await interaction.response.send_message(content=str(exc), ephemeral=True)
             return
-        except Exception as exc:  # pragma: no cover - unexpected
-            LOGGER.exception("bot.adjust.unexpected_error", error=str(exc))
+        except Exception as exc:  # pragma: no cover - 防禦性日誌
+            LOGGER.exception("bot.adjust.service_exception", error=str(exc))
             await interaction.response.send_message(
-                content="處理管理調整時發生未預期錯誤，請稍後再試。",
+                content="處理管理調整時發生錯誤，請稍後再試。",
                 ephemeral=True,
             )
             return
 
+        adjustment_result: AdjustmentResult
+        if isinstance(raw_result, Err):
+            err_result = cast(Err[AdjustmentResult, Exception], raw_result)
+            error = err_result.error
+            LOGGER.error(
+                "bot.adjust.service_error", error=str(error), error_type=type(error).__name__
+            )
+            if isinstance(error, ValidationError):
+                await interaction.response.send_message(content=str(error), ephemeral=True)
+            else:
+                await interaction.response.send_message(
+                    content="處理管理調整時發生錯誤，請稍後再試。",
+                    ephemeral=True,
+                )
+            return
+        elif isinstance(raw_result, Ok):
+            ok_result = cast(Ok[AdjustmentResult, Any], raw_result)
+            adjustment_result = ok_result.value
+        else:
+            # 舊版合約：直接回傳 AdjustmentResult
+            adjustment_result = cast(AdjustmentResult, raw_result)
+
         # Get currency config
         currency_config = await currency_service.get_currency_config(guild_id=guild_id)
 
-        message = _format_success_message(target, result, currency_config)
+        message = _format_success_message(target, adjustment_result, currency_config)
         await interaction.response.send_message(content=message, ephemeral=True)
 
     # Pylance 在嚴格模式下無法從 decorators 推導泛型參數，導致回傳型別含 Unknown。

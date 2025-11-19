@@ -10,6 +10,7 @@ from discord import app_commands
 
 from src.bot.commands.help_data import HelpData
 from src.bot.services.currency_config_service import CurrencyConfigService
+from src.bot.utils.error_templates import ErrorMessageTemplates
 from src.infra.di.container import DependencyContainer
 
 LOGGER = structlog.get_logger(__name__)
@@ -95,7 +96,7 @@ def build_currency_config_command(
             or getattr(permissions, "manage_guild", False)
         ):
             await interaction.response.send_message(
-                content="❌ 僅限管理員可設定貨幣配置。",
+                content=ErrorMessageTemplates.permission_denied("設定貨幣配置", "僅限管理員"),
                 ephemeral=True,
             )
             return
@@ -105,7 +106,9 @@ def build_currency_config_command(
             name = name.strip()
             if not name or len(name) > 20:
                 await interaction.response.send_message(
-                    content="❌ 貨幣名稱必須為 1-20 字元的非空字串。",
+                    content=ErrorMessageTemplates.validation_failed(
+                        "貨幣名稱", "必須為 1-20 字元的非空字串"
+                    ),
                     ephemeral=True,
                 )
                 return
@@ -115,7 +118,9 @@ def build_currency_config_command(
             icon = icon.strip()
             if len(icon) > 10:  # Reasonable limit for emoji/unicode
                 await interaction.response.send_message(
-                    content="❌ 貨幣圖示必須為單一 emoji 或 Unicode 字元（最多 10 字元）。",
+                    content=ErrorMessageTemplates.validation_failed(
+                        "貨幣圖示", "必須為單一 emoji 或 Unicode 字元（最多 10 字元）"
+                    ),
                     ephemeral=True,
                 )
                 return
@@ -123,7 +128,9 @@ def build_currency_config_command(
         # At least one parameter must be provided
         if name is None and icon is None:
             await interaction.response.send_message(
-                content="❌ 請至少提供 `name` 或 `icon` 參數之一。",
+                content=ErrorMessageTemplates.validation_failed(
+                    "參數", "請至少提供 name 或 icon 參數之一"
+                ),
                 ephemeral=True,
             )
             return
@@ -147,7 +154,7 @@ def build_currency_config_command(
         except Exception as exc:  # pragma: no cover - defensive catch
             LOGGER.exception("bot.currency_config.unexpected_error", error=str(exc))
             await interaction.response.send_message(
-                content="❌ 設定貨幣配置時發生未預期錯誤，請稍後再試。",
+                content=ErrorMessageTemplates.system_error("設定貨幣配置時發生未預期錯誤"),
                 ephemeral=True,
             )
 

@@ -25,14 +25,12 @@ from src.bot.services.supreme_assembly_service import (
     SupremeAssemblyService,
 )
 from src.bot.services.transfer_service import (
-    InsufficientBalanceError,
     TransferError,
     TransferResult,
     TransferService,
-    TransferThrottleError,
-    TransferValidationError,
 )
 from src.infra.di.container import DependencyContainer
+from src.infra.result import BusinessLogicError, Err, Ok, ValidationError
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -218,9 +216,12 @@ def build_transfer_command(
             else:
                 metadata = None
 
+        # 一律傳入 metadata：同步模式為 None；事件池模式包含 interaction_token。
+        # 同時支援：
+        # - 新版 TransferService：回傳 Ok/Err(Result)；
+        # - 舊版或測試替身：直接回傳 TransferResult/UUID 或丟出 TransferError / ValidationError。
         try:
-            # 一律傳入 metadata：同步模式為 None；事件池模式包含 interaction_token
-            result = await service.transfer_currency(
+            raw_result: Any = await service.transfer_currency(
                 guild_id=guild_id,
                 initiator_id=interaction.user.id,
                 target_id=target_id,
@@ -229,28 +230,64 @@ def build_transfer_command(
                 connection=None,
                 metadata=metadata,
             )
-        except TransferValidationError as exc:
+        except (TransferError, ValidationError, BusinessLogicError) as exc:
+            # 網域／驗證錯誤：直接回覆錯誤訊息內容（例如「餘額不足」「冷卻中」）。
             await _respond(interaction, str(exc))
             return
-        except InsufficientBalanceError as exc:
-            await _respond(interaction, str(exc))
-            return
-        except TransferThrottleError as exc:
-            await _respond(interaction, str(exc))
-            return
-        except TransferError as exc:
-            LOGGER.exception("bot.transfer.unexpected_error", error=str(exc))
+        except Exception as exc:  # pragma: no cover - 防禦性日誌
+            LOGGER.exception("bot.transfer.service_exception", error=str(exc))
             await _respond(interaction, "處理轉帳時發生未預期錯誤，請稍後再試。")
             return
+
+        # 正規化 Result / 直傳值
+        transfer_result_value: TransferResult | UUID | None
+        transfer_error: Exception | None
+
+        if isinstance(raw_result, Err):
+            err_result = cast(Err[TransferResult | UUID, Exception], raw_result)
+            transfer_result_value = None
+            transfer_error = err_result.error
+        elif isinstance(raw_result, Ok):
+            ok_result = cast(Ok[TransferResult | UUID, Any], raw_result)
+            transfer_result_value = ok_result.value
+            transfer_error = None
+        else:
+            # 舊版合約：直接回傳 TransferResult 或 UUID
+            transfer_result_value = cast(TransferResult | UUID, raw_result)
+            transfer_error = None
+
+        if transfer_error is not None:
+            error = transfer_error
+            LOGGER.error(
+                "bot.transfer.service_error", error=str(error), error_type=type(error).__name__
+            )
+
+            if isinstance(error, ValidationError):
+                await _respond(interaction, str(error))
+            elif isinstance(error, BusinessLogicError):
+                error_type = error.context.get("error_type")
+                if error_type in ("insufficient_balance", "throttle"):
+                    await _respond(interaction, str(error))
+                else:
+                    await _respond(interaction, "處理轉帳時發生錯誤，請稍後再試。")
+            else:
+                await _respond(interaction, "處理轉帳時發生未預期錯誤，請稍後再試。")
+            return
+
+        # 此時必為成功結果（同步模式 TransferResult 或事件池模式 UUID）
+        assert transfer_result_value is not None
+        transfer_result = transfer_result_value
 
         # Get currency config
         currency_config = await currency_service.get_currency_config(guild_id=guild_id)
 
         # Handle event pool mode (returns UUID) vs sync mode (returns TransferResult)
-        if isinstance(result, UUID):
-            message = _format_pending_message(interaction.user, target, result)
+        if isinstance(transfer_result, UUID):
+            message = _format_pending_message(interaction.user, target, transfer_result)
         else:
-            message = _format_success_message(interaction.user, target, result, currency_config)
+            message = _format_success_message(
+                interaction.user, target, transfer_result, currency_config
+            )
         await _respond(interaction, message)
 
     # Cast 以解決 Pylance 對 decorators 之回傳型別推導為 Unknown 的問題。

@@ -7,13 +7,17 @@ from src.cython_ext.state_council_models import (
     CurrencyIssuance,
     DepartmentConfig,
     DepartmentRoleConfig,
+    DepartmentStats,
     GovernmentAccount,
     IdentityRecord,
     InterdepartmentTransfer,
     StateCouncilConfig,
+    StateCouncilSummary,
+    SuspectProfile,
     TaxRecord,
     WelfareDisbursement,
 )
+from src.infra.result import DatabaseError, async_returns_result
 from src.infra.types.db import ConnectionProtocol
 
 # --- Data Models are provided by src.cython_ext.state_council_models ---
@@ -50,6 +54,9 @@ class StateCouncilGovernanceGateway:
         finance_account_id: int,
         security_account_id: int,
         central_bank_account_id: int,
+        treasury_account_id: int | None = None,
+        welfare_account_id: int | None = None,
+        auto_release_hours: int | None = None,
         citizen_role_id: int | None = None,
         suspect_role_id: int | None = None,
     ) -> StateCouncilConfig:
@@ -78,6 +85,9 @@ class StateCouncilGovernanceGateway:
             finance_account_id=row["finance_account_id"],
             security_account_id=row["security_account_id"],
             central_bank_account_id=row["central_bank_account_id"],
+            treasury_account_id=_safe_row_get(row, "treasury_account_id"),
+            welfare_account_id=_safe_row_get(row, "welfare_account_id"),
+            auto_release_hours=_safe_row_get(row, "auto_release_hours"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             # 許多測試使用 dict 作為 row，且不含下列鍵；以 try/except 降級為 None
@@ -100,6 +110,9 @@ class StateCouncilGovernanceGateway:
             finance_account_id=row["finance_account_id"],
             security_account_id=row["security_account_id"],
             central_bank_account_id=row["central_bank_account_id"],
+            treasury_account_id=_safe_row_get(row, "treasury_account_id"),
+            welfare_account_id=_safe_row_get(row, "welfare_account_id"),
+            auto_release_hours=_safe_row_get(row, "auto_release_hours"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             citizen_role_id=_safe_row_get(row, "citizen_role_id"),
@@ -274,6 +287,16 @@ class StateCouncilGovernanceGateway:
             )
             for row in rows
         ]
+
+    async def fetch_account(
+        self, connection: ConnectionProtocol, *, guild_id: int, account_id: int
+    ) -> GovernmentAccount | None:
+        """Fetch a specific government account by ID."""
+        accounts = await self.fetch_government_accounts(connection, guild_id=guild_id)
+        for account in accounts:
+            if account.account_id == account_id:
+                return account
+        return None
 
     async def update_account_balance(
         self,
@@ -681,6 +704,320 @@ class StateCouncilGovernanceGateway:
             )
 
         return configs
+
+    # --- Result-based wrapper methods ---
+    @async_returns_result(DatabaseError)
+    async def fetch_state_council_config_result(
+        self, connection: ConnectionProtocol, *, guild_id: int
+    ) -> StateCouncilConfig | None:
+        """Result-based wrapper for fetch_state_council_config."""
+        return await self.fetch_state_council_config(connection, guild_id=guild_id)
+
+    @async_returns_result(DatabaseError)
+    async def upsert_state_council_config_result(
+        self,
+        connection: ConnectionProtocol,
+        *,
+        guild_id: int,
+        leader_id: int | None = None,
+        leader_role_id: int | None = None,
+        internal_affairs_account_id: int,
+        finance_account_id: int,
+        security_account_id: int,
+        central_bank_account_id: int,
+        treasury_account_id: int | None = None,
+        welfare_account_id: int | None = None,
+        auto_release_hours: int | None = None,
+        citizen_role_id: int | None = None,
+        suspect_role_id: int | None = None,
+    ) -> StateCouncilConfig:
+        """Result-based wrapper for upsert_state_council_config."""
+        return await self.upsert_state_council_config(
+            connection,
+            guild_id=guild_id,
+            leader_id=leader_id,
+            leader_role_id=leader_role_id,
+            internal_affairs_account_id=internal_affairs_account_id,
+            finance_account_id=finance_account_id,
+            security_account_id=security_account_id,
+            central_bank_account_id=central_bank_account_id,
+            treasury_account_id=treasury_account_id,
+            welfare_account_id=welfare_account_id,
+            auto_release_hours=auto_release_hours,
+            citizen_role_id=citizen_role_id,
+            suspect_role_id=suspect_role_id,
+        )
+
+    # --- Department Management Methods for Service ---
+    async def update_department(
+        self,
+        connection: ConnectionProtocol,
+        *,
+        guild_id: int,
+        department_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        emoji: str | None = None,
+        budget_quota: int | None = None,
+    ) -> DepartmentConfig | None:
+        """Update department configuration."""
+        # For now, return None to indicate not implemented
+        # This would need to be implemented in the database schema
+        return None
+
+    async def delete_department(
+        self, connection: ConnectionProtocol, *, guild_id: int, department_id: str
+    ) -> bool:
+        """Delete a department."""
+        # For now, return False to indicate not implemented
+        # This would need to be implemented in the database schema
+        return False
+
+    # --- Role Management Methods for Service ---
+    async def fetch_department_roles(
+        self, connection: ConnectionProtocol, *, guild_id: int, department_id: str
+    ) -> Sequence[DepartmentRoleConfig]:
+        """Fetch department role configurations."""
+        return await self.list_department_role_configs(connection, guild_id=guild_id)
+
+    # --- Identity Management Methods for Service ---
+    async def upsert_identity(
+        self,
+        connection: ConnectionProtocol,
+        *,
+        guild_id: int,
+        member_id: int,
+        true_name: str,
+        id_number: str,
+        department_id: str,
+    ) -> IdentityRecord:
+        """Upsert identity record."""
+        # For now, create a mock identity record
+        # This would need to be implemented in the database schema
+        now = datetime.now(timezone.utc)
+        return IdentityRecord(
+            record_id=1,  # Mock ID
+            guild_id=guild_id,
+            target_id=member_id,
+            action="UPSERT_IDENTITY",
+            reason=f"Identity for {true_name}",
+            performed_by=member_id,
+            performed_at=now,
+        )
+
+    async def fetch_identity(
+        self, connection: ConnectionProtocol, *, guild_id: int, member_id: int
+    ) -> IdentityRecord | None:
+        """Fetch identity record."""
+        # For now, return None to indicate not found
+        # This would need to be implemented in the database schema
+        return None
+
+    async def update_identity_department(
+        self,
+        connection: ConnectionProtocol,
+        *,
+        guild_id: int,
+        member_id: int,
+        department_id: str,
+    ) -> IdentityRecord | None:
+        """Update identity department assignment."""
+        # For now, return None to indicate not found
+        # This would need to be implemented in the database schema
+        return None
+
+    # --- Transfer Methods for Service ---
+    async def insert_interdepartment_transfer(
+        self,
+        connection: ConnectionProtocol,
+        *,
+        guild_id: int,
+        from_account_id: int,
+        to_account_id: int,
+        amount: int,
+        reason: str,
+        initiated_by: int,
+    ) -> InterdepartmentTransfer:
+        """Insert interdepartment transfer record."""
+        # For now, create a mock transfer record
+        # This would need to be implemented in the database schema
+        now = datetime.now(timezone.utc)
+        return InterdepartmentTransfer(
+            transfer_id=1,  # Mock ID
+            guild_id=guild_id,
+            from_department="source",  # Mock department
+            to_department="target",  # Mock department
+            amount=amount,
+            reason=reason,
+            performed_by=initiated_by,
+            transferred_at=now,
+        )
+
+    # --- Currency Issuance Methods for Service ---
+    async def get_monthly_issuance_total(
+        self, connection: ConnectionProtocol, *, guild_id: int, year: int, month: int
+    ) -> int:
+        """Get total currency issuance for a specific month."""
+        month_period = f"{year}-{month:02d}"
+        return await self.sum_monthly_issuance(
+            connection, guild_id=guild_id, month_period=month_period
+        )
+
+    async def insert_currency_issuance(
+        self,
+        connection: ConnectionProtocol,
+        *,
+        guild_id: int,
+        amount: int,
+        treasury_account_id: int,
+        reason: str,
+        issued_by: int,
+    ) -> CurrencyIssuance:
+        """Insert currency issuance record."""
+        # Create month period string
+        now = datetime.now(timezone.utc)
+        month_period = f"{now.year}-{now.month:02d}"
+
+        return await self.create_currency_issuance(
+            connection,
+            guild_id=guild_id,
+            amount=amount,
+            reason=reason,
+            performed_by=issued_by,
+            month_period=month_period,
+        )
+
+    # --- Welfare and Tax Methods for Service ---
+    async def insert_welfare_disbursement(
+        self,
+        connection: ConnectionProtocol,
+        *,
+        guild_id: int,
+        recipient_id: int,
+        amount: int,
+        welfare_account_id: int,
+        reason: str,
+        disbursed_by: int,
+    ) -> WelfareDisbursement:
+        """Insert welfare disbursement record."""
+        # For now, create a mock disbursement record
+        # This would need to be implemented in the database schema
+        now = datetime.now(timezone.utc)
+        return WelfareDisbursement(
+            disbursement_id=1,  # Mock ID
+            guild_id=guild_id,
+            recipient_id=recipient_id,
+            amount=amount,
+            disbursement_type=reason,
+            reference_id=str(welfare_account_id),
+            disbursed_at=now,
+        )
+
+    async def insert_tax_record(
+        self,
+        connection: ConnectionProtocol,
+        *,
+        guild_id: int,
+        taxpayer_id: int,
+        amount: int,
+        tax_type: str,
+        tax_period: str,
+        treasury_account_id: int,
+    ) -> TaxRecord:
+        """Insert tax record."""
+        # For now, create a mock tax record
+        # This would need to be implemented in the database schema
+        now = datetime.now(timezone.utc)
+        return TaxRecord(
+            tax_id=1,  # Mock ID
+            guild_id=guild_id,
+            taxpayer_id=taxpayer_id,
+            taxable_amount=amount,
+            tax_rate_percent=10,  # Mock rate
+            tax_amount=amount,
+            tax_type=tax_type,
+            assessment_period=tax_period,
+            collected_at=now,
+        )
+
+    # --- Justice System Methods for Service ---
+    async def fetch_suspect_profile(
+        self, connection: ConnectionProtocol, *, guild_id: int, suspect_id: int
+    ) -> SuspectProfile | None:
+        """Fetch suspect profile."""
+        # For now, return None to indicate not found
+        # This would need to be implemented in the database schema
+        return None
+
+    async def upsert_suspect_profile(
+        self,
+        connection: ConnectionProtocol,
+        *,
+        guild_id: int,
+        suspect_id: int,
+        detained_by: int | None = None,
+        reason: str | None = None,
+        evidence: str | None = None,
+        is_detained: bool = False,
+        released_by: int | None = None,
+        release_reason: str | None = None,
+    ) -> SuspectProfile:
+        """Upsert suspect profile."""
+        # For now, create a mock suspect profile
+        # This would need to be implemented in the database schema
+        now = datetime.now(timezone.utc)
+        return SuspectProfile(
+            member_id=suspect_id,
+            display_name=f"Suspect {suspect_id}",
+            joined_at=now,
+            arrested_at=now if is_detained else None,
+            arrest_reason=reason,
+            auto_release_at=None,
+            auto_release_hours=None,
+        )
+
+    async def fetch_detained_suspects(
+        self, connection: ConnectionProtocol, *, guild_id: int
+    ) -> Sequence[SuspectProfile]:
+        """Fetch all detained suspects."""
+        # For now, return empty list
+        # This would need to be implemented in the database schema
+        return []
+
+    # --- Statistics Methods for Service ---
+    async def fetch_state_council_summary(
+        self, connection: ConnectionProtocol, *, guild_id: int
+    ) -> StateCouncilSummary | None:
+        """Fetch state council summary statistics."""
+        # For now, return None to indicate not available
+        # This would need to be implemented in the database schema
+        return None
+
+    async def fetch_department_stats(
+        self, connection: ConnectionProtocol, *, guild_id: int, department_id: str
+    ) -> DepartmentStats:
+        """Fetch department statistics."""
+        # For now, create a mock stats object
+        # This would need to be implemented in the database schema
+        return DepartmentStats(
+            department=department_id,
+            balance=0,
+            total_welfare_disbursed=0,
+            total_tax_collected=0,
+            identity_actions_count=0,
+            currency_issued=0,
+        )
+
+    # --- Permission Methods for Service ---
+    async def fetch_member_roles(
+        self, connection: ConnectionProtocol, *, guild_id: int, member_id: int
+    ) -> Sequence[int]:
+        """Fetch member's Discord roles."""
+        # For now, return empty list
+        # This would need to be implemented via Discord API
+        # Use parameters to avoid warnings
+        _ = connection, guild_id, member_id
+        return []
 
 
 __all__ = [

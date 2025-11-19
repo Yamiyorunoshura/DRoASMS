@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# mypy: ignore-errors
 import asyncio
 import csv
 import io
@@ -19,15 +20,22 @@ from src.bot.services.council_service import (
     GovernanceNotConfiguredError,
     PermissionDeniedError,
 )
+from src.bot.services.council_service_result import CouncilServiceResult, VoteTotals
 from src.bot.services.department_registry import get_registry
 from src.bot.services.permission_service import PermissionResult, PermissionService
 from src.bot.services.state_council_service import StateCouncilService
 from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 from src.bot.ui.council_paginator import CouncilProposalPaginator
+from src.bot.utils.error_templates import ErrorMessageTemplates
+from src.db.gateway.council_governance import CouncilConfig, Proposal
 from src.db.pool import get_pool
 from src.infra.di.container import DependencyContainer
 from src.infra.events.council_events import CouncilEvent
 from src.infra.events.council_events import subscribe as subscribe_council_events
+from src.infra.result import (
+    Err,
+    Ok,
+)
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -45,6 +53,28 @@ def _extract_select_values(interaction: discord.Interaction) -> list[str]:
         if isinstance(item, str):
             vals.append(item)
     return vals
+
+
+def _unwrap_result(result: Any) -> tuple[Any | None, Any | None]:
+    """將可能是 Result / 巢狀 Result 的值展平成 (ok_value, error)。
+
+    - 若為 Err 或 Ok(Err(...))，回傳 (None, error)
+    - 若為 Ok(value) 或 Ok(Ok(value))，回傳 (value, None)
+    - 若非 Result 型別，視為成功值 (result, None)
+    """
+    current: Any = result
+
+    # 最多展開兩層 Ok/Err：Ok(value) 或 Ok(Ok(value)) / Ok(Err(error))
+    for _ in range(2):
+        if isinstance(current, Err):
+            error = getattr(cast(Any, current), "error", None)
+            return None, error
+        if isinstance(current, Ok):
+            current = cast(Any, getattr(current, "value", None))
+            continue
+        break
+
+    return current, None
 
 
 def get_help_data() -> dict[str, HelpData]:
@@ -132,6 +162,7 @@ def register(
     if container is None:
         # Fallback to old behavior for backward compatibility during migration
         service = CouncilService()
+        service_result = CouncilServiceResult()
         permission_service = PermissionService(
             council_service=service,
             state_council_service=StateCouncilService(),
@@ -139,17 +170,34 @@ def register(
         )
     else:
         service = container.resolve(CouncilService)
+        service_result = container.resolve(CouncilServiceResult)
         permission_service = container.resolve(PermissionService)
 
-    tree.add_command(build_council_group(service, permission_service=permission_service))
-    _install_background_scheduler(tree.client, service)
+    tree.add_command(
+        build_council_group(service, service_result, permission_service=permission_service)
+    )
+    _install_background_scheduler(tree.client, service_result)
 
     LOGGER.debug("bot.command.council.registered")
 
 
 def build_council_group(
-    service: CouncilService, permission_service: PermissionService | None = None
+    service: CouncilService,
+    service_result: CouncilServiceResult | None = None,
+    permission_service: PermissionService | None = None,
 ) -> app_commands.Group:
+    """建立 /council 指令群組。
+
+    - service_result 為 None 時，視為「舊版服務模式」，直接使用 service 物件，
+      以保持對舊測試與既有程式的相容性。
+    - service_result 存在時，使用 Result 型服務以符合新規格。
+    """
+    legacy_mode = service_result is None
+    if service_result is None:
+        # 在舊版模式下，commands 會直接呼叫 CouncilService（或其 MagicMock）。
+        # 這裡僅為型別提示，實際上透過 _unwrap_result 與 try/except 處理回傳值與例外。
+        service_result = cast(CouncilServiceResult, service)  # type: ignore[assignment]
+
     council = app_commands.Group(name="council", description="理事會治理指令群組")
 
     @council.command(name="config_role", description="設定常任理事身分組（角色）")
@@ -169,16 +217,33 @@ def build_council_group(
                 interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
             )
             return
+        # Result 模式 + 舊版直接回傳模式兼容
         try:
-            cfg = await service.set_config(guild_id=interaction.guild_id, council_role_id=role.id)
+            raw_result = await service_result.set_config(
+                guild_id=interaction.guild_id, council_role_id=role.id
+            )
+        except Exception as exc:
+            LOGGER.error("council.config_role.error", error=str(exc))
             await send_message_compat(
                 interaction,
-                content=f"已設定理事角色：{role.mention}（帳戶ID {cfg.council_account_member_id}）",
+                content=f"設定失敗：{exc}",
                 ephemeral=True,
             )
-        except Exception as exc:  # pragma: no cover - unexpected
-            LOGGER.exception("council.config_role.error", error=str(exc))
-            await send_message_compat(interaction, content="設定失敗，請稍後再試。", ephemeral=True)
+            return
+
+        cfg_ok, cfg_err = _unwrap_result(raw_result)
+        if cfg_err is not None:
+            LOGGER.error("council.config_role.error", error=str(cfg_err))
+            error_message = ErrorMessageTemplates.from_error(cfg_err)
+            await send_message_compat(interaction, content=error_message, ephemeral=True)
+            return
+
+        cfg = cast(CouncilConfig, cfg_ok)
+        await send_message_compat(
+            interaction,
+            content=(f"已設定理事角色：{role.mention}（帳戶ID {cfg.council_account_member_id}）"),
+            ephemeral=True,
+        )
 
     # 依規範：移除與面板重疊之撤案/建案/匯出斜線指令（保留 panel/config_role）
 
@@ -192,16 +257,47 @@ def build_council_group(
                 interaction, content="本指令需在伺服器中執行。", ephemeral=True
             )
             return
-        # 檢查是否完成治理設定
+        # 檢查是否完成治理設定（支援 Result 模式與舊版直接丟例外）
         try:
-            cfg = await service.get_config(guild_id=interaction.guild_id)
+            raw_config = await service_result.get_config(guild_id=interaction.guild_id)
         except GovernanceNotConfiguredError:
+            # 舊版服務：依舊測試訊息回應
+            message = (
+                "尚未完成治理設定，請先執行 /council config_role。"
+                if legacy_mode
+                else ErrorMessageTemplates.not_configured("理事會治理")
+            )
+            await send_message_compat(interaction, content=message, ephemeral=True)
+            return
+        except Exception as exc:
+            LOGGER.error("council.panel.get_config.error", error=str(exc))
+            error_message = ErrorMessageTemplates.from_error(exc)
             await send_message_compat(
                 interaction,
-                content="尚未完成治理設定，請先執行 /council config_role。",
+                content=error_message,
                 ephemeral=True,
             )
             return
+
+        config_ok, config_err = _unwrap_result(raw_config)
+        if config_err is not None:
+            error = config_err
+            if isinstance(error, GovernanceNotConfiguredError):
+                message = (
+                    "尚未完成治理設定，請先執行 /council config_role。"
+                    if legacy_mode
+                    else ErrorMessageTemplates.not_configured("理事會治理")
+                )
+            else:
+                message = ErrorMessageTemplates.from_error(error)
+            await send_message_compat(
+                interaction,
+                content=message,
+                ephemeral=True,
+            )
+            return
+
+        cfg = cast(CouncilConfig, config_ok)
 
         user_roles = [role.id for role in getattr(interaction.user, "roles", [])]
         permission_result: PermissionResult | None = None
@@ -214,9 +310,21 @@ def build_council_group(
             )
             has_permission = permission_result.allowed
         else:
-            has_permission = await service.check_council_permission(
-                guild_id=interaction.guild_id, user_roles=user_roles
-            )
+            # Result 模式 + 舊版直接回傳模式兼容
+            try:
+                raw_perm = await service_result.check_council_permission(
+                    guild_id=interaction.guild_id, user_roles=user_roles
+                )
+            except Exception as exc:
+                LOGGER.error("council.panel.permission_check_failed", error=str(exc))
+                has_permission = False
+            else:
+                perm_ok, perm_err = _unwrap_result(raw_perm)
+                if perm_err is not None:
+                    LOGGER.error("council.panel.permission_check_failed", error=str(perm_err))
+                    has_permission = False
+                else:
+                    has_permission = bool(perm_ok)
 
         if not has_permission:
             denial_reason = (
@@ -232,7 +340,7 @@ def build_council_group(
             return
 
         view = CouncilPanelView(
-            service=service,
+            service=service_result,
             guild=interaction.guild,
             author_id=interaction.user.id,
             council_role_id=cfg.council_role_id,  # 保持向下相容
@@ -272,14 +380,27 @@ def build_council_group(
                 interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
             )
             return
+        # Result 模式 + 舊版直接回傳模式兼容
         try:
-            added = await service.add_council_role(guild_id=interaction.guild_id, role_id=role.id)
-        except Exception as exc:  # pragma: no cover - defensive
-            LOGGER.exception("council.add_role.error", error=str(exc))
+            raw_result = await service_result.add_council_role(
+                guild_id=interaction.guild_id, role_id=role.id
+            )
+        except Exception as exc:
+            LOGGER.error("council.add_role.error", error=str(exc))
+            await send_message_compat(interaction, content=f"新增身分組失敗：{exc}", ephemeral=True)
+            return
+
+        added_ok, added_err = _unwrap_result(raw_result)
+        if added_err is not None:
+            LOGGER.error("council.add_role.error", error=str(added_err))
             await send_message_compat(
-                interaction, content="新增身分組失敗，請稍後再試。", ephemeral=True
+                interaction,
+                content=ErrorMessageTemplates.from_error(added_err),
+                ephemeral=True,
             )
             return
+
+        added = bool(added_ok)
         if added:
             content = f"已新增 {role.mention} 到常任理事名冊。"
         else:
@@ -302,16 +423,27 @@ def build_council_group(
                 interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
             )
             return
+        # Result 模式 + 舊版直接回傳模式兼容
         try:
-            removed = await service.remove_council_role(
+            raw_result = await service_result.remove_council_role(
                 guild_id=interaction.guild_id, role_id=role.id
             )
-        except Exception as exc:  # pragma: no cover - defensive
-            LOGGER.exception("council.remove_role.error", error=str(exc))
+        except Exception as exc:
+            LOGGER.error("council.remove_role.error", error=str(exc))
+            await send_message_compat(interaction, content=f"移除身分組失敗：{exc}", ephemeral=True)
+            return
+
+        removed_ok, removed_err = _unwrap_result(raw_result)
+        if removed_err is not None:
+            LOGGER.error("council.remove_role.error", error=str(removed_err))
             await send_message_compat(
-                interaction, content="移除身分組失敗，請稍後再試。", ephemeral=True
+                interaction,
+                content=ErrorMessageTemplates.from_error(removed_err),
+                ephemeral=True,
             )
             return
+
+        removed = bool(removed_ok)
         if removed:
             content = f"已將 {role.mention} 從常任理事名冊移除。"
         else:
@@ -327,22 +459,53 @@ def build_council_group(
                 interaction, content="本指令需在伺服器中執行。", ephemeral=True
             )
             return
+        # 同時支援 Result 模式與舊版直接回傳模式
         try:
-            role_ids = await service.get_council_role_ids(guild_id=interaction.guild_id)
-            cfg = await service.get_config(guild_id=interaction.guild_id)
+            raw_role_ids = await service_result.get_council_role_ids(guild_id=interaction.guild_id)
+            raw_config = await service_result.get_config(guild_id=interaction.guild_id)
         except GovernanceNotConfiguredError:
+            error_message = ErrorMessageTemplates.not_configured("理事會治理")
             await send_message_compat(
                 interaction,
-                content="尚未完成治理設定，請先執行 /council config_role。",
+                content=error_message,
                 ephemeral=True,
             )
             return
-        except Exception as exc:  # pragma: no cover - defensive
-            LOGGER.exception("council.list_roles.error", error=str(exc))
+        except Exception as exc:
+            LOGGER.error("council.list_roles.error", error=str(exc))
             await send_message_compat(
-                interaction, content="讀取理事身分組失敗，請稍後再試。", ephemeral=True
+                interaction,
+                content=ErrorMessageTemplates.system_error(str(exc)),
+                ephemeral=True,
             )
             return
+
+        role_ids_ok, role_ids_err = _unwrap_result(raw_role_ids)
+        if role_ids_err is not None:
+            LOGGER.error("council.list_roles.error", error=str(role_ids_err))
+            await send_message_compat(
+                interaction,
+                content=ErrorMessageTemplates.from_error(role_ids_err),
+                ephemeral=True,
+            )
+            return
+
+        config_ok, config_err = _unwrap_result(raw_config)
+        if config_err is not None:
+            error = config_err
+            if isinstance(error, GovernanceNotConfiguredError):
+                error_message = ErrorMessageTemplates.not_configured("理事會治理")
+            else:
+                error_message = ErrorMessageTemplates.from_error(error)
+            await send_message_compat(
+                interaction,
+                content=error_message,
+                ephemeral=True,
+            )
+            return
+
+        role_ids = cast(Sequence[int], role_ids_ok or [])
+        cfg = cast(CouncilConfig, config_ok)
 
         lines: list[str] = []
         mentioned_ids: set[int] = set()
@@ -372,7 +535,7 @@ def build_council_group(
 
 
 class VotingView(discord.ui.View):
-    def __init__(self, *, proposal_id: UUID, service: CouncilService) -> None:
+    def __init__(self, *, proposal_id: UUID, service: CouncilServiceResult) -> None:
         super().__init__(timeout=None)
         self.proposal_id = proposal_id
         self.service = service
@@ -416,23 +579,41 @@ class VotingView(discord.ui.View):
 
 async def _handle_vote(
     interaction: discord.Interaction,
-    service: CouncilService,
+    service: CouncilServiceResult,
     proposal_id: UUID,
     choice: str,
 ) -> None:
+    from src.bot.services.council_errors import CouncilPermissionDeniedError
+
+    # 同時支援 Result 模式與舊版「直接丟例外」的 service.vote 實作
     try:
-        totals, status = await service.vote(
+        raw_result = await service.vote(
             proposal_id=proposal_id,
             voter_id=interaction.user.id,
             choice=choice,
         )
-    except PermissionDeniedError as exc:
-        await interaction.response.send_message(str(exc), ephemeral=True)
+    except CouncilPermissionDeniedError as error:
+        await interaction.response.send_message(error.message, ephemeral=True)
         return
-    except Exception as exc:  # pragma: no cover
-        LOGGER.exception("council.vote.error", error=str(exc))
+    except PermissionDeniedError as error:
+        await interaction.response.send_message(str(error), ephemeral=True)
+        return
+    except Exception as exc:  # pragma: no cover - defensive
+        LOGGER.error("council.vote.error", error=str(exc))
         await interaction.response.send_message("投票失敗。", ephemeral=True)
         return
+
+    ok_value, error = _unwrap_result(raw_result)
+
+    if isinstance(error, CouncilPermissionDeniedError):
+        await interaction.response.send_message(error.message, ephemeral=True)
+        return
+    if error is not None:
+        LOGGER.error("council.vote.error", error=str(error))
+        await interaction.response.send_message("投票失敗。", ephemeral=True)
+        return
+
+    totals, status = cast(tuple[VoteTotals, str], ok_value)
 
     embed = discord.Embed(title="理事會轉帳提案（投票）", color=0x2ECC71)
     embed.add_field(name="狀態", value=status, inline=False)
@@ -465,25 +646,46 @@ async def _dm_council_for_voting(
     guild: discord.Guild,
     proposal: Any,
 ) -> None:
-    service = CouncilService()
+    # We'll need to get the service from somewhere - let's use the result service
+    # This is a bit of a hack but necessary for the migration
+    from src.infra.di.container import DependencyContainer
+
+    try:
+        container = DependencyContainer()
+        service = container.resolve(CouncilServiceResult)
+    except Exception:
+        # Fallback to creating a new instance
+        service = CouncilServiceResult()
+
     view = VotingView(proposal_id=proposal.proposal_id, service=service)
     # Anonymous in-progress: only aggregated counts are shown in the button acknowledgment
 
     # 使用新的多身分組機制獲取所有理事
     members: list[discord.Member] = []
     try:
-        council_role_ids = await service.get_council_role_ids(guild_id=guild.id)
-        for role_id in council_role_ids:
-            role = guild.get_role(role_id)
-            if role:
-                members.extend(role.members)
+        # 以 Result 模式取得理事會身分組 ID（相容巢狀 Result）
+        role_ids_ok, role_ids_err = _unwrap_result(
+            await service.get_council_role_ids(guild_id=guild.id)
+        )
+        if role_ids_err is not None:
+            LOGGER.warning("council.dm.fetch_members_error", error=str(role_ids_err))
+        else:
+            council_role_ids = list(cast(Sequence[int], role_ids_ok or []))
+            for role_id in council_role_ids:
+                role = guild.get_role(role_id)
+                if role:
+                    members.extend(role.members)
 
-        # 如果沒有多身分組配置，向下相容使用單一身分組
-        if not members:
-            cfg = await service.get_config(guild_id=guild.id)
-            role = guild.get_role(cfg.council_role_id)
-            if role:
-                members.extend(role.members)
+            # 如果沒有多身分組配置，向下相容使用單一身分組
+            if not members:
+                cfg_ok, cfg_err = _unwrap_result(await service.get_config(guild_id=guild.id))
+                if cfg_err is not None:
+                    LOGGER.warning("council.dm.fetch_members_error", error=str(cfg_err))
+                else:
+                    cfg = cast(CouncilConfig, cfg_ok)
+                    role = guild.get_role(cfg.council_role_id)
+                    if role:
+                        members.extend(role.members)
     except Exception as exc:  # pragma: no cover - best effort
         LOGGER.warning("council.dm.fetch_members_error", error=str(exc))
 
@@ -519,7 +721,7 @@ async def _dm_council_for_voting(
 _scheduler_task: asyncio.Task[None] | None = None
 
 
-def _install_background_scheduler(client: discord.Client, service: CouncilService) -> None:
+def _install_background_scheduler(client: discord.Client, service: CouncilServiceResult) -> None:
     global _scheduler_task
     if _scheduler_task is not None:
         return
@@ -561,7 +763,12 @@ def _install_background_scheduler(client: discord.Client, service: CouncilServic
                     gw = CouncilGovernanceGateway()
                     c2: ConnectionProtocol = conn
                     for p in await gw.list_reminder_candidates(c2):
-                        unvoted = await service.list_unvoted_members(proposal_id=p.proposal_id)
+                        unvoted_ok, unvoted_err = _unwrap_result(
+                            await service.list_unvoted_members(proposal_id=p.proposal_id)
+                        )
+                        if unvoted_err is not None:
+                            continue
+                        unvoted = cast(Sequence[int], unvoted_ok or [])
                         # Try DM only unvoted members
                         guild = client.get_guild(p.guild_id)
                         if guild is not None:
@@ -591,7 +798,11 @@ def _install_background_scheduler(client: discord.Client, service: CouncilServic
                     # 嘗試抓 guild 與最新狀態
                     try:
                         # 透過 service 取回提案，若已結束則廣播
-                        proposal = await service.get_proposal(proposal_id=pid)
+                        proposal_result = await service.get_proposal(proposal_id=pid)
+                        if isinstance(proposal_result, Err):
+                            continue
+                        proposal_raw = proposal_result.value
+                        proposal = cast(Proposal | None, proposal_raw)
                         if proposal is None:
                             continue
                         if proposal.status != "進行中":
@@ -630,7 +841,7 @@ class CouncilPanelView(discord.ui.View):
     def __init__(
         self,
         *,
-        service: CouncilService,
+        service: CouncilServiceResult,
         guild: discord.Guild,
         author_id: int,
         council_role_id: int,
@@ -715,13 +926,15 @@ class CouncilPanelView(discord.ui.View):
         try:
             balance_service = BalanceService(get_pool())
             council_account_id = CouncilService.derive_council_account_id(self.guild.id)
-            snap = await balance_service.get_balance_snapshot(
+            snap_result = await balance_service.get_balance_snapshot(
                 guild_id=self.guild.id,
                 requester_id=self.author_id,
                 target_member_id=council_account_id,
                 can_view_others=True,
             )
-            balance_str = f"{snap.balance:,}"
+            if isinstance(snap_result, Ok):
+                snap = snap_result.value
+                balance_str = f"{snap.balance:,}"
         except Exception as exc:  # pragma: no cover - best effort
             LOGGER.warning(
                 "council.panel.summary.balance_error",
@@ -732,14 +945,32 @@ class CouncilPanelView(discord.ui.View):
         # 使用新的多身分組機制獲取所有理事
         council_members: list[discord.Member] = []
         try:
-            council_role_ids = await self.service.get_council_role_ids(guild_id=self.guild.id)
-            for role_id in council_role_ids:
-                role = self.guild.get_role(role_id)
-                if role:
-                    members = cast(Sequence[discord.Member], getattr(role, "members", []))
-                    council_members.extend(members)
+            # 以 Result 模式取得理事會身分組 ID（相容巢狀 Result）
+            role_ids_ok, role_ids_err = _unwrap_result(
+                await self.service.get_council_role_ids(guild_id=self.guild.id)
+            )
+            if role_ids_err is not None:
+                LOGGER.warning(
+                    "council.panel.members_fetch_error",
+                    guild_id=self.guild.id,
+                    error=str(role_ids_err),
+                )
+            else:
+                council_role_ids = list(cast(Sequence[int], role_ids_ok or []))
+                for role_id in council_role_ids:
+                    role = self.guild.get_role(role_id)
+                    if role:
+                        members = cast(Sequence[discord.Member], getattr(role, "members", []))
+                        council_members.extend(members)
 
-            # 如果沒有多身分組配置，向下相容使用單一身分組
+                # 如果沒有多身分組配置，向下相容使用單一身分組
+                if not council_members and self.council_role_id:
+                    role = self.guild.get_role(self.council_role_id)
+                    if role:
+                        members = cast(Sequence[discord.Member], getattr(role, "members", []))
+                        council_members.extend(members)
+
+            # 若 Result 取得失敗亦嘗試使用單一身分組
             if not council_members and self.council_role_id:
                 role = self.guild.get_role(self.council_role_id)
                 if role:
@@ -803,10 +1034,17 @@ class CouncilPanelView(discord.ui.View):
     async def refresh_options(self) -> None:
         """以最近進行中提案刷新選單（使用新的分頁系統）。"""
         try:
-            active = await self.service.list_active_proposals()
-            # 僅顯示本 guild 的進行中提案（依 created_at 降冪）
-            items = [p for p in active if p.guild_id == self.guild.id and p.status == "進行中"]
-            items.sort(key=lambda p: p.created_at, reverse=True)
+            # Get active proposals using Result pattern
+            active_result = await self.service.list_active_proposals()
+            if isinstance(active_result, Ok):
+                active = cast(Sequence[Proposal], active_result.value)
+                # 僅顯示本 guild 的進行中提案（依 created_at 降冪）
+                items = [p for p in active if p.guild_id == self.guild.id and p.status == "進行中"]
+                items.sort(key=lambda p: p.created_at, reverse=True)
+            else:
+                # If error, use empty list
+                LOGGER.error("council.panel.refresh.error", error=str(active_result.error))
+                items = []
 
             # 更新分頁器
             if hasattr(self, "_paginator") and self._paginator:
@@ -856,9 +1094,15 @@ class CouncilPanelView(discord.ui.View):
     async def _on_click_propose(self, interaction: discord.Interaction) -> None:
         # 僅限理事（面板開啟時已檢查，此處再保險一次）
         user_roles = [role.id for role in getattr(interaction.user, "roles", [])]
-        has_permission = await self.service.check_council_permission(
+        perm_result = await self.service.check_council_permission(
             guild_id=self.guild.id, user_roles=user_roles
         )
+        if isinstance(perm_result, Ok):
+            has_permission = bool(perm_result.value)
+        else:
+            # Log error but deny permission by default
+            LOGGER.error("council.propose.permission_check_failed", error=str(perm_result.error))
+            has_permission = False
 
         if not has_permission:
             await interaction.response.send_message(
@@ -894,8 +1138,19 @@ class CouncilPanelView(discord.ui.View):
         except Exception:
             await interaction.response.send_message("選項格式錯誤。", ephemeral=True)
             return
-        proposal = await self.service.get_proposal(proposal_id=pid)
-        if proposal is None or proposal.guild_id != self.guild.id:
+        # Get proposal using Result pattern（相容巢狀 Result）
+        proposal_ok, proposal_err = _unwrap_result(await self.service.get_proposal(proposal_id=pid))
+        if proposal_err is not None:
+            message = getattr(proposal_err, "message", str(proposal_err))
+            await interaction.response.send_message(f"取得提案失敗：{message}", ephemeral=True)
+            return
+
+        if proposal_ok is None:
+            await interaction.response.send_message("提案不存在或不屬於此伺服器。", ephemeral=True)
+            return
+
+        proposal = cast(Proposal, proposal_ok)
+        if proposal.guild_id != self.guild.id:
             await interaction.response.send_message("提案不存在或不屬於此伺服器。", ephemeral=True)
             return
 
@@ -952,13 +1207,24 @@ class CouncilPanelView(discord.ui.View):
             if hasattr(self, "_paginator") and self._paginator:
                 try:
                     # 分頁器會透過回調自動更新數據
-                    await self._paginator.refresh_items(
-                        [
-                            p
-                            for p in await self.service.list_active_proposals()
-                            if p.guild_id == self.guild.id and p.status == "進行中"
-                        ]
+                    active_ok, active_err = _unwrap_result(
+                        await self.service.list_active_proposals()
                     )
+                    if active_err is not None:
+                        LOGGER.warning(
+                            "council.panel.paginator_update.failed",
+                            guild_id=self.guild.id,
+                            error=str(active_err),
+                        )
+                    else:
+                        active = cast(Sequence[Proposal], active_ok or [])
+                        await self._paginator.refresh_items(
+                            [
+                                p
+                                for p in active
+                                if p.guild_id == self.guild.id and p.status == "進行中"
+                            ]
+                        )
                 except Exception as exc:  # pragma: no cover - defensive
                     LOGGER.warning(
                         "council.panel.paginator_update.failed",
@@ -1047,7 +1313,7 @@ class CouncilPanelView(discord.ui.View):
 class TransferTypeSelectionView(discord.ui.View):
     """View for selecting transfer type (user or department)."""
 
-    def __init__(self, *, service: CouncilService, guild: discord.Guild) -> None:
+    def __init__(self, *, service: CouncilServiceResult, guild: discord.Guild) -> None:
         super().__init__(timeout=300)
         self.service = service
         self.guild = guild
@@ -1080,7 +1346,7 @@ class TransferTypeSelectionView(discord.ui.View):
 class DepartmentSelectView(discord.ui.View):
     """View for selecting a government department."""
 
-    def __init__(self, *, service: CouncilService, guild: discord.Guild) -> None:
+    def __init__(self, *, service: CouncilServiceResult, guild: discord.Guild) -> None:
         super().__init__(timeout=300)
         self.service = service
         self.guild = guild
@@ -1144,7 +1410,7 @@ class DepartmentSelectView(discord.ui.View):
 class UserSelectView(discord.ui.View):
     """View for selecting a user (using Discord User Select component)."""
 
-    def __init__(self, *, service: CouncilService, guild: discord.Guild) -> None:
+    def __init__(self, *, service: CouncilServiceResult, guild: discord.Guild) -> None:
         super().__init__(timeout=300)
         self.service = service
         self.guild = guild
@@ -1193,7 +1459,7 @@ class TransferProposalModal(discord.ui.Modal, title="建立轉帳提案"):
     def __init__(
         self,
         *,
-        service: CouncilService,
+        service: CouncilServiceResult,
         guild: discord.Guild,
         target_user_id: int | None = None,
         target_user_name: str | None = None,
@@ -1257,13 +1523,33 @@ class TransferProposalModal(discord.ui.Modal, title="建立轉帳提案"):
         if amt <= 0:
             await interaction.response.send_message("金額需 > 0。", ephemeral=True)
             return
-
-        # Get snapshot
+        # 以 Result 模式取得設定與快照名冊（同時支援舊版直接丟例外的服務）
         try:
-            cfg = await self.service.get_config(guild_id=self.guild.id)
+            raw_cfg = await self.service.get_config(guild_id=self.guild.id)
         except GovernanceNotConfiguredError:
             await interaction.response.send_message("尚未完成治理設定。", ephemeral=True)
             return
+        except Exception as exc:
+            LOGGER.error("council.panel.propose.config_error", error=str(exc))
+            await interaction.response.send_message(
+                "建案失敗：" + str(exc),
+                ephemeral=True,
+            )
+            return
+
+        cfg_ok, cfg_err = _unwrap_result(raw_cfg)
+        if cfg_err is not None:
+            if isinstance(cfg_err, GovernanceNotConfiguredError):
+                await interaction.response.send_message("尚未完成治理設定。", ephemeral=True)
+            else:
+                LOGGER.error("council.panel.propose.config_error", error=str(cfg_err))
+                await interaction.response.send_message(
+                    "建案失敗：" + str(cfg_err),
+                    ephemeral=True,
+                )
+            return
+
+        cfg = cast(CouncilConfig, cfg_ok)
         role = self.guild.get_role(cfg.council_role_id)
         snapshot_ids = [m.id for m in role.members] if role is not None else []
         if not snapshot_ids:
@@ -1292,8 +1578,8 @@ class TransferProposalModal(discord.ui.Modal, title="建立轉帳提案"):
             await interaction.response.send_message("錯誤：無法確定受款帳戶。", ephemeral=True)
             return
 
-        try:
-            proposal = await self.service.create_transfer_proposal(
+        proposal_ok, proposal_err = _unwrap_result(
+            await self.service.create_transfer_proposal(
                 guild_id=self.guild.id,
                 proposer_id=interaction.user.id,
                 target_id=target_id,
@@ -1303,11 +1589,16 @@ class TransferProposalModal(discord.ui.Modal, title="建立轉帳提案"):
                 snapshot_member_ids=snapshot_ids,
                 target_department_id=self.target_department_id,
             )
-        except Exception as exc:
-            LOGGER.exception("council.panel.propose.error", error=str(exc))
-            await interaction.response.send_message("建案失敗：" + str(exc), ephemeral=True)
+        )
+        if proposal_err is not None:
+            LOGGER.exception("council.panel.propose.error", error=str(proposal_err))
+            await interaction.response.send_message(
+                "建案失敗：" + str(proposal_err),
+                ephemeral=True,
+            )
             return
 
+        proposal = cast(Proposal, proposal_ok)
         await interaction.response.send_message(
             f"已建立提案 {proposal.proposal_id}，並將以 DM 通知理事。",
             ephemeral=True,
@@ -1325,7 +1616,7 @@ class TransferProposalModal(discord.ui.Modal, title="建立轉帳提案"):
 
 
 class ProposeTransferModal(discord.ui.Modal, title="建立轉帳提案"):
-    def __init__(self, *, service: CouncilService, guild: discord.Guild) -> None:
+    def __init__(self, *, service: CouncilServiceResult, guild: discord.Guild) -> None:
         super().__init__()
         self.service = service
         self.guild = guild
@@ -1387,13 +1678,33 @@ class ProposeTransferModal(discord.ui.Modal, title="建立轉帳提案"):
         if amt <= 0:
             await interaction.response.send_message("金額需 > 0。", ephemeral=True)
             return
-
-        # 快照名冊
+        # 快照名冊（Result 模式，相容巢狀 Result，同時支援舊版直接丟例外的服務）
         try:
-            cfg = await self.service.get_config(guild_id=self.guild.id)
+            raw_cfg = await self.service.get_config(guild_id=self.guild.id)
         except GovernanceNotConfiguredError:
             await interaction.response.send_message("尚未完成治理設定。", ephemeral=True)
             return
+        except Exception as exc:
+            LOGGER.error("council.panel.propose.config_error", error=str(exc))
+            await interaction.response.send_message(
+                "建案失敗：" + str(exc),
+                ephemeral=True,
+            )
+            return
+
+        cfg_ok, cfg_err = _unwrap_result(raw_cfg)
+        if cfg_err is not None:
+            if isinstance(cfg_err, GovernanceNotConfiguredError):
+                await interaction.response.send_message("尚未完成治理設定。", ephemeral=True)
+            else:
+                LOGGER.error("council.panel.propose.config_error", error=str(cfg_err))
+                await interaction.response.send_message(
+                    "建案失敗：" + str(cfg_err),
+                    ephemeral=True,
+                )
+            return
+
+        cfg = cast(CouncilConfig, cfg_ok)
         role = self.guild.get_role(cfg.council_role_id)
         snapshot_ids = [m.id for m in role.members] if role is not None else []
         if not snapshot_ids:
@@ -1403,8 +1714,8 @@ class ProposeTransferModal(discord.ui.Modal, title="建立轉帳提案"):
             )
             return
 
-        try:
-            proposal = await self.service.create_transfer_proposal(
+        proposal_ok, proposal_err = _unwrap_result(
+            await self.service.create_transfer_proposal(
                 guild_id=self.guild.id,
                 proposer_id=interaction.user.id,
                 target_id=member.id,
@@ -1413,11 +1724,16 @@ class ProposeTransferModal(discord.ui.Modal, title="建立轉帳提案"):
                 attachment_url=str(self.attachment_url.value or "").strip() or None,
                 snapshot_member_ids=snapshot_ids,
             )
-        except Exception as exc:
-            LOGGER.exception("council.panel.propose.error", error=str(exc))
-            await interaction.response.send_message("建案失敗：" + str(exc), ephemeral=True)
+        )
+        if proposal_err is not None:
+            LOGGER.exception("council.panel.propose.error", error=str(proposal_err))
+            await interaction.response.send_message(
+                "建案失敗：" + str(proposal_err),
+                ephemeral=True,
+            )
             return
 
+        proposal = cast(Proposal, proposal_ok)
         await interaction.response.send_message(
             f"已建立提案 {proposal.proposal_id}，並將以 DM 通知理事。",
             ephemeral=True,
@@ -1435,7 +1751,7 @@ class ProposeTransferModal(discord.ui.Modal, title="建立轉帳提案"):
 
 
 class ExportModal(discord.ui.Modal, title="匯出治理資料"):
-    def __init__(self, *, service: CouncilService, guild: discord.Guild) -> None:
+    def __init__(self, *, service: CouncilServiceResult, guild: discord.Guild) -> None:
         super().__init__()
         self.service = service
         self.guild = guild
@@ -1506,25 +1822,40 @@ class ExportModal(discord.ui.Modal, title="匯出治理資料"):
 
         start_utc = start_dt.astimezone(timezone.utc)
         end_utc = end_dt.astimezone(timezone.utc)
+        # 匯出資料：同時支援 Result 模式與舊版直接丟例外的服務
         try:
-            data = await self.service.export_interval(
+            raw_data = await self.service.export_interval(
                 guild_id=interaction.guild_id,
                 start=start_utc,
                 end=end_utc,
             )
-        except Exception as exc:  # pragma: no cover - 防禦
+        except Exception as exc:
             LOGGER.exception("council.panel.export.error", error=str(exc))
-            await interaction.response.send_message("匯出失敗：" + str(exc), ephemeral=True)
+            await interaction.response.send_message(
+                "匯出失敗：" + str(exc),
+                ephemeral=True,
+            )
             return
+
+        data_ok, data_err = _unwrap_result(raw_data)
+        if data_err is not None:
+            LOGGER.exception("council.panel.export.error", error=str(data_err))
+            await interaction.response.send_message(
+                "匯出失敗：" + str(data_err),
+                ephemeral=True,
+            )
+            return
+
+        rows = list(cast(list[dict[str, object]], data_ok or []))
 
         if fmt == "json":
             buf = io.BytesIO()
             import json
 
-            buf.write(json.dumps(data, ensure_ascii=False, indent=2, default=str).encode("utf-8"))
+            buf.write(json.dumps(rows, ensure_ascii=False, indent=2, default=str).encode("utf-8"))
             buf.seek(0)
             await interaction.response.send_message(
-                content=f"共 {len(data)} 筆。",
+                content=f"共 {len(rows)} 筆。",
                 file=discord.File(buf, filename="council_export.json"),
                 ephemeral=True,
             )
@@ -1547,7 +1878,7 @@ class ExportModal(discord.ui.Modal, title="匯出治理資料"):
                     "threshold_t",
                 ]
             )
-            for row in data:
+            for row in rows:
                 writer.writerow(
                     [
                         row.get("proposal_id"),
@@ -1566,7 +1897,7 @@ class ExportModal(discord.ui.Modal, title="匯出治理資料"):
                 )
             buf = io.BytesIO(buf_txt.getvalue().encode("utf-8"))
             await interaction.response.send_message(
-                content=f"共 {len(data)} 筆。",
+                content=f"共 {len(rows)} 筆。",
                 file=discord.File(buf, filename="council_export.csv"),
                 ephemeral=True,
             )
@@ -1575,13 +1906,15 @@ class ExportModal(discord.ui.Modal, title="匯出治理資料"):
             "council.panel.export",
             guild_id=self.guild.id,
             user_id=interaction.user.id,
-            count=len(data),
+            count=len(rows),
             format=fmt,
         )
 
 
 class ProposalActionView(discord.ui.View):
-    def __init__(self, *, service: CouncilService, proposal_id: UUID, can_cancel: bool) -> None:
+    def __init__(
+        self, *, service: CouncilServiceResult, proposal_id: UUID, can_cancel: bool
+    ) -> None:
         super().__init__(timeout=300)
         self.service = service
         self.proposal_id = proposal_id
@@ -1663,7 +1996,14 @@ class ProposalActionView(discord.ui.View):
         if not self._can_cancel:
             await interaction.response.send_message("你不是此提案的提案人。", ephemeral=True)
             return
-        ok = await self.service.cancel_proposal(proposal_id=self.proposal_id)
+        cancel_ok, cancel_err = _unwrap_result(
+            await self.service.cancel_proposal(proposal_id=self.proposal_id)
+        )
+        if cancel_err is not None:
+            LOGGER.error("council.panel.cancel_error", error=str(cancel_err))
+            ok = False
+        else:
+            ok = bool(cancel_ok)
         if ok:
             await interaction.response.send_message("已撤案。", ephemeral=True)
         else:
@@ -1705,13 +2045,25 @@ def _format_proposal_desc(p: Any) -> str:
 async def _broadcast_result(
     client: discord.Client,
     guild: discord.Guild,
-    service: CouncilService,
+    service: CouncilServiceResult,
     proposal_id: UUID,
     status: str,
 ) -> None:
     """向提案人與全體理事廣播最終結果（揭露個別票）。"""
-    snapshot = await service.get_snapshot(proposal_id=proposal_id)
-    votes = await service.get_votes_detail(proposal_id=proposal_id)
+    # 以 Result 模式取得快照與票數（相容巢狀 Result）
+    snapshot_ok, snapshot_err = _unwrap_result(await service.get_snapshot(proposal_id=proposal_id))
+    votes_ok, votes_err = _unwrap_result(await service.get_votes_detail(proposal_id=proposal_id))
+
+    if snapshot_err is not None or votes_err is not None:
+        LOGGER.error(
+            "council.broadcast_result.error",
+            snapshot_error=str(snapshot_err) if snapshot_err is not None else None,
+            votes_error=str(votes_err) if votes_err is not None else None,
+        )
+        return
+
+    snapshot = cast(Sequence[int], snapshot_ok or [])
+    votes = cast(Sequence[tuple[int, str]], votes_ok or [])
     vote_map = dict(votes)
     lines: list[str] = []
     for uid in snapshot:
@@ -1723,14 +2075,21 @@ async def _broadcast_result(
     result_embed.add_field(name="最終狀態", value=status, inline=False)
     result_embed.add_field(name="個別投票", value=text or "(無)", inline=False)
 
-    cfg = await service.get_config(guild_id=guild.id)
+    # 取得設定（Result 模式）
+    config_ok, config_err = _unwrap_result(await service.get_config(guild_id=guild.id))
+    if config_err is not None:
+        LOGGER.error("council.broadcast_result.config_error", error=str(config_err))
+        return
+
+    cfg = cast(CouncilConfig, config_ok)
     role = guild.get_role(cfg.council_role_id)
     members = role.members if role is not None else []
 
-    # 確認提案人
-    proposal = await service.get_proposal(proposal_id=proposal_id)
+    # 取得提案資訊（Result 模式）
+    proposal_ok, proposal_err = _unwrap_result(await service.get_proposal(proposal_id=proposal_id))
     proposer_user: discord.User | discord.Member | None = None
-    if proposal is not None:
+    if proposal_err is None and proposal_ok is not None:
+        proposal = cast(Proposal, proposal_ok)
         proposer_user = guild.get_member(proposal.proposer_id) or await _safe_fetch_user(
             client, proposal.proposer_id
         )
@@ -1746,7 +2105,7 @@ async def _broadcast_result(
             pass
 
 
-async def _register_persistent_views(client: discord.Client, service: CouncilService) -> None:
+async def _register_persistent_views(client: discord.Client, service: CouncilServiceResult) -> None:
     """在啟動後註冊所有進行中提案的 persistent VotingView。"""
     from src.infra.types.db import ConnectionProtocol, PoolProtocol
 

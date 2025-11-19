@@ -7,13 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2025-11-19
+
+### 新增
+- **Result<T,E> 模式系統**：完整的 Rust 風格錯誤處理機制
+  - 新增 `src/common/result.py` 和 `src/infra/result.py`：核心 Result 類型實現
+  - 新增 `src/infra/result_compat.py`：向後相容性適配層
+  - 新增 `src/infra/db_errors.py`：資料庫錯誤類型定義
+  - 新增 `src/bot/utils/error_templates.py`：錯誤模板工具
+- **服務結果層**：為主要服務新增 Result 類型包裝
+  - 新增 `src/bot/services/council_service_result.py`：議會服務結果類型
+  - 新增 `src/bot/services/state_council_service_result.py`：州議會服務結果類型
+  - 新增 `src/bot/services/permission_service_result.py`：權限服務結果類型
+  - 新增 `src/bot/services/council_errors.py`：議會錯誤定義
+  - 新增 `src/bot/services/state_council_errors.py`：州議會錯誤定義
+- **遷移工具**：新增 Result 模式遷移支援
+  - 新增 `scripts/migrate_to_result.py`：自動遷移腳本
+  - 新增 `src/infra/migration_tools.py`：遷移工具集合
+  - 新增 `docs/RESULT_MIGRATION_GUIDE.md`：完整遷移指南
+- **依賴注入擴展**：新增 `src/infra/di/result_container.py`：Result 類型的容器支援
+- **測試覆蓋**：Result 模式的完整測試套件
+  - 新增 `tests/test_result.py`：Result 類型單元測試
+  - 新增 `tests/integration/test_result_integration.py`：整合測試
+
+### 修改
+- **服務層重構**：將異常處理模式遷移到 Result 模式
+  - 更新 `src/bot/services/adjustment_service.py`：使用 Result 包裝錯誤處理
+  - 更新 `src/bot/services/balance_service.py`：加入 Result 類型支援
+  - 更新 `src/bot/services/state_council_reports.py`：整合 Result 模式
+  - 更新 `src/bot/services/transfer_service.py`：Result 風格重構
+  - 更新 `src/bot/services/transfer_event_pool.py`：錯誤處理優化
+- **命令層適配**：更新所有命令以支援新的 Result 模式
+  - 更新 `src/bot/commands/adjust.py`：Result 類型適配
+  - 更新 `src/bot/commands/balance.py`：錯誤處理重構
+  - 更新 `src/bot/commands/council.py`：Result 模式整合
+  - 更新 `src/bot/commands/state_council.py`：大型重構支援 Result
+  - 更新 `src/bot/commands/transfer.py`：服務層 Result 適配
+  - 更新 `src/bot/commands/currency_config.py`：配置服務 Result 支援
+  - 更新 `src/bot/commands/supreme_assembly.py`：輕微調整
+- **基礎設施更新**：支援 Result 模式的核心設施
+  - 更新 `src/infra/retry.py`：重試機制 Result 適配
+  - 更新 `src/infra/telemetry/listener.py`：遙測 Result 支援
+  - 更新 `src/infra/di/bootstrap.py`：容器初始化 Result 支援
+- **資料庫閘道擴展**：錯誤處理 Result 模式遷移
+  - 更新 `src/db/gateway/council_governance.py`：加入 Result 類型
+  - 更新 `src/db/gateway/economy_adjustments.py`：調整服務 Result 支援
+  - 更新 `src/db/gateway/economy_queries.py`：查詢 Result 包裝
+  - 更新 `src/db/gateway/economy_transfers.py`：轉移 Result 適配
+  - 更新 `src/db/gateway/state_council_governance.py`：州議會 Result 支援
+  - 更新 `src/db/gateway/state_council_governance_mypc.py`：MYP Result 適配
+- **Cython 模組同步**：更新擴展模組支援新的 Result 模式
+  - 更新 `src/cython_ext/state_council_models.py`：Result 類型適配
+- **測試更新**：所有單元測試適配新的 Result 模式
+  - 更新 `tests/unit/test_adjust_command.py`：適配 Result 模式
+  - 更新 `tests/unit/test_balance_service_pagination.py`：測試 Result 支援
+  - 更新 `tests/unit/test_council_command.py`：命令層 Result 測試
+  - 更新 `tests/unit/test_council_command_fixed.py`：修正測試 Result 適配
+  - 更新 `tests/unit/test_result_types.py`：Result 類型測試擴展
+
+### 修復
+- **型別檢查**：更新 `pyrightconfig.json` 改善 Result 類型推斷
+- **依賴鎖定**：更新 `uv.lock` 確保依賴一致性
+- **Git 忽略**：更新 `.gitignore` 排除臨時檔案
+
+### 破壞性變更
+- **錯誤處理模式**：從基於異常的錯誤處理遷移到 Rust 風格的 Result<T,E> 模式
+- **API 介面**：所有受影響的服務方法現在使用 Result 類型而非拋出異常
+- **錯誤處理**：呼叫端需要適應新的 `result.is_ok()` 和 `result.unwrap()` 模式
+
 ## [0.21.0] - 2025-11-17
 
 ### 新增
 - **司法系統模組**：完整的司法部門管理功能
   - 新增 `src/bot/services/justice_service.py`：司法服務核心邏輯
   - 新增 `src/db/gateway/justice_governance.py`：司法治理資料庫閘道
-  - 新增資料庫遷移：`042_add_justice_department_suspects.py` 和 `043_add_charge_actions_to_identity_records.py`
+  - 新增資料庫遷移：`042_add_justice_department_suspects.py`（revision: `042_add_justice_department`）和 `043_add_charge_actions_to_identity_records.py`（revision: `043_add_charge_actions`）
 - **結果類型系統**：新增 `src/infra/result.py` 提供統一的結果處理機制
 - **測試覆蓋**：新增司法系統相關測試檔案
   - `tests/unit/test_justice_service.py`

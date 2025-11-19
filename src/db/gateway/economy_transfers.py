@@ -7,6 +7,7 @@ from src.cython_ext.economy_transfer_models import (
     TransferProcedureResult,
     build_transfer_procedure_result,
 )
+from src.infra.result import DatabaseError, async_returns_result
 from src.infra.types.db import ConnectionProtocol
 
 
@@ -16,6 +17,7 @@ class EconomyTransferGateway:
     def __init__(self, *, schema: str = "economy") -> None:
         self._schema = schema
 
+    @async_returns_result(DatabaseError, exception_map={RuntimeError: DatabaseError})
     async def transfer_currency(
         self,
         connection: ConnectionProtocol,

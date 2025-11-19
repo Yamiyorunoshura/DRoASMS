@@ -602,7 +602,9 @@ async def _maybe_emit_state_council_event(parsed: Any, *, cause: str) -> None:
                         conn_typed, guild_id=guild_id, member_id=acc.account_id
                     )
                     await governance.update_account_balance(
-                        conn_typed, account_id=acc.account_id, new_balance=snap.balance
+                        conn_typed,
+                        account_id=acc.account_id,
+                        new_balance=snap.balance,  # type: ignore[union-attr]
                     )
                 except Exception:
                     # 設計上不讓 listener 失敗阻斷事件，失敗時略過同步

@@ -10,6 +10,7 @@ from src.cython_ext.council_governance_models import (
     Proposal,
     Tally,
 )
+from src.infra.result import DatabaseError, async_returns_result
 from src.infra.types.db import ConnectionProtocol
 
 
@@ -325,6 +326,74 @@ class CouncilGovernanceGateway:
             f"SELECT * FROM {self._schema}.fn_list_unvoted_members($1)", proposal_id
         )
         return [int(r["fn_list_unvoted_members"]) for r in rows]
+
+    # --- Result-based wrapper methods ---
+    @async_returns_result(DatabaseError)
+    async def fetch_config_result(
+        self, connection: ConnectionProtocol, *, guild_id: int
+    ) -> CouncilConfig | None:
+        """Result-based wrapper for fetch_config."""
+        return await self.fetch_config(connection, guild_id=guild_id)
+
+    @async_returns_result(DatabaseError)
+    async def upsert_config_result(
+        self,
+        connection: ConnectionProtocol,
+        *,
+        guild_id: int,
+        council_role_id: int,
+        council_account_member_id: int,
+    ) -> CouncilConfig:
+        """Result-based wrapper for upsert_config."""
+        return await self.upsert_config(
+            connection,
+            guild_id=guild_id,
+            council_role_id=council_role_id,
+            council_account_member_id=council_account_member_id,
+        )
+
+    @async_returns_result(DatabaseError)
+    async def create_proposal_result(
+        self,
+        connection: ConnectionProtocol,
+        *,
+        guild_id: int,
+        proposer_id: int,
+        target_id: int,
+        amount: int,
+        description: str | None = None,
+        attachment_url: str | None = None,
+        snapshot_member_ids: Sequence[int],
+        deadline_hours: int = 72,
+        target_department_id: str | None = None,
+    ) -> Proposal:
+        """Result-based wrapper for create_proposal."""
+        return await self.create_proposal(
+            connection,
+            guild_id=guild_id,
+            proposer_id=proposer_id,
+            target_id=target_id,
+            amount=amount,
+            description=description,
+            attachment_url=attachment_url,
+            snapshot_member_ids=snapshot_member_ids,
+            deadline_hours=deadline_hours,
+            target_department_id=target_department_id,
+        )
+
+    @async_returns_result(DatabaseError)
+    async def fetch_proposal_result(
+        self, connection: ConnectionProtocol, *, proposal_id: UUID
+    ) -> Proposal | None:
+        """Result-based wrapper for fetch_proposal."""
+        return await self.fetch_proposal(connection, proposal_id=proposal_id)
+
+    @async_returns_result(DatabaseError)
+    async def fetch_tally_result(
+        self, connection: ConnectionProtocol, *, proposal_id: UUID
+    ) -> Tally:
+        """Result-based wrapper for fetch_tally."""
+        return await self.fetch_tally(connection, proposal_id=proposal_id)
 
 
 __all__ = [

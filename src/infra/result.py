@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from typing import (
     Any,
@@ -16,9 +17,12 @@ from typing import (
     Callable,
     Generic,
     Iterable,
+    Iterator,
+    Mapping,
     ParamSpec,
     TypeVar,
     Union,
+    cast,
 )
 
 import structlog
@@ -33,22 +37,102 @@ F = TypeVar("F")
 P = ParamSpec("P")
 
 
+# --- 內部常數與工具 ---
+
+_SENSITIVE_KEYS: tuple[str, ...] = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "authorization",
+    "auth",
+)
+
+_ERROR_COUNTERS: Counter[str] = Counter()
+
+
+def _sanitize_context(context: Mapping[str, Any] | None) -> dict[str, Any]:
+    """對錯誤 context 進行敏感資訊遮罩處理。
+
+    - 僅針對 key 名稱包含敏感關鍵字的欄位做遮罩
+    - 遞迴處理巢狀 dict
+    - 其他欄位原樣保留，避免過度清洗影響除錯
+    """
+    if not context:
+        return {}
+
+    def _sanitize(value: Any) -> Any:
+        if isinstance(value, dict):
+            mapping = cast(Mapping[str, Any], value)
+            sanitized_inner: dict[str, Any] = {}
+            for k, v in mapping.items():
+                key_lower = str(k).lower()
+                sanitized_inner[k] = _sanitize(
+                    "***redacted***" if any(sk in key_lower for sk in _SENSITIVE_KEYS) else v
+                )
+            return sanitized_inner
+        return value
+
+    sanitized: dict[str, Any] = {}
+    for key, value in context.items():
+        key_lower = str(key).lower()
+        if any(sk in key_lower for sk in _SENSITIVE_KEYS):
+            sanitized[key] = "***redacted***"
+        else:
+            sanitized[key] = _sanitize(value)
+    return sanitized
+
+
+def _record_error(error: "Error") -> None:
+    """更新模組層級錯誤統計資料。"""
+    key = type(error).__name__
+    _ERROR_COUNTERS[key] += 1
+    _ERROR_COUNTERS["__total__"] += 1
+
+
+def get_error_metrics() -> dict[str, int]:
+    """取得目前錯誤統計數據（以錯誤型別名稱分組）。"""
+    return dict(_ERROR_COUNTERS)
+
+
+def reset_error_metrics() -> None:
+    """重置錯誤統計數據（僅供測試或排錯使用）。"""
+    _ERROR_COUNTERS.clear()
+
+
 # --- 錯誤型別階層 ---
 
 
 class Error(Exception):
-    """Result 使用的基礎錯誤型別，攜帶訊息與可選上下文。"""
+    """Result 使用的基礎錯誤型別，攜帶訊息、可選上下文與 cause。"""
 
-    def __init__(self, message: str, *, context: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        context: dict[str, Any] | None = None,
+        cause: BaseException | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.context: dict[str, Any] = dict(context or {})
+        self.cause: BaseException | None = cause
 
     def to_dict(self) -> dict[str, Any]:
-        return {"message": self.message, "context": dict(self.context)}
+        return {
+            "message": self.message,
+            "context": dict(self.context),
+            "cause": repr(self.cause) if self.cause is not None else None,
+        }
 
     def __str__(self) -> str:  # pragma: no cover - 委派給 message
         return self.message
+
+    def log_safe_context(self) -> dict[str, Any]:
+        """回傳已遮罩敏感資訊後可安全寫入日誌的 context。"""
+        return _sanitize_context(self.context)
 
 
 class DatabaseError(Error):
@@ -61,6 +145,18 @@ class DiscordError(Error):
 
 class ValidationError(Error):
     """驗證失敗錯誤。"""
+
+
+class BusinessLogicError(Error):
+    """業務邏輯相關錯誤（如商業規則或流程違反）。"""
+
+
+class PermissionDeniedError(Error):
+    """權限拒絕錯誤。"""
+
+
+class SystemError(Error):
+    """系統層級錯誤（例如連線池錯誤或基礎設施故障）。"""
 
 
 # --- Result / Ok / Err ---
@@ -105,6 +201,10 @@ class Ok(Generic[T, E]):
     def unwrap_or_else(self, default_fn: Callable[[], T]) -> T:
         return self.value
 
+    # 迭代支援：Ok 迭代出單一成功值
+    def __iter__(self) -> Iterator[T]:
+        yield self.value
+
 
 @dataclass(slots=True)
 class Err(Generic[T, E]):
@@ -144,6 +244,10 @@ class Err(Generic[T, E]):
     def unwrap_or_else(self, default_fn: Callable[[], T]) -> T:
         return default_fn()
 
+    # 迭代支援：Err 視為空集合
+    def __iter__(self) -> Iterator[T]:
+        return iter(())
+
 
 Result = Union[Ok[T, E], Err[T, E]]
 
@@ -167,6 +271,7 @@ def result_from_exception(exc: Exception, *, default_error: type[Error] = Error)
         error_obj = exc
     else:
         error_obj = default_error(str(exc))
+    _record_error(error_obj)
     return Err(error_obj)
 
 
@@ -181,7 +286,12 @@ def safe_call(
         return Ok(fn(*args, **kwargs))
     except Exception as exc:  # pragma: no cover - 例外路徑由具體測試覆蓋
         error_obj = error_type(str(exc))
-        LOGGER.error("result.safe_call.error", error=str(error_obj))
+        _record_error(error_obj)
+        LOGGER.error(
+            "result.safe_call.error",
+            error=str(error_obj),
+            context=error_obj.log_safe_context(),
+        )
         return Err(error_obj)
 
 
@@ -197,7 +307,12 @@ async def safe_async_call(
         return Ok(value)
     except Exception as exc:  # pragma: no cover - 例外路徑由具體測試覆蓋
         error_obj = error_type(str(exc))
-        LOGGER.error("result.safe_async_call.error", error=str(error_obj))
+        _record_error(error_obj)
+        LOGGER.error(
+            "result.safe_async_call.error",
+            error=str(error_obj),
+            context=error_obj.log_safe_context(),
+        )
         return Err(error_obj)
 
 
@@ -259,8 +374,23 @@ async def _wrap_result(value: Result[T, E]) -> Result[T, E]:
 # --- 裝飾器 ---
 
 
+def _select_error_type(
+    exc: Exception,
+    default_error_type: type[Error],
+    exception_map: Mapping[type[Exception], type[Error]] | None,
+) -> type[Error]:
+    """根據 exception_map 選擇適用的錯誤型別。"""
+    if exception_map:
+        for exc_type, err_type in exception_map.items():
+            if isinstance(exc, exc_type):
+                return err_type
+    return default_error_type
+
+
 def returns_result(
     error_type: type[Error] = Error,
+    *,
+    exception_map: Mapping[type[Exception], type[Error]] | None = None,
 ) -> Callable[[Callable[P, T]], Callable[P, Result[T, Error]]]:
     """將可能丟出例外的同步函數包裝為回傳 Result。"""
 
@@ -269,11 +399,14 @@ def returns_result(
             try:
                 return Ok(func(*args, **kwargs))
             except Exception as exc:
-                error_obj = error_type(str(exc))
+                selected_error_type = _select_error_type(exc, error_type, exception_map)
+                error_obj = selected_error_type(str(exc))
+                _record_error(error_obj)
                 LOGGER.error(
                     "result.returns_result.error",
                     function=getattr(func, "__name__", "<unknown>"),
                     error=str(error_obj),
+                    context=error_obj.log_safe_context(),
                 )
                 return Err(error_obj)
 
@@ -284,8 +417,17 @@ def returns_result(
 
 def async_returns_result(
     error_type: type[Error] = Error,
+    *,
+    exception_map: Mapping[type[Exception], type[Error]] | None = None,
 ) -> Callable[[Callable[P, Awaitable[T]]], Callable[P, Awaitable[Result[T, Error]]]]:
-    """將可能丟出例外的非同步函數包裝為回傳 Result。"""
+    """將可能丟出例外的非同步函數包裝為回傳 Result。
+
+    設計細節：
+    - 若原函式回傳一般值 `T`，則包裝後回傳 `Ok(T)`。
+    - 若原函式已回傳 `Ok` / `Err`（即 Result 物件），則**不再巢狀包裝**，
+      直接透傳，避免出現 `Ok(Ok(value))` 或 `Ok(Err(error))` 的情況。
+    - 若丟出例外，則依 `error_type` / `exception_map` 轉換為 `Err(Error)`。
+    """
 
     def decorator(
         func: Callable[P, Awaitable[T]],
@@ -293,15 +435,22 @@ def async_returns_result(
         async def wrapper(*args: P.args, **kwargs: P.kwargs) -> Result[T, Error]:
             try:
                 value = await func(*args, **kwargs)
+                # 若被包裝函式本身已採用 Result 型別，避免再次以 Ok 包起來
+                if isinstance(value, (Ok, Err)):
+                    return cast(Result[T, Error], value)
                 return Ok(value)
             except Exception as exc:
-                error_obj = error_type(str(exc))
+                selected_error_type = _select_error_type(exc, error_type, exception_map)
+                # 保留原始例外於 cause 以便後續映射或重新拋出
+                error_obj = selected_error_type(str(exc), cause=exc)
+                _record_error(error_obj)
                 LOGGER.error(
                     "result.async_returns_result.error",
                     function=getattr(func, "__name__", "<unknown>"),
                     error=str(error_obj),
+                    context=error_obj.log_safe_context(),
                 )
-                return Err(error_obj)
+                return cast(Result[T, Error], Err(error_obj))
 
         return wrapper
 
@@ -316,6 +465,9 @@ __all__ = [
     "DatabaseError",
     "DiscordError",
     "ValidationError",
+    "BusinessLogicError",
+    "PermissionDeniedError",
+    "SystemError",
     "AsyncResult",
     "ok",
     "err",
@@ -326,4 +478,6 @@ __all__ = [
     "result_from_exception",
     "returns_result",
     "async_returns_result",
+    "get_error_metrics",
+    "reset_error_metrics",
 ]

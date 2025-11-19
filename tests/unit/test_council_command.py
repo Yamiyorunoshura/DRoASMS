@@ -29,6 +29,7 @@ from src.bot.services.council_service import (
     GovernanceNotConfiguredError,
     PermissionDeniedError,
 )
+from src.bot.services.council_service_result import CouncilServiceResult
 from src.bot.services.permission_service import PermissionService
 from src.bot.services.state_council_service import StateCouncilService
 from src.bot.services.supreme_assembly_service import SupremeAssemblyService
@@ -126,10 +127,13 @@ def mock_container(mock_council_service: MagicMock) -> MagicMock:
     """創建一個假的依賴注入容器"""
     container = MagicMock(spec=DependencyContainer)
     permission_service = MagicMock(spec=PermissionService)
+    result_service = MagicMock(spec=CouncilServiceResult)
 
     def _resolve(service_type: type[Any]) -> Any:
         if service_type is CouncilService:
             return mock_council_service
+        if service_type is CouncilServiceResult:
+            return result_service
         if service_type is PermissionService:
             return permission_service
         return MagicMock()
@@ -287,14 +291,16 @@ class TestBuildCouncilGroup:
 
     def test_returns_group(self, mock_council_service: MagicMock) -> None:
         """測試返回群組"""
-        group = build_council_group(mock_council_service)
+        mock_result_service = MagicMock(spec=CouncilServiceResult)
+        group = build_council_group(mock_council_service, mock_result_service)
         assert isinstance(group, discord.app_commands.Group)
         assert group.name == "council"
         assert group.description == "理事會治理指令群組"
 
     def test_group_has_commands(self, mock_council_service: MagicMock) -> None:
         """測試群組有指令"""
-        group = build_council_group(mock_council_service)
+        mock_result_service = MagicMock(spec=CouncilServiceResult)
+        group = build_council_group(mock_council_service, mock_result_service)
         # 檢查是否有 config_role 和 panel 指令
         command_names = [cmd.name for cmd in group._children.values()]
         assert "config_role" in command_names
@@ -320,12 +326,14 @@ class TestRegister:
         with (
             patch("src.bot.commands.council._install_background_scheduler"),
             patch("src.bot.commands.council.CouncilService") as mock_service_cls,
+            patch("src.bot.commands.council.CouncilServiceResult") as mock_result_service_cls,
             patch("src.bot.commands.council.StateCouncilService") as mock_state_cls,
             patch("src.bot.commands.council.SupremeAssemblyService") as mock_supreme_cls,
             patch("src.bot.commands.council.PermissionService") as mock_permission_cls,
         ):
             service_instance = MagicMock(spec=CouncilService)
             mock_service_cls.return_value = service_instance
+            mock_result_service_cls.return_value = MagicMock(spec=CouncilServiceResult)
             mock_state_cls.return_value = MagicMock(spec=StateCouncilService)
             mock_supreme_cls.return_value = MagicMock(spec=SupremeAssemblyService)
             mock_permission_cls.return_value = MagicMock(spec=PermissionService)

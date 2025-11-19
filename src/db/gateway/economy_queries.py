@@ -5,6 +5,7 @@ from typing import Any, Mapping, Sequence, cast
 from uuid import UUID
 
 from src.cython_ext.economy_query_models import BalanceRecord, HistoryRecord
+from src.infra.result import DatabaseError, async_returns_result
 from src.infra.types.db import ConnectionProtocol as AsyncPGConnectionProto
 
 
@@ -40,6 +41,7 @@ class EconomyQueryGateway:
     def __init__(self, *, schema: str = "economy") -> None:
         self._schema = schema
 
+    @async_returns_result(DatabaseError, exception_map={RuntimeError: DatabaseError})
     async def fetch_balance(
         self,
         connection: AsyncPGConnectionProto,
@@ -53,6 +55,7 @@ class EconomyQueryGateway:
             raise RuntimeError("fn_get_balance returned no result.")
         return _balance_from_record(record)
 
+    @async_returns_result(DatabaseError)
     async def fetch_balance_snapshot(
         self,
         connection: AsyncPGConnectionProto,
@@ -76,6 +79,7 @@ class EconomyQueryGateway:
             return None
         return _balance_from_record(record)
 
+    @async_returns_result(DatabaseError)
     async def fetch_history(
         self,
         connection: AsyncPGConnectionProto,

@@ -23,6 +23,8 @@ from src.bot.services.council_service import (
     GovernanceNotConfiguredError,
     PermissionDeniedError,
 )
+from src.bot.services.council_service_result import CouncilServiceResult
+from src.infra.result import Err, Ok
 
 # --- Test Helper Functions (Non-UI) ---
 
@@ -165,7 +167,8 @@ class TestBuildCouncilGroup:
     def test_returns_group(self) -> None:
         """測試返回群組"""
         mock_service = MagicMock(spec=CouncilService)
-        group = build_council_group(mock_service)
+        mock_result_service = MagicMock(spec=CouncilServiceResult)
+        group = build_council_group(mock_service, mock_result_service)
         assert isinstance(group, discord.app_commands.Group)
         assert group.name == "council"
         assert group.description == "理事會治理指令群組"
@@ -173,7 +176,8 @@ class TestBuildCouncilGroup:
     def test_group_has_commands(self) -> None:
         """測試群組有指令"""
         mock_service = MagicMock(spec=CouncilService)
-        group = build_council_group(mock_service)
+        mock_result_service = MagicMock(spec=CouncilServiceResult)
+        group = build_council_group(mock_service, mock_result_service)
         # 檢查是否有 config_role 和 panel 指令
         command_names = [cmd.name for cmd in group._children.values()]
         assert "config_role" in command_names
@@ -269,9 +273,10 @@ class TestCouncilCommandLogic:
     async def test_config_role_command_success(self) -> None:
         """測試 config_role 指令成功 - 使用 patch"""
         mock_council_service = MagicMock(spec=CouncilService)
+        mock_result_service = MagicMock(spec=CouncilServiceResult)
         mock_config = MagicMock()
         mock_config.council_account_member_id = 99999
-        mock_council_service.set_config = AsyncMock(return_value=mock_config)
+        mock_result_service.set_config = AsyncMock(return_value=Ok(mock_config))
 
         # Mock guild, role, and member
         mock_guild = MagicMock()
@@ -294,7 +299,7 @@ class TestCouncilCommandLogic:
 
         # Patch the background scheduler to avoid event loop issues
         with patch("src.bot.commands.council._install_background_scheduler"):
-            group = build_council_group(mock_council_service)
+            group = build_council_group(mock_council_service, mock_result_service)
 
             # Get config_role command
             config_role_cmd = None
@@ -308,7 +313,7 @@ class TestCouncilCommandLogic:
             # Execute command
             await config_role_cmd.callback(interaction, mock_role)
 
-        mock_council_service.set_config.assert_called_once_with(
+        mock_result_service.set_config.assert_awaited_once_with(
             guild_id=mock_guild.id, council_role_id=mock_role.id
         )
         interaction.response.send_message.assert_called()
@@ -317,6 +322,7 @@ class TestCouncilCommandLogic:
     async def test_config_role_command_no_permissions(self) -> None:
         """測試 config_role 指令沒有權限"""
         mock_council_service = MagicMock(spec=CouncilService)
+        mock_result_service = MagicMock(spec=CouncilServiceResult)
 
         # Mock guild, role, and member without permissions
         mock_guild = MagicMock()
@@ -336,7 +342,7 @@ class TestCouncilCommandLogic:
 
         # Patch the background scheduler
         with patch("src.bot.commands.council._install_background_scheduler"):
-            group = build_council_group(mock_council_service)
+            group = build_council_group(mock_council_service, mock_result_service)
 
             # Get config_role command
             config_role_cmd = None
@@ -350,6 +356,7 @@ class TestCouncilCommandLogic:
             # Execute command
             await config_role_cmd.callback(interaction, mock_role)
 
+        mock_result_service.set_config.assert_not_called()
         interaction.response.send_message.assert_called_with(
             "需要管理員或管理伺服器權限。", ephemeral=True
         )
@@ -358,7 +365,10 @@ class TestCouncilCommandLogic:
     async def test_panel_command_not_configured(self) -> None:
         """測試 panel 指令未配置"""
         mock_council_service = MagicMock(spec=CouncilService)
-        mock_council_service.get_config.side_effect = GovernanceNotConfiguredError("未配置")
+        mock_result_service = MagicMock(spec=CouncilServiceResult)
+        mock_result_service.get_config = AsyncMock(
+            return_value=Err(GovernanceNotConfiguredError("未配置"))
+        )
 
         # Mock guild and member
         mock_guild = MagicMock()
@@ -374,7 +384,7 @@ class TestCouncilCommandLogic:
 
         # Patch the background scheduler and other UI components
         with patch("src.bot.commands.council._install_background_scheduler"):
-            group = build_council_group(mock_council_service)
+            group = build_council_group(mock_council_service, mock_result_service)
 
             # Get panel command
             panel_cmd = None
@@ -389,17 +399,18 @@ class TestCouncilCommandLogic:
             await panel_cmd.callback(interaction)
 
         interaction.response.send_message.assert_called_with(
-            "尚未完成治理設定，請先執行 /council config_role。", ephemeral=True
+            "⚠️ 理事會治理 尚未完成設定，請先進行相關配置。", ephemeral=True
         )
 
     @pytest.mark.asyncio
     async def test_panel_command_not_council_member(self) -> None:
         """測試 panel 指令不是理事會成員"""
         mock_council_service = MagicMock(spec=CouncilService)
+        mock_result_service = MagicMock(spec=CouncilServiceResult)
         mock_config = MagicMock()
         mock_config.council_role_id = 11111
-        mock_council_service.get_config = AsyncMock(return_value=mock_config)
-        mock_council_service.check_council_permission = AsyncMock(return_value=False)
+        mock_result_service.get_config = AsyncMock(return_value=Ok(mock_config))
+        mock_result_service.check_council_permission = AsyncMock(return_value=Ok(False))
 
         # Mock guild, role, and member
         mock_guild = MagicMock()
@@ -423,7 +434,7 @@ class TestCouncilCommandLogic:
 
         # Patch UI components
         with patch("src.bot.commands.council._install_background_scheduler"):
-            group = build_council_group(mock_council_service)
+            group = build_council_group(mock_council_service, mock_result_service)
 
             # Get panel command
             panel_cmd = None

@@ -192,6 +192,17 @@ class TransferEventPoolCoordinator:
                             ),
                         )
 
+                        # Gateway is Result-based; propagate errors as exceptions so that the
+                        # surrounding handler treats them as execution failures.
+                        if result.is_err():
+                            error = result.unwrap_err()
+                            cause = getattr(error, "cause", None)
+                            if isinstance(cause, BaseException):
+                                raise cause
+                            raise Exception(str(error))
+
+                        procedure = result.unwrap()
+
                         # 標記完成
                         await self._pending_gateway.update_status(
                             c, transfer_id=transfer_id, new_status="completed"
@@ -200,7 +211,7 @@ class TransferEventPoolCoordinator:
                         LOGGER.info(
                             "transfer_event_pool.execute.success",
                             transfer_id=transfer_id,
-                            transaction_id=result.transaction_id,
+                            transaction_id=procedure.transaction_id,
                         )
                 except Exception as exc:
                     LOGGER.exception(

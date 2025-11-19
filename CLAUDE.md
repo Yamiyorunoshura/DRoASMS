@@ -1,5 +1,6 @@
-# General instructions
-1. **MUST** use "sequential-thinking" mcp tool for reasoning before delivering any response to the user.
+# General Instructions
+1. Always respond in CH-TW
+2. **MUST** think deeply before delievering any response to the user.
 
 <!-- OPENSPEC:START -->
 # OpenSpec Instructions

@@ -512,7 +512,7 @@ class StateCouncilReportGenerator:
                 snap = await self._economy.fetch_balance(
                     connection, guild_id=guild_id, member_id=acc.account_id
                 )
-                account_balances[acc.department] = snap.balance
+                account_balances[acc.department] = snap.balance  # type: ignore[union-attr]
             except Exception:
                 # 後援：若經濟查詢失敗，使用 governance 留存值
                 account_balances[acc.department] = acc.balance

@@ -28,6 +28,7 @@ from src.db.gateway.supreme_assembly_governance import (
 )
 from src.infra.di.container import DependencyContainer
 from src.infra.di.lifecycle import Lifecycle
+from src.infra.di.result_container import ResultContainer
 
 
 def bootstrap_container() -> DependencyContainer:
@@ -139,3 +140,24 @@ def bootstrap_container() -> DependencyContainer:
     )
 
     return container
+
+
+def bootstrap_result_container() -> tuple[DependencyContainer, ResultContainer]:
+    """Bootstrap container with both traditional and Result-based services.
+
+    This function creates a DependencyContainer with all traditional services
+    and a ResultContainer wrapper that provides Result-based service implementations.
+
+    Returns:
+        Tuple of (base_container, result_container)
+    """
+    # First create the base container with traditional services
+    base_container = bootstrap_container()
+
+    # Create Result container wrapper
+    result_container = ResultContainer(base_container)
+
+    # Register Result-based services
+    result_container.register_result_services()
+
+    return base_container, result_container

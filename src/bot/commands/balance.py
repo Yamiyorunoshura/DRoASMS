@@ -133,20 +133,38 @@ def build_balance_command(
         can_view_others = _has_audit_permission(interaction)
 
         try:
-            snapshot = await service.get_balance_snapshot(
+            result = await service.get_balance_snapshot(
                 guild_id=interaction.guild_id,
                 requester_id=interaction.user.id,
                 target_member_id=target_id if target_id != interaction.user.id else None,
                 can_view_others=can_view_others,
                 connection=None,
             )
-        except BalancePermissionError as exc:
-            await _respond(interaction, str(exc))
+        except BalancePermissionError as error:
+            # 無權限查看他人餘額時，直接回覆錯誤訊息
+            LOGGER.warning("bot.balance.permission_denied", error=str(error))
+            await _respond(interaction, str(error))
             return
-        except Exception as exc:  # pragma: no cover - defensive catch
-            LOGGER.exception("bot.balance.unexpected_error", error=str(exc))
-            await _respond(interaction, "查詢餘額時發生未預期錯誤，請稍後再試。")
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.error("bot.balance.service_error", error=str(exc))
+            await _respond(interaction, "查詢餘額時發生錯誤，請稍後再試。")
             return
+
+        # 同時支援 Result[BalanceSnapshot, DatabaseError] 與舊版直接回傳 BalanceSnapshot
+        if hasattr(result, "is_err") and callable(cast(Any, result).is_err):
+            result_obj = cast(Any, result)
+            if result_obj.is_err():
+                error = result_obj.unwrap_err()
+                LOGGER.error(
+                    "bot.balance.service_error",
+                    error=str(error),
+                    context=getattr(error, "context", {}),
+                )
+                await _respond(interaction, "查詢餘額時發生錯誤，請稍後再試。")
+                return
+            snapshot = result_obj.unwrap()
+        else:
+            snapshot = cast(BalanceSnapshot, result)
 
         # Get currency config
         currency_config = await currency_service.get_currency_config(guild_id=interaction.guild_id)
@@ -210,7 +228,7 @@ def build_history_command(
             cursor_dt = cursor_dt.astimezone(timezone.utc)
 
         try:
-            page = await service.get_history(
+            result = await service.get_history(
                 guild_id=interaction.guild_id,
                 requester_id=interaction.user.id,
                 target_member_id=target_id if target_id != interaction.user.id else None,
@@ -219,16 +237,30 @@ def build_history_command(
                 cursor=cursor_dt,
                 connection=None,
             )
-        except BalancePermissionError as exc:
-            await _respond(interaction, str(exc))
+        except BalancePermissionError as error:
+            LOGGER.warning("bot.history.permission_denied", error=str(error))
+            await _respond(interaction, str(error))
             return
-        except ValueError as exc:
-            await _respond(interaction, str(exc))
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.error("bot.history.service_error", error=str(exc))
+            await _respond(interaction, "查詢歷史時發生錯誤，請稍後再試。")
             return
-        except Exception as exc:  # pragma: no cover - defensive catch
-            LOGGER.exception("bot.history.unexpected_error", error=str(exc))
-            await _respond(interaction, "查詢歷史時發生未預期錯誤，請稍後再試。")
-            return
+
+        # 同時支援 Result[HistoryPage, DatabaseError] 與舊版直接回傳 HistoryPage
+        if hasattr(result, "is_err") and callable(cast(Any, result).is_err):
+            result_obj = cast(Any, result)
+            if result_obj.is_err():
+                error = result_obj.unwrap_err()
+                LOGGER.error(
+                    "bot.history.service_error",
+                    error=str(error),
+                    context=getattr(error, "context", {}),
+                )
+                await _respond(interaction, "查詢歷史時發生錯誤，請稍後再試。")
+                return
+            page = result_obj.unwrap()
+        else:
+            page = cast(HistoryPage, result)
 
         # Get currency config
         currency_config = await currency_service.get_currency_config(guild_id=interaction.guild_id)

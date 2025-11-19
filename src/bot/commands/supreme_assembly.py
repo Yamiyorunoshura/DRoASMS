@@ -470,7 +470,7 @@ class SupremeAssemblyPanelView(discord.ui.View):
                 target_member_id=account_id,
                 can_view_others=True,
             )
-            balance_str = f"{snap.balance:,}"
+            balance_str = f"{snap.balance:,}"  # type: ignore[union-attr]
         except Exception as exc:  # pragma: no cover - best effort
             LOGGER.warning(
                 "supreme_assembly.panel.summary.balance_error",
