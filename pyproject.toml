@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "droasms-bot"
-version = "0.23.1"
+version = "0.23.2"
 description = "Discord bot economy foundations."
 readme = "README.md"
 requires-python = ">=3.13"

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.2] - 2025-11-21
+
+### 修改
+- **Docker 配置優化**：
+  - 分離生產與開發環境配置，使用 profile 管理不同環境
+  - 生產環境使用 `target: production` 優化建置流程
+  - 新增 `bot-dev` 服務支援開發環境即時代碼更新
+  - 改進測試容器，新增 `postgresql-client` 套件
+- **測試系統改進**：
+  - 使用 marker 系統替代硬編碼測試路徑，提升測試執行彈性
+  - 新增測試環境專用變數：`RUN_DISCORD_INTEGRATION_TESTS`、`RUN_DOCKER_TESTS`、`TEST_MIGRATION_DB_URL`
+  - 測試容器新增 Docker socket 掛載支援整合測試
+- **代碼重構**：將 `Suspect` 類從 `council_governance_models.py` 移動到 `state_council_models.pyx`，改善模組職責分離
+- **開發工具改進**：更新 Makefile 中的說明文字，澄清開發與生產環境啟動方式
+
+### 修復
+- **Docker 最佳化**：清理生產映像檔中的不必要建置檔案，減少映像檔大小
+- **測試執行**：修正測試腳本使用 marker 執行特定類型測試
+
 ## [0.23.1] - 2025-11-21
 
 ### 修改
