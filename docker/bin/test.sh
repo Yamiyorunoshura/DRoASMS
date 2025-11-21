@@ -71,9 +71,9 @@ EOF
 
 run_unit() {
     echo "執行單元測試..."
+    # 依照 marker 執行所有標記為 unit 的測試
     # 使用 xdist 並行執行時，pytest-cov 會自動處理多進程覆蓋率合併
-    # 每個 worker 會創建 .coverage.worker* 文件，主進程會自動合併
-    _run_pytest_with_timeout tests/unit/ -v -n auto -o cache_dir="$PYTEST_CACHE_DIR"
+    _run_pytest_with_timeout -m unit -v -n auto -o cache_dir="$PYTEST_CACHE_DIR"
 }
 
 run_contract() {
@@ -84,8 +84,8 @@ run_contract() {
         echo "❌ Alembic 遷移失敗" >&2
         exit 1
     }
-    # 使用 xdist 並行執行時，pytest-cov 會自動處理多進程覆蓋率合併
-    _run_pytest_with_timeout tests/contracts/ -v -n auto -o cache_dir="$PYTEST_CACHE_DIR"
+    # 使用 marker contract 執行所有契約測試
+    _run_pytest_with_timeout -m contract -v -n auto -o cache_dir="$PYTEST_CACHE_DIR"
 }
 
 run_integration() {
@@ -95,7 +95,7 @@ run_integration() {
     # 1. 整合測試涉及共享資源（資料庫、Docker 容器），並行執行可能導致競爭條件
     # 2. pytest-xdist 與 pytest-cov 在多進程環境下可能導致死鎖
     # 3. 整合測試通常需要順序執行以確保資源狀態一致
-    _run_pytest_with_timeout tests/integration/ -v -o cache_dir="$PYTEST_CACHE_DIR"
+    _run_pytest_with_timeout -m integration -v -o cache_dir="$PYTEST_CACHE_DIR"
 }
 
 _run_optional_pytest() {
@@ -112,7 +112,7 @@ _run_optional_pytest() {
 run_performance() {
     echo "執行效能測試..."
     # 使用 xdist 並行執行時，pytest-cov 會自動處理多進程覆蓋率合併
-    _run_optional_pytest tests/performance/ -v -m performance -n auto -o cache_dir="$PYTEST_CACHE_DIR"
+    _run_optional_pytest -m performance -v -n auto -o cache_dir="$PYTEST_CACHE_DIR"
 }
 
 run_db() {

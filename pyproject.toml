@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "droasms-bot"
-version = "0.23.0"
+version = "0.23.1"
 description = "Discord bot economy foundations."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -31,25 +31,25 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.3.0,<9.0.0",
-    "pytest-asyncio>=0.23.0,<0.24.0",
+    "pytest-asyncio>=0.24.0,<0.25.0",
     "pytest-cov>=5.0.0",
-    "pytest-xdist>=3.6.0",
-    "pytest-timeout>=2.3.0",
-    "faker>=30.0.0",
-    "mypy>=1.11.0,<2.0.0",
-    "ruff>=0.6.0,<0.7.0",
-    "black>=24.8.0,<25.0.0",
+    "pytest-xdist>=3.6.1",
+    "pytest-timeout>=2.3.1",
+    "faker>=33.0.0",
+    "mypy>=1.13.0,<2.0.0",
+    "ruff>=0.7.3,<0.8.0",
+    "black>=24.10.0,<25.0.0",
     "pre-commit>=4.0.0",
-    "hypothesis>=6.0.0",
+    "hypothesis>=6.111.0",
     "typer>=0.12.0",
-    "rich>=14.0.0",
+    "rich>=13.9.0",
     "watchfiles>=1.0.0",
-    "setuptools>=68.0.0",
-    "wheel>=0.43.0",
+    "setuptools>=75.0.0",
+    "wheel>=0.44.0",
     "types-setuptools>=80.9.0.20250822",
     "pylance>=0.39.0",
     "pyright>=1.1.407",
-    "psutil>=6.0.0",
+    "psutil>=6.1.0",
 ]
 
 [tool.hatch.metadata]
@@ -112,6 +112,7 @@ markers = [
     "asyncio: Async tests",
     "integration: Integration tests that require Docker/Discord; gated by RUN_DISCORD_INTEGRATION_TESTS",
     "timeout: Test timeout marker for pytest-timeout plugin",
+    "contract: Contract tests for API and behavior contracts",
 ]
 # 並行測試設定：使用 pytest-xdist，透過命令列參數 -n auto 或 -n N 控制
 # pytest-xdist 不支援在配置檔案中設定 n_workers，需在命令列指定

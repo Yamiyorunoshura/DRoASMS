@@ -5,7 +5,7 @@ from typing import Any, Sequence, cast
 
 import structlog
 
-from src.cython_ext.council_governance_models import Suspect
+from src.cython_ext.state_council_models import Suspect
 from src.db.gateway.justice_governance import JusticeGovernanceGateway
 from src.db.gateway.state_council_governance import StateCouncilGovernanceGateway
 from src.db.pool import get_pool

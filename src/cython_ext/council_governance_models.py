@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-__all__ = ["CouncilConfig", "CouncilRoleConfig", "Proposal", "Tally", "Suspect"]
+__all__ = ["CouncilConfig", "CouncilRoleConfig", "Proposal", "Tally"]
 
 
 @dataclass(slots=True, frozen=True)
@@ -50,18 +50,3 @@ class Tally:
     reject: int
     abstain: int
     total_voted: int
-
-
-@dataclass(slots=True, frozen=True)
-class Suspect:
-    id: int
-    guild_id: int
-    member_id: int
-    arrested_by: int
-    arrest_reason: str
-    status: str  # detained, charged, released
-    arrested_at: datetime
-    charged_at: datetime | None
-    released_at: datetime | None
-    created_at: datetime
-    updated_at: datetime

@@ -18,7 +18,8 @@ RUN set -eux; \
         git \
         curl \
         gnupg \
-        build-essential; \
+        build-essential \
+        postgresql-client; \
     echo "deb http://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo $VERSION_CODENAME)-pgdg main" \
       > /etc/apt/sources.list.d/pgdg.list; \
     curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \

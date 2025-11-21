@@ -76,3 +76,6 @@ opencode.json
 
 # gemini
 .gemini/
+
+# kilo code
+.kilocode/

@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.1] - 2025-11-21
+
+### 修改
+- **依賴更新**：更新多個開發依賴版本以提升穩定性
+  - `pytest-asyncio` 從 0.23.0 更新到 0.24.0
+  - `pytest-xdist` 從 3.6.0 更新到 3.6.1
+  - `pytest-timeout` 從 2.3.0 更新到 2.3.1
+  - `faker` 從 30.0.0 更新到 33.0.0
+  - `mypy` 從 1.11.0 更新到 1.13.0
+  - `ruff` 從 0.6.0 更新到 0.7.3
+  - `black` 從 24.8.0 更新到 24.10.0
+  - `hypothesis` 從 6.0.0 更新到 6.111.0
+  - `rich` 從 14.0.0 更新到 13.9.0
+  - `setuptools` 從 68.0.0 更新到 75.0.0
+  - `wheel` 從 0.43.0 更新到 0.44.0
+  - `psutil` 從 6.0.0 更新到 6.1.0
+- **測試配置改進**：
+  - 新增 `contract` 測試 marker 到 pyproject.toml
+  - 更新測試腳本使用 marker 執行測試而非硬編碼路徑
+  - 改進測試容器配置，新增整合測試和 Docker 測試環境變數
+- **代碼重構**：將 `Suspect` 類從 `council_governance_models.py` 移動到 `state_council_models.pyx`，改善模組職責分離
+- **Docker 配置增強**：
+  - 新增測試環境專用變數：`RUN_DISCORD_INTEGRATION_TESTS`、`RUN_DOCKER_TESTS`、`TEST_MIGRATION_DB_URL`
+  - 新增 Docker socket 掛載支援整合測試
+  - 更新測試容器 Dockerfile，新增 `postgresql-client` 套件
+- **代碼清理**：
+  - 改進 `src/infra/retry.py` 中的類型註解
+  - 更新 `.gitignore` 和 `.dockerignore` 排除臨時檔案
+  - 清理文件結尾的換行符問題
+
+### 修復
+- **類型安全**：改進重試機制中的類型處理，移除不必要的 `type: ignore[misc]` 註釋
+- **測試執行**：修復測試腳本中的路徑問題，改用統一的 marker 系統
+- **依賴一致性**：更新 `uv.lock` 確保依賴版本一致性
+
 ## [0.23.0] - 2025-11-21
 
 ### 新增

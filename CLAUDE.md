@@ -1,6 +1,7 @@
 # General Instructions
 1. Always respond in CH-TW
 2. **MUST** think deeply before delievering any response to the user.
+3. **MUST NOT** skip any update of the specification documents when the user request to archive the changes. Any actions skipping the update of specification documents are strongly prohibited.
 
 <!-- OPENSPEC:START -->
 # OpenSpec Instructions

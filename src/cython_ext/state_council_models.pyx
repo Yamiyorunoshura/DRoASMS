@@ -379,6 +379,46 @@ cdef class SuspectProfile:
         self.auto_release_hours = auto_release_hours
 
 
+cdef class Suspect:
+    cdef public int id
+    cdef public int guild_id
+    cdef public int member_id
+    cdef public int arrested_by
+    cdef public str arrest_reason
+    cdef public str status  # detained, charged, released
+    cdef public object arrested_at
+    cdef public object charged_at
+    cdef public object released_at
+    cdef public object created_at
+    cdef public object updated_at
+
+    def __cinit__(
+        self,
+        int id,
+        int guild_id,
+        int member_id,
+        int arrested_by,
+        str arrest_reason,
+        str status,
+        object arrested_at,
+        object charged_at=None,
+        object released_at=None,
+        object created_at=None,
+        object updated_at=None,
+    ):
+        self.id = id
+        self.guild_id = guild_id
+        self.member_id = member_id
+        self.arrested_by = arrested_by
+        self.arrest_reason = arrest_reason
+        self.status = status
+        self.arrested_at = arrested_at
+        self.charged_at = charged_at
+        self.released_at = released_at
+        self.created_at = created_at
+        self.updated_at = updated_at
+
+
 cdef class SuspectReleaseResult:
     cdef public int suspect_id
     cdef public object display_name

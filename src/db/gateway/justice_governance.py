@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Sequence
 
-from src.cython_ext.council_governance_models import Suspect
+from src.cython_ext.state_council_models import Suspect
 from src.infra.types.db import ConnectionProtocol
 
 

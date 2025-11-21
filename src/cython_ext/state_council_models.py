@@ -18,6 +18,7 @@ __all__ = [
     "DepartmentStats",
     "StateCouncilSummary",
     "SuspectProfile",
+    "Suspect",
     "SuspectReleaseResult",
 ]
 
@@ -210,6 +211,21 @@ class StateCouncilSummary:
     total_balance: int
     department_stats: dict[str, DepartmentStats]
     recent_transfers: Sequence[InterdepartmentTransfer]
+
+
+@dataclass(slots=True, frozen=True)
+class Suspect:
+    id: int
+    guild_id: int
+    member_id: int
+    arrested_by: int
+    arrest_reason: str
+    status: str  # detained, charged, released
+    arrested_at: datetime
+    charged_at: datetime | None
+    released_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
 
 @dataclass(slots=True, frozen=True)
