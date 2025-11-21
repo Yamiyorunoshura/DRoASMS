@@ -22,6 +22,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+      target: production
       # 如需在 Apple Silicon 上建 linux/amd64 供 VPS 使用，取消下一行註解：
       # platforms: ["linux/amd64"]
     # 或在服務層級指定平台（較直覺）：
@@ -34,6 +35,25 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    profiles: ["prod"]
+
+  bot-dev:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://bot:bot@postgres:5432/economy}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # Mount source code for live updates in development
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - ./tests:/app/tests
+    profiles: ["dev"]
 
   pgadmin:
     profiles: ["dev"]

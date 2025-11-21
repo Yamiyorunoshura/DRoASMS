@@ -16,11 +16,11 @@ help: ## 顯示此幫助訊息
 	@echo "可用的命令："
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-start-dev: ## 啟動機器人（開發環境，會重建容器）
-	$(DOCKER_COMPOSE) up --build --force-recreate
+start-dev: ## 啟動機器人（開發環境，包含完整開發工具和 pgadmin）
+	$(DOCKER_COMPOSE) --profile dev up --build --force-recreate
 
-start-prod: ## 啟動機器人（生產環境，後台執行，只啟動 bot 和 postgres）
-	$(DOCKER_COMPOSE) up -d postgres bot --build --force-recreate
+start-prod: ## 啟動機器人（生產環境，僅啟動 bot 和 postgres，後台執行）
+	$(DOCKER_COMPOSE) --profile prod up -d --build --force-recreate
 
 install: ## 安裝專案依賴
 	uv sync --group dev
