@@ -16,14 +16,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.bot.services.council_service import CouncilService
+from src.bot.services.council_service_result import CouncilServiceResult
 from src.bot.services.permission_service import (
     CouncilPermissionChecker,
     StateCouncilPermissionChecker,
     SupremePeoplesAssemblyPermissionChecker,
 )
-from src.bot.services.state_council_service import StateCouncilService
-from src.bot.services.supreme_assembly_service import SupremeAssemblyService
+from src.bot.services.state_council_service_result import StateCouncilServiceResult
+from src.bot.services.supreme_assembly_service import (
+    GovernanceNotConfiguredError,
+    SupremeAssemblyService,
+)
+from src.infra.result import DatabaseError, Err, Ok
 
 
 def _snowflake() -> int:
@@ -37,16 +41,16 @@ class TestPermissionBoundaryCases:
 
     @pytest.fixture
     def mock_council_service(self) -> MagicMock:
-        """創建模擬的 CouncilService。"""
-        service = MagicMock(spec=CouncilService)
+        """創建模擬的 CouncilService（Result 版）。"""
+        service = MagicMock(spec=CouncilServiceResult)
         service.get_config = AsyncMock()
         service.get_council_role_ids = AsyncMock()
         return service
 
     @pytest.fixture
     def mock_state_council_service(self) -> MagicMock:
-        """創建模擬的 StateCouncilService。"""
-        service = MagicMock(spec=StateCouncilService)
+        """創建模擬的 StateCouncilService（Result 版）。"""
+        service = MagicMock(spec=StateCouncilServiceResult)
         service.check_leader_permission = AsyncMock()
         service.check_department_permission = AsyncMock()
         return service
@@ -64,18 +68,20 @@ class TestPermissionBoundaryCases:
         """測試常任理事會空身分組列表"""
         checker = CouncilPermissionChecker(mock_council_service)
 
-        # 設定模擬配置
+        # 設定模擬配置（Result 版）
         mock_config = MagicMock()
         mock_config.council_role_id = 123
-        mock_council_service.get_config.return_value = mock_config
-        mock_council_service.get_council_role_ids.return_value = [456, 789]
+        mock_council_service.get_config.return_value = Ok(mock_config)
+        mock_council_service.get_council_role_ids.return_value = Ok([456, 789])
 
         result = await checker.check_permission(
             guild_id=12345, user_id=67890, user_roles=[], operation="panel_access"  # 空身分組列表
         )
 
-        assert result.allowed is False
-        assert "不具備常任理事身分組" in result.reason
+        assert isinstance(result, Ok)
+        permission = result.value
+        assert permission.allowed is False
+        assert "不具備常任理事身分組" in (permission.reason or "")
 
     @pytest.mark.asyncio
     async def test_empty_user_roles_supreme_assembly(
@@ -84,7 +90,7 @@ class TestPermissionBoundaryCases:
         """測試最高議會空身分組列表"""
         checker = SupremePeoplesAssemblyPermissionChecker(mock_supreme_assembly_service)
 
-        # 設定模擬配置
+        # 設定模擬配置（可以直接回傳 config，_await_result 會包成 Ok）
         mock_config = MagicMock()
         mock_config.speaker_role_id = 123
         mock_config.member_role_id = 456
@@ -94,32 +100,31 @@ class TestPermissionBoundaryCases:
             guild_id=12345, user_id=67890, user_roles=[], operation="panel_access"  # 空身分組列表
         )
 
-        assert result.allowed is False
-        assert "不具備議長或人民代表身分組" in result.reason
+        assert isinstance(result, Ok)
+        permission = result.value
+        assert permission.allowed is False
+        assert "不具備議長或人民代表身分組" in (permission.reason or "")
 
     # 測試配置缺失情況
     @pytest.mark.asyncio
     async def test_missing_config_council(self, mock_council_service: MagicMock) -> None:
         """測試常任理事會配置缺失"""
-        from src.bot.services.supreme_assembly_service import GovernanceNotConfiguredError
-
         checker = CouncilPermissionChecker(mock_council_service)
-        mock_council_service.get_config.side_effect = GovernanceNotConfiguredError("未配置")
+        mock_council_service.get_config.return_value = Err(GovernanceNotConfiguredError("未配置"))
 
         result = await checker.check_permission(
             guild_id=12345, user_id=67890, user_roles=[123], operation="panel_access"
         )
 
-        assert result.allowed is False
-        assert result.reason == "權限檢查失敗"
+        assert isinstance(result, Err)
+        error = result.error
+        assert isinstance(error, GovernanceNotConfiguredError)
 
     @pytest.mark.asyncio
     async def test_missing_config_supreme_assembly(
         self, mock_supreme_assembly_service: MagicMock
     ) -> None:
         """測試最高議會配置缺失"""
-        from src.bot.services.supreme_assembly_service import GovernanceNotConfiguredError
-
         checker = SupremePeoplesAssemblyPermissionChecker(mock_supreme_assembly_service)
         mock_supreme_assembly_service.get_config.side_effect = GovernanceNotConfiguredError(
             "未配置"
@@ -129,22 +134,24 @@ class TestPermissionBoundaryCases:
             guild_id=12345, user_id=67890, user_roles=[123], operation="panel_access"
         )
 
-        assert result.allowed is False
-        assert result.reason == "權限檢查失敗"
+        assert isinstance(result, Err)
+        error = result.error
+        assert isinstance(error, GovernanceNotConfiguredError)
 
     # 測試網絡錯誤
     @pytest.mark.asyncio
     async def test_network_error_council(self, mock_council_service: MagicMock) -> None:
         """測試常任理事會網絡錯誤"""
         checker = CouncilPermissionChecker(mock_council_service)
-        mock_council_service.get_config.side_effect = ConnectionError("網絡錯誤")
+        mock_council_service.get_config.return_value = Err(DatabaseError("網絡錯誤"))
 
         result = await checker.check_permission(
             guild_id=12345, user_id=67890, user_roles=[123], operation="panel_access"
         )
 
-        assert result.allowed is False
-        assert result.reason == "權限檢查失敗"
+        assert isinstance(result, Err)
+        error = result.error
+        assert isinstance(error, DatabaseError)
 
     # 測試數據庫錯誤
     @pytest.mark.asyncio
@@ -153,14 +160,17 @@ class TestPermissionBoundaryCases:
     ) -> None:
         """測試國務院數據庫錯誤"""
         checker = StateCouncilPermissionChecker(mock_state_council_service)
-        mock_state_council_service.check_leader_permission.side_effect = Exception("數據庫錯誤")
+        mock_state_council_service.check_leader_permission.return_value = Err(
+            DatabaseError("數據庫錯誤")
+        )
 
         result = await checker.check_permission(
             guild_id=12345, user_id=67890, user_roles=[123], operation="panel_access"
         )
 
-        assert result.allowed is False
-        assert result.reason == "權限檢查失敗"
+        assert isinstance(result, Err)
+        error = result.error
+        assert isinstance(error, DatabaseError)
 
     # 測試無效的身分組ID
     @pytest.mark.asyncio
@@ -181,8 +191,10 @@ class TestPermissionBoundaryCases:
             operation="panel_access",
         )
 
-        assert result.allowed is False
-        assert "不具備議長或人民代表身分組" in result.reason
+        assert isinstance(result, Ok)
+        permission = result.value
+        assert permission.allowed is False
+        assert "不具備議長或人民代表身分組" in (permission.reason or "")
 
     # 測試極大的身分組ID
     @pytest.mark.asyncio
@@ -203,8 +215,10 @@ class TestPermissionBoundaryCases:
             operation="panel_access",
         )
 
-        assert result.allowed is True
-        assert result.permission_level == "speaker"
+        assert isinstance(result, Ok)
+        permission = result.value
+        assert permission.allowed is True
+        assert permission.permission_level == "speaker"
 
     # 測試重複的身分組
     @pytest.mark.asyncio
@@ -225,8 +239,10 @@ class TestPermissionBoundaryCases:
             operation="panel_access",
         )
 
-        assert result.allowed is True
-        assert result.permission_level == "speaker"
+        assert isinstance(result, Ok)
+        permission = result.value
+        assert permission.allowed is True
+        assert permission.permission_level == "speaker"
 
     # 測試超長操作字符串
     @pytest.mark.asyncio
@@ -246,8 +262,10 @@ class TestPermissionBoundaryCases:
             guild_id=12345, user_id=67890, user_roles=[123], operation=long_operation
         )
 
-        assert result.allowed is False
-        assert "未知的操作類型" in result.reason
+        assert isinstance(result, Ok)
+        permission = result.value
+        assert permission.allowed is False
+        assert "未知的操作類型" in (permission.reason or "")
 
     # 測試特殊字符操作
     @pytest.mark.asyncio
@@ -277,8 +295,10 @@ class TestPermissionBoundaryCases:
                 guild_id=12345, user_id=67890, user_roles=[123], operation=operation
             )
 
-            assert result.allowed is False
-            assert "未知的操作類型" in result.reason
+            assert isinstance(result, Ok)
+            permission = result.value
+            assert permission.allowed is False
+            assert "未知的操作類型" in (permission.reason or "")
 
     # 測試極端guild_id和user_id
     @pytest.mark.asyncio
@@ -306,7 +326,9 @@ class TestPermissionBoundaryCases:
 
             # 即使ID極端，只要有權限就應該通過
             if guild_id > 0 and user_id > 0:
-                assert result.allowed is True
+                assert isinstance(result, Ok)
+                permission = result.value
+                assert permission.allowed is True
 
     # 測試超時情況
     @pytest.mark.asyncio

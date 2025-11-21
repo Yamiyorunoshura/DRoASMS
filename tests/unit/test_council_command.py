@@ -30,10 +30,11 @@ from src.bot.services.council_service import (
     PermissionDeniedError,
 )
 from src.bot.services.council_service_result import CouncilServiceResult
-from src.bot.services.permission_service import PermissionService
+from src.bot.services.permission_service import PermissionResult, PermissionService
 from src.bot.services.state_council_service import StateCouncilService
 from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 from src.infra.di.container import DependencyContainer
+from src.infra.result import Ok
 
 # --- Fixtures and Mocks ---
 
@@ -127,6 +128,9 @@ def mock_container(mock_council_service: MagicMock) -> MagicMock:
     """創建一個假的依賴注入容器"""
     container = MagicMock(spec=DependencyContainer)
     permission_service = MagicMock(spec=PermissionService)
+    permission_service.check_council_permission.return_value = Ok(
+        PermissionResult(allowed=True, permission_level="council_member")
+    )
     result_service = MagicMock(spec=CouncilServiceResult)
 
     def _resolve(service_type: type[Any]) -> Any:

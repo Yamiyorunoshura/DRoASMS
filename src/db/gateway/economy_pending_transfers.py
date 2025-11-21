@@ -9,6 +9,7 @@ from src.cython_ext.pending_transfer_models import (
     PendingTransfer,
     build_pending_transfer,
 )
+from src.infra.result import DatabaseError, async_returns_result
 from src.infra.types.db import ConnectionProtocol
 
 
@@ -85,3 +86,64 @@ class PendingTransferGateway:
         sql = f"SELECT {self._schema}.fn_update_pending_transfer_status($1, $2)"
         # Function returns void, so we use execute
         await connection.execute(sql, transfer_id, new_status)
+
+    # --- Result-based wrappers ---
+
+    @async_returns_result(DatabaseError)
+    async def create_pending_transfer_result(
+        self,
+        connection: ConnectionProtocol,
+        *,
+        guild_id: int,
+        initiator_id: int,
+        target_id: int,
+        amount: int,
+        metadata: dict[str, Any] | None = None,
+        expires_at: datetime | None = None,
+    ) -> UUID:
+        return await self.create_pending_transfer(
+            connection,
+            guild_id=guild_id,
+            initiator_id=initiator_id,
+            target_id=target_id,
+            amount=amount,
+            metadata=metadata,
+            expires_at=expires_at,
+        )
+
+    @async_returns_result(DatabaseError)
+    async def get_pending_transfer_result(
+        self,
+        connection: ConnectionProtocol,
+        *,
+        transfer_id: UUID,
+    ) -> PendingTransfer | None:
+        return await self.get_pending_transfer(connection, transfer_id=transfer_id)
+
+    @async_returns_result(DatabaseError)
+    async def list_pending_transfers_result(
+        self,
+        connection: ConnectionProtocol,
+        *,
+        guild_id: int,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[PendingTransfer]:
+        return await self.list_pending_transfers(
+            connection,
+            guild_id=guild_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+
+    @async_returns_result(DatabaseError)
+    async def update_status_result(
+        self,
+        connection: ConnectionProtocol,
+        *,
+        transfer_id: UUID,
+        new_status: str,
+    ) -> None:
+        await self.update_status(connection, transfer_id=transfer_id, new_status=new_status)

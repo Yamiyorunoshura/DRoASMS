@@ -86,6 +86,14 @@ def map_postgres_error(error: asyncpg.PostgresError) -> DatabaseError:
         "original_message": message,
     }
 
+    # Best-effort table/schema metadata for observability
+    table_name = getattr(error, "table_name", None)
+    if table_name:
+        context["table_name"] = table_name
+    schema_name = getattr(error, "schema_name", None)
+    if schema_name:
+        context["schema_name"] = schema_name
+
     # Add additional context based on error type
     if sqlstate == "23505":  # unique_violation
         # Extract constraint name if available
@@ -237,6 +245,7 @@ class DatabaseErrorHandler:
         self.operation = operation
         self.context = context or {}
         self.start_time: Optional[float] = None
+        self.last_result: Result[None, DatabaseError | SystemError] | None = None
 
     async def __aenter__(self) -> "DatabaseErrorHandler":
         import time
@@ -249,7 +258,7 @@ class DatabaseErrorHandler:
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
-    ) -> Result[None, DatabaseError | SystemError]:
+    ) -> bool:
         import time
 
         duration = time.time() - self.start_time if self.start_time else None
@@ -267,10 +276,11 @@ class DatabaseErrorHandler:
                         "duration_seconds": duration,
                     }
                 )
+            self.last_result = map_asyncpg_error(exc_val)
+            return False
 
-            return map_asyncpg_error(exc_val)
-
-        return Ok(None)
+        self.last_result = Ok(None)
+        return False
 
 
 def with_db_error_handler(
@@ -306,6 +316,10 @@ def with_db_error_handler(
                 # This should not happen if the context manager works correctly,
                 # but we handle it just in case
                 return map_asyncpg_error(e)
+
+            # Defensive: this point should be unreachable, but we keep an explicit
+            # raise so that static type checkers see the function as total.
+            raise AssertionError("with_db_error_handler.wrapper reached unreachable state")
 
         return wrapper
 

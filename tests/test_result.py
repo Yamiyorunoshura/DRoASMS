@@ -1,284 +1,160 @@
-"""
-Tests for the Result<T,E> error handling system.
-"""
+"""Unit tests for canonical Result<T,E> implementation."""
+
+from __future__ import annotations
+
+import asyncio
 
 import pytest
 
-from src.common.errors import (
-    BaseError,
+from src.infra.result import (
+    AsyncResult,
+    BusinessLogicError,
     DatabaseError,
-    DiscordError,
-    ErrorCategory,
-    ErrorSeverity,
+    Err,
+    Error,
+    Ok,
+    Result,
     ValidationError,
+    async_returns_result,
+    collect,
+    err,
+    ok,
+    result_from_exception,
+    returns_result,
+    safe_async_call,
+    safe_call,
+    sequence,
 )
-from src.common.result import Err, Ok, collect, returns_result, safe_call
 
 
-class TestResultBasic:
-    """Test basic Result functionality."""
-
-    def test_ok_creation(self):
-        """Test creating Ok values."""
-        result = Ok(42)
+class TestBasicResult:
+    def test_ok_behaviour(self) -> None:
+        result = Ok[int, Error](42)
         assert result.is_ok() is True
         assert result.is_err() is False
         assert result.unwrap() == 42
-        assert str(result) == "Ok(42)"
-        assert bool(result) is True
+        assert list(result) == [42]
 
-    def test_err_creation(self):
-        """Test creating Err values."""
-        error = ValidationError(
-            message="Invalid input",
-            category=ErrorCategory.VALIDATION,
-            field="email",
-            value="invalid-email",
-        )
-        result = Err(error)
-        assert result.is_ok() is False
+    def test_err_behaviour(self) -> None:
+        error = ValidationError("boom", context={"field": "email"})
+        result = Err[int, ValidationError](error)
+
         assert result.is_err() is True
-        assert result.unwrap_err() == error
-        assert bool(result) is False
-
-    def test_ok_unwrap_err_raises(self):
-        """Test calling unwrap_err on Ok raises ValueError."""
-        result = Ok(42)
-        with pytest.raises(ValueError, match="Called unwrap_err on Ok value"):
-            result.unwrap_err()
-
-    def test_err_unwrap_raises(self):
-        """Test calling unwrap on Err raises ValueError."""
-        error = ValidationError(message="Test error", category=ErrorCategory.VALIDATION)
-        result = Err(error)
-        with pytest.raises(ValueError, match="Called unwrap on Err value"):
+        assert result.unwrap_err() is error
+        assert result.unwrap_or(0) == 0
+        with pytest.raises(RuntimeError):
             result.unwrap()
 
-    def test_unwrap_or(self):
-        """Test unwrap_or method."""
-        ok_result = Ok(42)
-        err_result = Err(ValidationError(message="Test error", category=ErrorCategory.VALIDATION))
-
-        assert ok_result.unwrap_or(0) == 42
-        assert err_result.unwrap_or(0) == 0
-
-    def test_expect(self):
-        """Test expect method."""
-        ok_result = Ok(42)
-        error = ValidationError(message="Test error", category=ErrorCategory.VALIDATION)
-        err_result = Err(error)
-
-        assert ok_result.expect("Should not fail") == 42
-        with pytest.raises(ValueError, match="Custom message"):
-            err_result.expect("Custom message")
-
-
-class TestResultChain:
-    """Test Result chaining operations."""
-
-    def test_map_ok(self):
-        """Test map on Ok values."""
-        result = Ok(42).map(lambda x: x * 2)
+    def test_map_and_and_then(self) -> None:
+        result = Ok[int, Error](2).map(lambda v: v * 3)
         assert isinstance(result, Ok)
-        assert result.unwrap() == 84
+        assert result.unwrap() == 6
 
-    def test_map_err(self):
-        """Test map on Err values."""
-        error = ValidationError(message="Test error", category=ErrorCategory.VALIDATION)
-        result = Err(error).map(lambda x: x * 2)
-        assert isinstance(result, Err)
-        assert result.unwrap_err() == error
+        chained = result.and_then(lambda v: Ok[str, Error](f"value={v}"))
+        assert chained.unwrap() == "value=6"
 
-    def test_map_err_with_exception(self):
-        """Test map where function raises exception."""
-        result = Ok(42).map(lambda x: 1 / 0)
-        assert isinstance(result, Err)
-        assert isinstance(result.unwrap_err(), BaseError)
+        err_chain = Err[int, Error](Error("nope"))
+        assert isinstance(err_chain.map(lambda _: 1), Err)
 
-    def test_map_err_method(self):
-        """Test map_err method."""
-        error = ValidationError(message="Original error", category=ErrorCategory.VALIDATION)
-        result = Err(error).map_err(
-            lambda e: DatabaseError(
-                message=f"Database: {e.message}",
-                category=ErrorCategory.DATABASE,
-                operation="select",
-            )
-        )
-        assert isinstance(result, Err)
-        mapped_error = result.unwrap_err()
-        assert isinstance(mapped_error, DatabaseError)
-        assert "Database: Original error" in mapped_error.message
+    def test_sequence_helpers(self) -> None:
+        ok_list = collect([Ok(1), Ok(2), Ok(3)])
+        assert ok_list.unwrap() == [1, 2, 3]
 
-    def test_and_then_ok(self):
-        """Test and_then on Ok values."""
+        err_result = Err[int, Error](Error("bad"))
+        aggregated = collect([Ok(1), err_result, Ok(3)])
+        assert aggregated.is_err() is True
+        assert aggregated.unwrap_err() is err_result.error
 
-        def double_if_even(x):
-            if x % 2 == 0:
-                return Ok(x * 2)
-            else:
-                return Err(
-                    ValidationError(message="Number is odd", category=ErrorCategory.VALIDATION)
-                )
-
-        result = Ok(42).and_then(double_if_even)
-        assert isinstance(result, Ok)
-        assert result.unwrap() == 84
-
-        result = Ok(41).and_then(double_if_even)
-        assert isinstance(result, Err)
-
-    def test_and_then_err(self):
-        """Test and_then on Err values."""
-        error = ValidationError(message="Test error", category=ErrorCategory.VALIDATION)
-
-        def double(x):
-            return Ok(x * 2)
-
-        result = Err(error).and_then(double)
-        assert isinstance(result, Err)
-        assert result.unwrap_err() == error
-
-    def test_or_else_ok(self):
-        """Test or_else on Ok values."""
-
-        def recover(error):
-            return Ok(0)
-
-        result = Ok(42).or_else(recover)
-        assert isinstance(result, Ok)
-        assert result.unwrap() == 42
-
-    def test_or_else_err(self):
-        """Test or_else on Err values."""
-        error = ValidationError(message="Original error", category=ErrorCategory.VALIDATION)
-
-        def recover(e):
-            return Ok(0)
-
-        result = Err(error).or_else(recover)
-        assert isinstance(result, Ok)
-        assert result.unwrap() == 0
+        assert sequence([Ok("a"), Ok("b")]).unwrap() == ["a", "b"]
 
 
-class TestResultUtilities:
-    """Test Result utility functions."""
+class TestHelpers:
+    def test_safe_call_maps_exceptions(self) -> None:
+        def raise_error() -> None:
+            raise ValueError("boom")
 
-    def test_collect_all_ok(self):
-        """Test collect with all Ok values."""
-        results = [Ok(1), Ok(2), Ok(3)]
-        collected = collect(results)
-        assert isinstance(collected, Ok)
-        assert collected.unwrap() == [1, 2, 3]
+        result = safe_call(raise_error, error_type=ValidationError)
+        assert result.is_err()
+        err_obj = result.unwrap_err()
+        assert isinstance(err_obj, ValidationError)
+        assert err_obj.message == "boom"
 
-    def test_collect_with_err(self):
-        """Test collect with some Err values."""
-        error = ValidationError(message="Test error", category=ErrorCategory.VALIDATION)
-        results = [Ok(1), Err(error), Ok(3)]
-        collected = collect(results)
-        assert isinstance(collected, Err)
-        assert collected.unwrap_err() == error
-
-    def test_safe_call_success(self):
-        """Test safe_call with successful function."""
-
-        def add_one(x):
+    @pytest.mark.asyncio
+    async def test_safe_async_call_handles_async(self) -> None:
+        async def add_one(x: int) -> int:
+            await asyncio.sleep(0)
             return x + 1
 
-        result = safe_call(add_one, 41)
-        assert isinstance(result, Ok)
-        assert result.unwrap() == 42
+        result = await safe_async_call(add_one, 1)
+        assert result.unwrap() == 2
 
-    def test_safe_call_exception(self):
-        """Test safe_call with function that raises."""
-
-        def raise_error():
-            raise ValueError("Test error")
-
-        result = safe_call(raise_error)
-        assert isinstance(result, Err)
-        error = result.unwrap_err()
-        assert isinstance(error, ValidationError)
-        assert "Test error" in error.message
-
-    def test_returns_result_decorator(self):
-        """Test returns_result decorator."""
-
+    def test_returns_result_decorator(self) -> None:
         @returns_result(ValidationError)
-        def validate_positive(x):
-            if x > 0:
-                return x
-            else:
-                raise ValueError("Value must be positive")
+        def validate_positive(value: int) -> int:
+            if value <= 0:
+                raise ValueError("must be positive")
+            return value
 
-        result = validate_positive(42)
-        assert isinstance(result, Ok)
-        assert result.unwrap() == 42
+        assert validate_positive(1).unwrap() == 1
+        neg = validate_positive(-5)
+        assert neg.is_err()
+        assert isinstance(neg.unwrap_err(), ValidationError)
 
-        result = validate_positive(-1)
-        assert isinstance(result, Err)
-        assert isinstance(result.unwrap_err(), ValidationError)
+    @pytest.mark.asyncio
+    async def test_async_returns_result_preserves_existing_result(self) -> None:
+        call_count = 0
 
+        @async_returns_result()
+        async def maybe_result(flag: bool) -> Result[int, Error] | int:
+            nonlocal call_count
+            call_count += 1
+            if flag:
+                return Ok(7)
+            return Err(Error("boom"))
 
-class TestErrorTypes:
-    """Test error type hierarchy and functionality."""
+        ok_result = await maybe_result(True)
+        assert ok_result.unwrap() == 7
 
-    def test_database_error(self):
-        """Test DatabaseError creation and methods."""
-        error = DatabaseError(
-            message="Connection failed",
-            category=ErrorCategory.DATABASE,
-            operation="connect",
-            table="users",
-        )
-        assert error.category == ErrorCategory.DATABASE
-        assert error.operation == "connect"
-        assert error.table == "users"
+        err_result = await maybe_result(False)
+        assert err_result.is_err()
+        assert isinstance(err_result.unwrap_err(), Error)
+        assert call_count == 2
 
-        error_dict = error.to_dict()
-        assert error_dict["type"] == "DatabaseError"
-        assert error_dict["message"] == "Connection failed"
-        assert error_dict["category"] == "database"
+    def test_result_from_exception_reuses_error(self) -> None:
+        original = ValidationError("custom")
+        wrapped = result_from_exception(original)
+        assert wrapped.is_err()
+        assert wrapped.unwrap_err() is original
 
-    def test_discord_error(self):
-        """Test DiscordError creation and methods."""
-        error = DiscordError(
-            message="API rate limited",
-            category=ErrorCategory.DISCORD,
-            api_method="send_message",
-            user_id=12345,
-        )
-        assert error.category == ErrorCategory.DISCORD
-        assert error.api_method == "send_message"
-        assert error.user_id == 12345
+    def test_err_helper(self) -> None:
+        error = BusinessLogicError("rule broken")
+        result = err(error)
+        assert result.is_err()
+        assert result.unwrap_err() is error
 
-    def test_validation_error(self):
-        """Test ValidationError creation and methods."""
-        error = ValidationError(
-            message="Invalid email format",
-            category=ErrorCategory.VALIDATION,
-            field="email",
-            value="invalid-email",
-        )
-        assert error.category == ErrorCategory.VALIDATION
-        assert error.field == "email"
-        assert error.value == "invalid-email"
-
-    def test_error_json_serialization(self):
-        """Test error JSON serialization."""
-        error = ValidationError(
-            message="Test error",
-            category=ErrorCategory.VALIDATION,
-            severity=ErrorSeverity.HIGH,
-            context={"user_id": 12345},
-        )
-
-        json_str = error.to_json()
-        assert "Test error" in json_str
-        assert "validation" in json_str
-        assert "high" in json_str
-        assert "12345" in json_str
+    def test_ok_helper(self) -> None:
+        result = ok({"value": 1})
+        assert result.unwrap() == {"value": 1}
 
 
-if __name__ == "__main__":
-    pytest.main([__file__])
+class TestAsyncResultWrapper:
+    @pytest.mark.asyncio
+    async def test_async_result_map(self) -> None:
+        async def compute() -> Result[int, Error]:
+            return Ok(5)
+
+        wrapper = AsyncResult(compute())
+        mapped = await wrapper.map(lambda x: x * 2)
+        final = await mapped
+        assert final.unwrap() == 10
+
+    @pytest.mark.asyncio
+    async def test_async_result_map_err(self) -> None:
+        async def fail() -> Result[int, Error]:
+            return Err(Error("nope"))
+
+        wrapper = AsyncResult(fail())
+        mapped = await wrapper.map_err(lambda err_obj: DatabaseError(str(err_obj)))
+        final = await mapped
+        assert final.is_err()
+        assert isinstance(final.unwrap_err(), DatabaseError)

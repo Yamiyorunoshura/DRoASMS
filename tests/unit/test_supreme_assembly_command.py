@@ -34,6 +34,7 @@ from src.db.gateway.supreme_assembly_governance import (
     Proposal,
     SupremeAssemblyConfig,
 )
+from src.infra.result import Ok
 
 
 def _snowflake() -> int:
@@ -1044,9 +1045,12 @@ class TestSupremePeoplesAssemblyPermissions:
             )
         )
 
-        assert result.allowed is True
-        assert result.permission_level == "representative"
-        assert "人民代表" in result.reason
+        assert isinstance(result, Ok)
+        permission = result.value
+        assert permission.allowed is True
+        assert permission.permission_level == "representative"
+        assert permission.reason is not None
+        assert "人民代表" in permission.reason
 
     def test_peoples_assembly_permission_checker_speaker_access(
         self, mock_service: MagicMock
@@ -1073,9 +1077,12 @@ class TestSupremePeoplesAssemblyPermissions:
             )
         )
 
-        assert result.allowed is True
-        assert result.permission_level == "speaker"
-        assert "議長" in result.reason
+        assert isinstance(result, Ok)
+        permission = result.value
+        assert permission.allowed is True
+        assert permission.permission_level == "speaker"
+        assert permission.reason is not None
+        assert "議長" in permission.reason
 
     def test_peoples_assembly_permission_checker_unauthorized_access(
         self, mock_service: MagicMock
@@ -1102,8 +1109,11 @@ class TestSupremePeoplesAssemblyPermissions:
             )
         )
 
-        assert result.allowed is False
-        assert "不具備" in result.reason
+        assert isinstance(result, Ok)
+        permission = result.value
+        assert permission.allowed is False
+        assert permission.reason is not None
+        assert "不具備" in permission.reason
 
     def test_peoples_assembly_permission_checker_create_proposal(
         self, mock_service: MagicMock
@@ -1127,8 +1137,10 @@ class TestSupremePeoplesAssemblyPermissions:
                 guild_id=789, user_id=101, user_roles=[123, 456], operation="create_proposal"
             )
         )
-        assert speaker_result.allowed is True
-        assert speaker_result.permission_level == "speaker"
+        assert isinstance(speaker_result, Ok)
+        speaker_perm = speaker_result.value
+        assert speaker_perm.allowed is True
+        assert speaker_perm.permission_level == "speaker"
 
         # 人民代表也可以發起提案
         representative_result = asyncio.run(
@@ -1136,8 +1148,10 @@ class TestSupremePeoplesAssemblyPermissions:
                 guild_id=789, user_id=102, user_roles=[456], operation="create_proposal"
             )
         )
-        assert representative_result.allowed is True
-        assert representative_result.permission_level == "representative"
+        assert isinstance(representative_result, Ok)
+        representative_perm = representative_result.value
+        assert representative_perm.allowed is True
+        assert representative_perm.permission_level == "representative"
 
     def test_peoples_assembly_permission_checker_vote(self, mock_service: MagicMock) -> None:
         """測試人民代表可以投票"""
@@ -1157,8 +1171,10 @@ class TestSupremePeoplesAssemblyPermissions:
         representative_result = asyncio.run(
             checker.check_permission(guild_id=789, user_id=102, user_roles=[456], operation="vote")
         )
-        assert representative_result.allowed is True
-        assert representative_result.permission_level == "representative"
+        assert isinstance(representative_result, Ok)
+        representative_perm = representative_result.value
+        assert representative_perm.allowed is True
+        assert representative_perm.permission_level == "representative"
 
         # 測試議長也可以投票
         speaker_result = asyncio.run(
@@ -1166,7 +1182,9 @@ class TestSupremePeoplesAssemblyPermissions:
                 guild_id=789, user_id=101, user_roles=[123, 456], operation="vote"
             )
         )
-        assert speaker_result.allowed is True
+        assert isinstance(speaker_result, Ok)
+        speaker_perm = speaker_result.value
+        assert speaker_perm.allowed is True
 
     def test_peoples_assembly_permission_checker_transfer(self, mock_service: MagicMock) -> None:
         """測試轉帳權限"""
@@ -1188,8 +1206,10 @@ class TestSupremePeoplesAssemblyPermissions:
                 guild_id=789, user_id=102, user_roles=[456], operation="transfer"
             )
         )
-        assert representative_result.allowed is True
-        assert representative_result.permission_level == "representative"
+        assert isinstance(representative_result, Ok)
+        representative_perm = representative_result.value
+        assert representative_perm.allowed is True
+        assert representative_perm.permission_level == "representative"
 
         # 測試議長可以轉帳
         speaker_result = asyncio.run(
@@ -1197,8 +1217,10 @@ class TestSupremePeoplesAssemblyPermissions:
                 guild_id=789, user_id=101, user_roles=[123, 456], operation="transfer"
             )
         )
-        assert speaker_result.allowed is True
-        assert speaker_result.permission_level == "speaker"
+        assert isinstance(speaker_result, Ok)
+        speaker_perm = speaker_result.value
+        assert speaker_perm.allowed is True
+        assert speaker_perm.permission_level == "speaker"
 
     def test_permission_service_integration(self) -> None:
         """測試權限服務整合"""
@@ -1206,10 +1228,12 @@ class TestSupremePeoplesAssemblyPermissions:
 
         # 創建模擬服務
         mock_supreme_service = MagicMock()
+        mock_council_result = MagicMock()
+        mock_state_council_result = MagicMock()
 
         service = PermissionService(
-            council_service=None,
-            state_council_service=None,
+            council_service=mock_council_result,
+            state_council_service=mock_state_council_result,
             supreme_assembly_service=mock_supreme_service,
         )
 
@@ -1228,15 +1252,21 @@ class TestSupremePeoplesAssemblyPermissions:
         mock_config.member_role_id = 456
         mock_service.get_config.return_value = mock_config
 
+        mock_council_result = MagicMock()
+        mock_state_council_result = MagicMock()
+
         service = PermissionService(
-            council_service=None, state_council_service=None, supreme_assembly_service=mock_service
+            council_service=mock_council_result,
+            state_council_service=mock_state_council_result,
+            supreme_assembly_service=mock_service,
         )
 
         # 測試人民代表權限
         result = await service.check_supreme_peoples_assembly_permission(
             guild_id=789, user_id=102, user_roles=[456], operation="panel_access"
         )
-
-        assert result.allowed is True
-        assert result.permission_level == "representative"
-        assert "人民代表" in result.reason
+        assert isinstance(result, Ok)
+        permission = result.value
+        assert permission.allowed is True
+        assert permission.permission_level == "representative"
+        assert permission.reason and "人民代表" in permission.reason

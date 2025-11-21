@@ -15,7 +15,7 @@ from src.bot.interaction_compat import (
     send_message_compat,
     send_modal_compat,
 )
-from src.bot.services.council_service import CouncilService
+from src.bot.services.council_service_result import CouncilServiceResult
 from src.bot.services.currency_config_service import (
     CurrencyConfigResult,
     CurrencyConfigService,
@@ -155,9 +155,11 @@ def register(
         service_result: StateCouncilServiceResult | None = None
         currency_service = None
         try:
+            council_result = CouncilServiceResult()
+            state_council_result = StateCouncilServiceResult()
             permission_service = PermissionService(
-                council_service=CouncilService(),
-                state_council_service=service,
+                council_service=council_result,
+                state_council_service=state_council_result,
                 supreme_assembly_service=SupremeAssemblyService(),
             )
         except RuntimeError as exc:
@@ -505,14 +507,23 @@ def build_state_council_group(
         departments = ["內政部", "財政部", "國土安全部", "中央銀行"]
         if permission_service is not None and not is_leader:
             for dept in departments:
-                result = await permission_service.check_department_permission(
+                perm_check = await permission_service.check_department_permission(
                     guild_id=interaction.guild_id,
                     user_id=interaction.user.id,
                     user_roles=user_roles,
                     department=dept,
                     operation="panel_access",
                 )
-                if result.allowed:
+                if isinstance(perm_check, Err):
+                    error_message = ErrorMessageTemplates.from_error(perm_check.error)
+                    await send_message_compat(
+                        interaction,
+                        content=error_message,
+                        ephemeral=True,
+                    )
+                    return
+                permission_result = perm_check.value
+                if permission_result.allowed:
                     has_dept_permission = True
                     break
         elif not is_leader:
@@ -609,7 +620,7 @@ def build_state_council_group(
             embed = await view.build_summary_embed()
         await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
         try:
-            message = await interaction.original_response()
+            message = cast(discord.Message, await interaction.original_response())
             await view.bind_message(message)
         except Exception as exc:
             LOGGER.warning(
@@ -799,14 +810,22 @@ class StateCouncilPanelView(discord.ui.View):
         if self.is_leader:
             return True
         if self.permission_service is not None:
-            result = await self.permission_service.check_department_permission(
+            perm_check = await self.permission_service.check_department_permission(
                 guild_id=self.guild_id,
                 user_id=self.author_id,
                 user_roles=self.user_roles,
                 department=department,
                 operation="panel_access",
             )
-            return result.allowed
+            if isinstance(perm_check, Err):
+                LOGGER.warning(
+                    "state_council.panel.permission_check.error",
+                    guild_id=self.guild_id,
+                    department=department,
+                    error=str(perm_check.error),
+                )
+                return False
+            return perm_check.value.allowed
         return await self.service.check_department_permission(
             guild_id=self.guild_id,
             user_id=self.author_id,
@@ -1435,16 +1454,21 @@ class StateCouncilPanelView(discord.ui.View):
 
         # 檢查國土安全部權限
         if self.permission_service is not None:
-            result = await self.permission_service.check_homeland_security_permission(
+            perm_check = await self.permission_service.check_homeland_security_permission(
                 guild_id=self.guild_id,
                 user_id=self.author_id,
                 user_roles=self.user_roles,
                 operation="arrest",
             )
-            if not result.allowed:
+            if isinstance(perm_check, Err):
+                message = ErrorMessageTemplates.from_error(perm_check.error)
+                await send_message_compat(interaction, content=message, ephemeral=True)
+                return
+            permission_result = perm_check.value
+            if not permission_result.allowed:
                 await send_message_compat(
                     interaction,
-                    content=f"權限不足：{result.reason or '不具備國土安全部權限'}",
+                    content=f"權限不足：{permission_result.reason or '不具備國土安全部權限'}",
                     ephemeral=True,
                 )
                 return
@@ -1485,16 +1509,21 @@ class StateCouncilPanelView(discord.ui.View):
 
         # 檢查國土安全部權限
         if self.permission_service is not None:
-            result = await self.permission_service.check_homeland_security_permission(
+            perm_check = await self.permission_service.check_homeland_security_permission(
                 guild_id=self.guild_id,
                 user_id=self.author_id,
                 user_roles=self.user_roles,
                 operation="panel_access",
             )
-            if not result.allowed:
+            if isinstance(perm_check, Err):
+                message = ErrorMessageTemplates.from_error(perm_check.error)
+                await send_message_compat(interaction, content=message, ephemeral=True)
+                return
+            permission_result = perm_check.value
+            if not permission_result.allowed:
                 await send_message_compat(
                     interaction,
-                    content=f"權限不足：{result.reason or '不具備國土安全部權限'}",
+                    content=f"權限不足：{permission_result.reason or '不具備國土安全部權限'}",
                     ephemeral=True,
                 )
                 return

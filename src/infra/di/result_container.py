@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from src.bot.services.council_service_result import CouncilServiceResult
 from src.bot.services.state_council_service_result import StateCouncilServiceResult
+from src.bot.services.supreme_assembly_service_result import SupremeAssemblyServiceResult
 from src.bot.services.transfer_service import TransferService
 from src.db.gateway.council_governance import CouncilGovernanceGateway
 from src.db.gateway.state_council_governance import StateCouncilGovernanceGateway
+from src.db.gateway.supreme_assembly_governance import (
+    SupremeAssemblyGovernanceGateway,
+)
 from src.infra.di.container import DependencyContainer
 from src.infra.di.lifecycle import Lifecycle
 
@@ -35,6 +39,17 @@ class ResultContainer:
             StateCouncilServiceResult,
             factory=lambda: StateCouncilServiceResult(
                 gateway=self._base.resolve(StateCouncilGovernanceGateway),
+                transfer_service=self._base.resolve(TransferService),
+            ),
+            lifecycle=Lifecycle.SINGLETON,
+        )
+
+        # SupremeAssemblyServiceResult - depends on SupremeAssemblyGovernanceGateway
+        # and TransferService
+        self._base.register(
+            SupremeAssemblyServiceResult,
+            factory=lambda: SupremeAssemblyServiceResult(
+                gateway=self._base.resolve(SupremeAssemblyGovernanceGateway),
                 transfer_service=self._base.resolve(TransferService),
             ),
             lifecycle=Lifecycle.SINGLETON,

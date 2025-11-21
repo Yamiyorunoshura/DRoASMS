@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2025-11-21
+
+### 新增
+- **權限邊界案例測試**：新增 `tests/unit/test_permission_boundary_cases.py`，涵蓋特殊場景權限檢查
+- **權限邊界案例測試工具**：新增 `tests/unit/test_homeland_security_permission.py`，提供國土安全部門權限驗證
+- **資料庫錯誤處理工具**：新增 `src/infra/db_errors.py`，提供統一的資料庫錯誤類型與處理
+- **權限邊界案例測試框架**：整合測試文件進行系統權限組件健全性檢查
+- **資料庫邊界案例測試**：新增 `tests/unit/test_permission_boundary_cases.py` 和 `tests/unit/test_homeland_security_permission.py`
+
+### 修復
+- 權限檢查邏輯增強：在多個權限檢查点加入更嚴格的邊界案例處理
+- 資料庫操作穩定性改進：統一錯誤處理方式，提升穩定性
+- 資源釋放機制優化：在各種邊緣情況下確保資源正確釋放
+
+### 修改
+- 權限檢查邏輯重構：精簡權限檢查邏輯，提高效能與可讀性
+- 錯誤處理標準化：統一錯誤類型與處理方式
+- 邊界檢查擴充：適應特殊場景的邊界檢查
+- 安全機制加強：提高資源敏感度，提升系統安全強度
+
+
 ## [0.22.0] - 2025-11-19
 
 ### 新增

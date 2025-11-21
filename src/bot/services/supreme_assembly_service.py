@@ -20,21 +20,36 @@ from src.infra.events.supreme_assembly_events import (
     SupremeAssemblyEvent,
     publish,
 )
+from src.infra.result import (
+    Error,
+    ValidationError,
+)
+from src.infra.result import (
+    PermissionDeniedError as BasePermissionDeniedError,
+)
 from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
 
 
-class GovernanceNotConfiguredError(RuntimeError):
-    pass
+class SupremeAssemblyError(Error):
+    """Base error for supreme assembly governance operations."""
 
 
-class PermissionDeniedError(RuntimeError):
-    pass
+class GovernanceNotConfiguredError(SupremeAssemblyError):
+    """Raised when governance configuration is missing for a guild."""
 
 
-class VoteAlreadyExistsError(RuntimeError):
-    pass
+class PermissionDeniedError(SupremeAssemblyError, BasePermissionDeniedError):
+    """Raised when an operation is not allowed for the caller."""
+
+
+class VoteAlreadyExistsError(SupremeAssemblyError):
+    """Raised when a duplicate vote is detected."""
+
+
+class SupremeAssemblyValidationError(SupremeAssemblyError, ValidationError):
+    """Raised when validation fails for supreme assembly operations."""
 
 
 class SupremeAssemblyService:
@@ -416,8 +431,10 @@ class SupremeAssemblyService:
 
 __all__ = [
     "SupremeAssemblyService",
+    "SupremeAssemblyError",
     "GovernanceNotConfiguredError",
     "PermissionDeniedError",
     "VoteAlreadyExistsError",
+    "SupremeAssemblyValidationError",
     "VoteTotals",
 ]

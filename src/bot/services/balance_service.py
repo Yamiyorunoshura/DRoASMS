@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from datetime import datetime
 from typing import Any, Awaitable, Callable, TypeVar, cast
 
@@ -291,20 +292,34 @@ class BalanceService:
         """Yield a connection, handling both pooled and injected connections.
 
         - 若呼叫端已傳入 `connection`，直接使用該連線（舊行為）。
-        - 否則，透過 `self._pool.acquire()` 取得連線，依 asyncpg 的標準
-          `async with pool.acquire() as conn:` 合約執行。
+        - 否則，透過 `self._pool.acquire()` 取得連線。
 
-        避免對 `pool.acquire()` 結果做額外 `await`：
-        asyncpg 的 acquire context manager 同時實作了 `__await__`，若先
-        `await pool.acquire()` 再 `async with`，就會變成
-        `async with Connection`，導致
-        「PoolConnectionProxy object does not support the asynchronous context manager protocol」。
+        為了同時支援：
+        - 真實 asyncpg pool：`pool.acquire()` 回傳 async context manager
+        - 測試中的 AsyncMock：`pool.acquire()` 先回傳 coroutine，await 之後才得到
+          async context manager（其 `__aenter__` 會回傳 mock connection）
         """
         if connection is not None:
             return await func(connection)
 
-        async with self._pool.acquire() as pooled_connection:
-            return await func(pooled_connection)
+        cm_or_conn: Any = self._pool.acquire()
+
+        # 首選：asyncpg / 假 pool，直接回傳 async context manager
+        if hasattr(cm_or_conn, "__aenter__"):
+            async with cm_or_conn as pooled_connection:
+                return await func(pooled_connection)
+
+        # Fallback：若為 coroutine/awaitable（例如 AsyncMock），先 await 再判斷
+        if inspect.isawaitable(cm_or_conn):
+            awaited = await cm_or_conn
+            if hasattr(awaited, "__aenter__"):
+                async with awaited as pooled_connection:
+                    return await func(pooled_connection)
+            # 最後退路：視為已取得的連線物件
+            return await func(awaited)
+
+        # 非預期情況：直接將 acquire() 結果當作連線使用（主要給測試假物件用）
+        return await func(cm_or_conn)
 
     async def _with_connection_result(
         self,
@@ -315,8 +330,20 @@ class BalanceService:
         if connection is not None:
             return await func(connection)
 
-        async with self._pool.acquire() as pooled_connection:
-            return await func(pooled_connection)
+        cm_or_conn: Any = self._pool.acquire()
+
+        if hasattr(cm_or_conn, "__aenter__"):
+            async with cm_or_conn as pooled_connection:
+                return await func(pooled_connection)
+
+        if inspect.isawaitable(cm_or_conn):
+            awaited = await cm_or_conn
+            if hasattr(awaited, "__aenter__"):
+                async with awaited as pooled_connection:
+                    return await func(pooled_connection)
+            return await func(awaited)
+
+        return await func(cm_or_conn)
 
     def _to_snapshot(self, record: BalanceRecord) -> BalanceSnapshot:
         return make_balance_snapshot(record)

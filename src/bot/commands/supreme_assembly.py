@@ -24,7 +24,9 @@ from src.bot.services.supreme_assembly_service import (
     SupremeAssemblyService,
     VoteAlreadyExistsError,
 )
+from src.bot.services.supreme_assembly_service_result import SupremeAssemblyServiceResult
 from src.bot.services.transfer_service import TransferService, TransferValidationError
+from src.bot.utils.error_templates import ErrorMessageTemplates
 from src.db.pool import get_pool
 from src.infra.di.container import DependencyContainer
 from src.infra.events.supreme_assembly_events import (
@@ -33,6 +35,7 @@ from src.infra.events.supreme_assembly_events import (
 from src.infra.events.supreme_assembly_events import (
     subscribe as subscribe_supreme_assembly_events,
 )
+from src.infra.result import Err, Error, Result
 from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
@@ -114,16 +117,26 @@ def register(
     if container is None:
         # Fallback to old behavior for backward compatibility during migration
         service = SupremeAssemblyService()
+        service_result = SupremeAssemblyServiceResult(legacy_service=service)
+        council_service = CouncilService()
+        state_council_service = StateCouncilService()
         permission_service = PermissionService(
-            council_service=CouncilService(),
-            state_council_service=StateCouncilService(),
+            council_service=council_service,
+            state_council_service=state_council_service,
             supreme_assembly_service=service,
         )
     else:
         service = container.resolve(SupremeAssemblyService)
+        service_result = container.resolve(SupremeAssemblyServiceResult)
         permission_service = container.resolve(PermissionService)
 
-    tree.add_command(build_supreme_assembly_group(service, permission_service=permission_service))
+    tree.add_command(
+        build_supreme_assembly_group(
+            service,
+            permission_service=permission_service,
+            service_result=service_result,
+        )
+    )
     # Install background scheduler if client is available
     client = getattr(tree, "client", None)
     if client is not None:
@@ -133,12 +146,50 @@ def register(
 
 def build_supreme_assembly_group(
     service: SupremeAssemblyService,
+    *,
     permission_service: PermissionService | None = None,
+    service_result: SupremeAssemblyServiceResult | None = None,
 ) -> app_commands.Group:
     """Build the /supreme_assembly command group."""
     supreme_assembly = app_commands.Group(
         name="supreme_assembly", description="最高人民會議治理指令群組"
     )
+
+    async def _invoke_supreme(
+        method: str, **kwargs: Any
+    ) -> tuple[Any | None, Error | Exception | None]:
+        if service_result is not None:
+            raw = await getattr(service_result, method)(**kwargs)
+            result = cast(Result[Any, Error], raw)
+            if isinstance(result, Err):
+                return None, result.error
+            value = getattr(result, "value", result)
+            return cast(Any, value), None
+        try:
+            value = await getattr(service, method)(**kwargs)
+            return value, None
+        except Exception as exc:  # pragma: no cover - defensive
+            return None, exc
+
+    async def _reply_supreme_error(
+        *,
+        interaction: discord.Interaction,
+        error: Error | Exception,
+        title: str,
+        log_event: str,
+        context: dict[str, Any],
+    ) -> None:
+        if isinstance(error, Error):
+            description = error.message
+        else:
+            LOGGER.warning(log_event, **context, error=str(error))
+            description = str(error)
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=0xE74C3C,
+        )
+        await send_message_compat(interaction, embed=embed, ephemeral=True)
 
     @supreme_assembly.command(
         name="config_speaker_role", description="設定最高人民會議議長身分組（角色）"
@@ -157,46 +208,68 @@ def build_supreme_assembly_group(
                 interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
             )
             return
-        try:
-            # 嘗試取得現有配置
-            try:
-                existing_cfg = await service.get_config(guild_id=interaction.guild_id)
-                # 如果已存在配置，更新議長身分組並保留議員身分組
-                await service.set_config(
-                    guild_id=interaction.guild_id,
-                    speaker_role_id=role.id,
-                    member_role_id=existing_cfg.member_role_id,
-                )
-                bootstrapped = False
-            except GovernanceNotConfiguredError:
-                # 首次啟用：允許只先設定議長，議員以 0 作為暫存（視為未設定）
-                await service.set_config(
-                    guild_id=interaction.guild_id,
-                    speaker_role_id=role.id,
-                    member_role_id=0,
-                )
-                bootstrapped = True
+        existing_cfg, cfg_error = await _invoke_supreme(
+            "get_config",
+            guild_id=interaction.guild_id,
+        )
 
-            account_id = SupremeAssemblyService.derive_account_id(interaction.guild_id)
-            if bootstrapped:
-                await send_message_compat(
-                    interaction,
-                    content=(
-                        f"已設定議長角色：{role.mention}（帳戶ID {account_id}）。"
-                        " 已建立治理設定，請再執行 /supreme_assembly"
-                        " config_member_role 設定議員身分組。"
-                    ),
-                    ephemeral=True,
-                )
-            else:
-                await send_message_compat(
-                    interaction,
-                    content=f"已設定議長角色：{role.mention}（帳戶ID {account_id}）",
-                    ephemeral=True,
-                )
-        except Exception as exc:  # pragma: no cover - unexpected
-            LOGGER.exception("supreme_assembly.config_speaker_role.error", error=str(exc))
-            await send_message_compat(interaction, content="設定失敗，請稍後再試。", ephemeral=True)
+        bootstrapped = False
+        member_role_id = 0
+        if cfg_error is None and existing_cfg is not None:
+            member_role_id = existing_cfg.member_role_id
+        elif isinstance(cfg_error, GovernanceNotConfiguredError):
+            bootstrapped = True
+        elif cfg_error is not None:
+            await _reply_supreme_error(
+                interaction=interaction,
+                error=cfg_error,
+                title="設定議長身分組失敗",
+                log_event="supreme_assembly.config_speaker_role.error",
+                context={
+                    "guild_id": interaction.guild_id,
+                    "role_id": role.id,
+                    "user_id": interaction.user.id,
+                },
+            )
+            return
+
+        _, set_error = await _invoke_supreme(
+            "set_config",
+            guild_id=interaction.guild_id,
+            speaker_role_id=role.id,
+            member_role_id=member_role_id,
+        )
+        if set_error is not None:
+            await _reply_supreme_error(
+                interaction=interaction,
+                error=set_error,
+                title="設定議長身分組失敗",
+                log_event="supreme_assembly.config_speaker_role.error",
+                context={
+                    "guild_id": interaction.guild_id,
+                    "role_id": role.id,
+                    "user_id": interaction.user.id,
+                },
+            )
+            return
+
+        account_id = SupremeAssemblyService.derive_account_id(interaction.guild_id)
+        if bootstrapped:
+            await send_message_compat(
+                interaction,
+                content=(
+                    f"已設定議長角色：{role.mention}（帳戶ID {account_id}）。"
+                    " 已建立治理設定，請再執行 /supreme_assembly"
+                    " config_member_role 設定議員身分組。"
+                ),
+                ephemeral=True,
+            )
+        else:
+            await send_message_compat(
+                interaction,
+                content=f"已設定議長角色：{role.mention}（帳戶ID {account_id}）",
+                ephemeral=True,
+            )
 
     @supreme_assembly.command(
         name="config_member_role", description="設定最高人民會議議員身分組（角色）"
@@ -215,46 +288,68 @@ def build_supreme_assembly_group(
                 interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
             )
             return
-        try:
-            # 嘗試取得現有配置
-            try:
-                existing_cfg = await service.get_config(guild_id=interaction.guild_id)
-                # 如果已存在配置，更新議員身分組並保留議長身分組
-                await service.set_config(
-                    guild_id=interaction.guild_id,
-                    speaker_role_id=existing_cfg.speaker_role_id,
-                    member_role_id=role.id,
-                )
-                bootstrapped = False
-            except GovernanceNotConfiguredError:
-                # 首次啟用：允許只先設定議員，議長以 0 作為暫存（視為未設定）
-                await service.set_config(
-                    guild_id=interaction.guild_id,
-                    speaker_role_id=0,
-                    member_role_id=role.id,
-                )
-                bootstrapped = True
+        existing_cfg, cfg_error = await _invoke_supreme(
+            "get_config",
+            guild_id=interaction.guild_id,
+        )
 
-            account_id = SupremeAssemblyService.derive_account_id(interaction.guild_id)
-            if bootstrapped:
-                await send_message_compat(
-                    interaction,
-                    content=(
-                        f"已設定議員角色：{role.mention}（帳戶ID {account_id}）。"
-                        " 已建立治理設定，請再執行 /supreme_assembly"
-                        " config_speaker_role 設定議長身分組。"
-                    ),
-                    ephemeral=True,
-                )
-            else:
-                await send_message_compat(
-                    interaction,
-                    content=f"已設定議員角色：{role.mention}（帳戶ID {account_id}）",
-                    ephemeral=True,
-                )
-        except Exception as exc:  # pragma: no cover - unexpected
-            LOGGER.exception("supreme_assembly.config_member_role.error", error=str(exc))
-            await send_message_compat(interaction, content="設定失敗，請稍後再試。", ephemeral=True)
+        bootstrapped = False
+        speaker_role_id = 0
+        if cfg_error is None and existing_cfg is not None:
+            speaker_role_id = existing_cfg.speaker_role_id
+        elif isinstance(cfg_error, GovernanceNotConfiguredError):
+            bootstrapped = True
+        elif cfg_error is not None:
+            await _reply_supreme_error(
+                interaction=interaction,
+                error=cfg_error,
+                title="設定議員身分組失敗",
+                log_event="supreme_assembly.config_member_role.error",
+                context={
+                    "guild_id": interaction.guild_id,
+                    "role_id": role.id,
+                    "user_id": interaction.user.id,
+                },
+            )
+            return
+
+        _, set_error = await _invoke_supreme(
+            "set_config",
+            guild_id=interaction.guild_id,
+            speaker_role_id=speaker_role_id,
+            member_role_id=role.id,
+        )
+        if set_error is not None:
+            await _reply_supreme_error(
+                interaction=interaction,
+                error=set_error,
+                title="設定議員身分組失敗",
+                log_event="supreme_assembly.config_member_role.error",
+                context={
+                    "guild_id": interaction.guild_id,
+                    "role_id": role.id,
+                    "user_id": interaction.user.id,
+                },
+            )
+            return
+
+        account_id = SupremeAssemblyService.derive_account_id(interaction.guild_id)
+        if bootstrapped:
+            await send_message_compat(
+                interaction,
+                content=(
+                    f"已設定議員角色：{role.mention}（帳戶ID {account_id}）。"
+                    " 已建立治理設定，請再執行 /supreme_assembly"
+                    " config_speaker_role 設定議長身分組。"
+                ),
+                ephemeral=True,
+            )
+        else:
+            await send_message_compat(
+                interaction,
+                content=f"已設定議員角色：{role.mention}（帳戶ID {account_id}）",
+                ephemeral=True,
+            )
 
     @supreme_assembly.command(name="panel", description="開啟最高人民會議面板（表決/投票/傳召）")
     async def panel(
@@ -283,12 +378,17 @@ def build_supreme_assembly_group(
         user_roles = [role.id for role in getattr(interaction.user, "roles", [])]
         if permission_service is not None:
             # 使用最高人民議會權限檢查器以支援人民代表身分組
-            perm_result = await permission_service.check_supreme_peoples_assembly_permission(
+            perm_check = await permission_service.check_supreme_peoples_assembly_permission(
                 guild_id=interaction.guild_id,
                 user_id=interaction.user.id,
                 user_roles=user_roles,
                 operation="panel_access",
             )
+            if isinstance(perm_check, Err):
+                error_message = ErrorMessageTemplates.from_error(perm_check.error)
+                await send_message_compat(interaction, content=error_message, ephemeral=True)
+                return
+            perm_result = perm_check.value
             if not perm_result.allowed:
                 error_message = perm_result.reason or "僅限議長或人民代表可開啟面板。"
                 await send_message_compat(interaction, content=error_message, ephemeral=True)
@@ -329,7 +429,7 @@ def build_supreme_assembly_group(
         embed = await view.build_summary_embed()
         await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
         try:
-            message = await interaction.original_response()
+            message = cast(discord.Message, await interaction.original_response())
             await view.bind_message(message)
         except Exception as exc:  # pragma: no cover - defensive
             LOGGER.warning(

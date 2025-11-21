@@ -18,6 +18,7 @@ from src.db.gateway.supreme_assembly_governance import (
     SupremeAssemblyGovernanceGateway,
     Tally,
 )
+from src.infra.result import DatabaseError
 
 
 def _snowflake() -> int:
@@ -553,3 +554,34 @@ class TestSupremeAssemblyGovernanceGateway:
         assert len(result) == 1
         assert isinstance(result[0], dict)
         mock_connection.fetch.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_fetch_config_result_success(
+        self,
+        gateway: SupremeAssemblyGovernanceGateway,
+        mock_connection: AsyncMock,
+        sample_config: dict[str, Any],
+    ) -> None:
+        mock_connection.fetchrow.return_value = sample_config
+
+        result = await gateway.fetch_config_result(
+            mock_connection, guild_id=sample_config["guild_id"]
+        )
+
+        assert result.is_ok()
+        config = result.unwrap()
+        assert isinstance(config, SupremeAssemblyConfig)
+
+    @pytest.mark.asyncio
+    async def test_fetch_config_result_failure(
+        self,
+        gateway: SupremeAssemblyGovernanceGateway,
+        mock_connection: AsyncMock,
+    ) -> None:
+        mock_connection.fetchrow.side_effect = RuntimeError("db error")
+
+        result = await gateway.fetch_config_result(mock_connection, guild_id=_snowflake())
+
+        assert result.is_err()
+        error = result.unwrap_err()
+        assert isinstance(error, DatabaseError)

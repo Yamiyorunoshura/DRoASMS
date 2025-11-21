@@ -336,6 +336,14 @@ class MigrationTracker:
 
         return "\n".join(lines)
 
+    def get_state(self) -> dict[str, object]:
+        """Return structured migration state for tooling/CI."""
+        return {
+            "migrated": sorted(self.migrated_functions),
+            "legacy": sorted(self.legacy_functions),
+            "compatibility_warnings": list(self.compatibility_warnings),
+        }
+
 
 # Global migration tracker
 _migration_tracker = MigrationTracker()
@@ -355,6 +363,11 @@ def mark_legacy(function_name: str) -> None:
 def get_migration_report() -> str:
     """Get migration progress report."""
     return _migration_tracker.get_migration_report()
+
+
+def get_migration_state() -> dict[str, object]:
+    """Expose structured migration tracker data."""
+    return _migration_tracker.get_state()
 
 
 # Example usage patterns

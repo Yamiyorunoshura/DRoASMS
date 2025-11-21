@@ -12,6 +12,12 @@ The Result pattern provides:
 
 ## Quick Start
 
+### Canonical Import Paths
+- **唯一入口**：所有 Result / Error 型別 MUST 從 `src.infra.result` 匯入。
+- **Legacy 相容層**：`src.common.errors` 與 `src.common.result` 僅 re-export 權威型別並在載入時記錄遷移警告；請勿在新檔案中使用。
+- **相容工具**：若暫時需要例外樣式 API，請使用 `src.infra.result_compat` 的 helper（`wrap_function`、`CompatibilityZone` 等），並在 PR 中標註 legacy 區域。
+- **靜態檢查**：Pyright 型別註記應直接引用 `src.infra.result` 中的型別，以維持單一來源的一致性。
+
 ### Basic Result Types
 
 ```python
@@ -164,6 +170,29 @@ async def fetch_data() -> Result[ProcessedData, DatabaseError]:
     async with db.transaction():
         result = await db.fetch_result()  # Returns AsyncResult
         return await result.map(process_data)
+
+### Example: Service 與指令如何回傳 Result
+
+```python
+from src.infra.result import Result, DatabaseError, async_returns_result
+
+class TaxationService:
+    def __init__(self, gateway: TaxGateway) -> None:
+        self._gateway = gateway
+
+    @async_returns_result(DatabaseError)
+    async def issue_tax(self, guild_id: int, amount: int) -> TaxRecord:
+        record = await self._gateway.insert_tax(guild_id=guild_id, amount=amount)
+        return record
+
+
+async def run_command(service: TaxationService, guild_id: int) -> None:
+    result = await service.issue_tax(guild_id, 100)
+    if result.is_err():
+        await respond_ephemeral(f"稅務失敗：{result.unwrap_err().message}")
+        return
+    await respond_success(f"稅務成功，單號 {result.unwrap().record_id}")
+```
 ```
 
 ## Error Handling Guidelines

@@ -163,9 +163,10 @@ def register(
         # Fallback to old behavior for backward compatibility during migration
         service = CouncilService()
         service_result = CouncilServiceResult()
+        state_council_service = StateCouncilService()
         permission_service = PermissionService(
-            council_service=service,
-            state_council_service=StateCouncilService(),
+            council_service=service_result,
+            state_council_service=state_council_service,
             supreme_assembly_service=SupremeAssemblyService(),
         )
     else:
@@ -302,12 +303,21 @@ def build_council_group(
         user_roles = [role.id for role in getattr(interaction.user, "roles", [])]
         permission_result: PermissionResult | None = None
         if permission_service is not None:
-            permission_result = await permission_service.check_council_permission(
+            perm_check = await permission_service.check_council_permission(
                 guild_id=interaction.guild_id,
                 user_id=interaction.user.id,
                 user_roles=user_roles,
                 operation="panel_access",
             )
+            if isinstance(perm_check, Err):
+                message = ErrorMessageTemplates.from_error(perm_check.error)
+                await send_message_compat(
+                    interaction,
+                    content=message,
+                    ephemeral=True,
+                )
+                return
+            permission_result = perm_check.value
             has_permission = permission_result.allowed
         else:
             # Result 模式 + 舊版直接回傳模式兼容

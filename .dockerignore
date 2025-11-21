@@ -1,48 +1,125 @@
- # VCS
- .git/
- .gitignore
+# VCS
+.git/
+.gitignore
 
- # Python build/test artifacts
- __pycache__/
- *.pyc
- .pytest_cache/
- .mypy_cache/
- .ruff_cache/
- .hypothesis/
- dist/
- build/
- *.egg-info/
- htmlcov/
- htmlcov_council/
- coverage/
- .coverage
+# Python build/test artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+dist/
+build/
+*.egg-info/
+htmlcov/
+htmlcov_council/
+coverage/
+.coverage
+.coverage.*
 
- # Env & secrets
- .env
- .env.*
- .venv/
+# Env & secrets
+.env
+.env.*
+.venv/
+venv/
+env/
 
- # Editors/OS
- .DS_Store
- .vscode/
- .idea/
- .codex/
- .cursor/
- .claude/
- .specify/
+# Editors/OS
+.DS_Store
+.vscode/
+.idea/
+.codex/
+.cursor/
+.claude/
+.specify/
 
- # Node (if present)
- node_modules/
+# Node (if present)
+node_modules/
 
- backup/
- docs/
- openspec/
- typings/
-
-# Project docs not needed in image
-tests/
+# Documentation and specifications (not needed in runtime)
+backup/
+docs/
+openspec/
 specs/
+typings/
+*.md
+!README.md
+!LICENSE
 
- # Docker files themselves
- Dockerfile*
- .dockerignore
+# Development and build artifacts
+logs/
+*.log
+*.tmp
+*.temp
+.cache/
+.pytest_cache/
+.hypothesis/
+coverage/
+.coverage*
+htmlcov/
+
+# CI/CD and tooling configurations
+.github/
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+.pre-commit-config.yaml
+tox.ini
+
+# Build outputs and caches
+build/
+dist/
+*.egg-info/
+
+# Testing
+tests/
+test_*
+*_test.py
+
+# Temporary files
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store?
+ehthumbs.db
+Icon?
+Thumbs.db
+
+# Docker files themselves
+Dockerfile*
+.dockerignore
+docker-compose*.yml
+compose.yaml
+compose.override.yaml
+
+# Development databases and storage
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup and archive files
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Performance profiling files
+*.prof
+*.profile
+
+# IDE specific files
+.vscode/settings.json
+.idea/workspace.xml
+
+# Environment configuration (keep example)
+.env
+.env.*
+!.env.example
+
+# Alembic history files (but keep migrations)
+alembic/versions/*.pyc

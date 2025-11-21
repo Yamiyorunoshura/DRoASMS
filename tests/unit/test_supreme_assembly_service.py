@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace as dc_replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Sequence
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -15,6 +16,7 @@ from src.bot.services.supreme_assembly_service import (
     SupremeAssemblyService,
     VoteAlreadyExistsError,
 )
+from src.bot.services.supreme_assembly_service_result import SupremeAssemblyServiceResult
 from src.db.gateway.supreme_assembly_governance import (
     Proposal,
     Summon,
@@ -22,6 +24,7 @@ from src.db.gateway.supreme_assembly_governance import (
     SupremeAssemblyGovernanceGateway,
     Tally,
 )
+from src.infra.result import Err, Ok
 
 # ---- Fakes (no DB required) ----
 
@@ -711,3 +714,37 @@ async def test_get_account_balance(monkeypatch: pytest.MonkeyPatch) -> None:
 
     balance = await svc.get_account_balance(guild_id=100)
     assert balance == 5000
+
+
+@pytest.mark.asyncio
+class TestSupremeAssemblyServiceResult:
+    async def test_get_config_ok(self) -> None:
+        legacy = AsyncMock(spec=SupremeAssemblyService)
+        expected = SupremeAssemblyConfig(
+            guild_id=123,
+            speaker_role_id=456,
+            member_role_id=789,
+            created_at=datetime.now(tz=timezone.utc),
+            updated_at=datetime.now(tz=timezone.utc),
+        )
+        legacy.get_config.return_value = expected
+
+        result_service = SupremeAssemblyServiceResult(legacy_service=legacy)
+
+        result = await result_service.get_config(guild_id=123)
+
+        assert isinstance(result, Ok)
+        assert result.value is expected
+        legacy.get_config.assert_awaited_once_with(guild_id=123)
+
+    async def test_get_config_error(self) -> None:
+        legacy = AsyncMock(spec=SupremeAssemblyService)
+        legacy.get_config.side_effect = GovernanceNotConfiguredError("missing")
+
+        result_service = SupremeAssemblyServiceResult(legacy_service=legacy)
+
+        result = await result_service.get_config(guild_id=999)
+
+        assert isinstance(result, Err)
+        assert isinstance(result.error, GovernanceNotConfiguredError)
+        legacy.get_config.assert_awaited_once_with(guild_id=999)

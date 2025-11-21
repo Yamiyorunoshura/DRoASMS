@@ -10,6 +10,7 @@ from src.cython_ext.supreme_assembly_models import (
     SupremeAssemblyConfig,
     Tally,
 )
+from src.infra.result import DatabaseError, async_returns_result
 
 # 與專案其他 gateway 一致，改用統一的資料庫連線協定，
 # 以避免 asyncpg.Connection 與自定義 Protocol 在關鍵字參數上出現不相容警告。
@@ -473,6 +474,201 @@ class SupremeAssemblyGovernanceGateway:
         """
         rows: Sequence[Mapping[str, Any]] = await connection.fetch(sql, guild_id, limit)
         return [_summon_from_row(r) for r in rows]
+
+    # --- Result-based wrappers ---
+
+    @async_returns_result(DatabaseError)
+    async def upsert_config_result(
+        self,
+        connection: AsyncPGConnectionProto,
+        *,
+        guild_id: int,
+        speaker_role_id: int,
+        member_role_id: int,
+    ) -> SupremeAssemblyConfig:
+        return await self.upsert_config(
+            connection,
+            guild_id=guild_id,
+            speaker_role_id=speaker_role_id,
+            member_role_id=member_role_id,
+        )
+
+    @async_returns_result(DatabaseError)
+    async def fetch_config_result(
+        self, connection: AsyncPGConnectionProto, *, guild_id: int
+    ) -> SupremeAssemblyConfig | None:
+        return await self.fetch_config(connection, guild_id=guild_id)
+
+    @async_returns_result(DatabaseError)
+    async def fetch_account_result(
+        self, connection: AsyncPGConnectionProto, *, guild_id: int
+    ) -> tuple[int, int] | None:
+        return await self.fetch_account(connection, guild_id=guild_id)
+
+    @async_returns_result(DatabaseError)
+    async def ensure_account_result(
+        self,
+        connection: AsyncPGConnectionProto,
+        *,
+        guild_id: int,
+        account_id: int,
+    ) -> None:
+        await self.ensure_account(connection, guild_id=guild_id, account_id=account_id)
+
+    @async_returns_result(DatabaseError)
+    async def create_proposal_result(
+        self,
+        connection: AsyncPGConnectionProto,
+        *,
+        guild_id: int,
+        proposer_id: int,
+        title: str | None,
+        description: str | None,
+        snapshot_member_ids: Sequence[int],
+        deadline_hours: int,
+    ) -> Proposal:
+        return await self.create_proposal(
+            connection,
+            guild_id=guild_id,
+            proposer_id=proposer_id,
+            title=title,
+            description=description,
+            snapshot_member_ids=snapshot_member_ids,
+            deadline_hours=deadline_hours,
+        )
+
+    @async_returns_result(DatabaseError)
+    async def fetch_proposal_result(
+        self, connection: AsyncPGConnectionProto, *, proposal_id: UUID
+    ) -> Proposal | None:
+        return await self.fetch_proposal(connection, proposal_id=proposal_id)
+
+    @async_returns_result(DatabaseError)
+    async def fetch_snapshot_result(
+        self, connection: AsyncPGConnectionProto, *, proposal_id: UUID
+    ) -> Sequence[int]:
+        return await self.fetch_snapshot(connection, proposal_id=proposal_id)
+
+    @async_returns_result(DatabaseError)
+    async def count_active_by_guild_result(
+        self, connection: AsyncPGConnectionProto, *, guild_id: int
+    ) -> int:
+        return await self.count_active_by_guild(connection, guild_id=guild_id)
+
+    @async_returns_result(DatabaseError)
+    async def cancel_proposal_result(
+        self, connection: AsyncPGConnectionProto, *, proposal_id: UUID
+    ) -> bool:
+        return await self.cancel_proposal(connection, proposal_id=proposal_id)
+
+    @async_returns_result(DatabaseError)
+    async def mark_status_result(
+        self,
+        connection: AsyncPGConnectionProto,
+        *,
+        proposal_id: UUID,
+        status: str,
+    ) -> None:
+        await self.mark_status(connection, proposal_id=proposal_id, status=status)
+
+    @async_returns_result(DatabaseError)
+    async def upsert_vote_result(
+        self,
+        connection: AsyncPGConnectionProto,
+        *,
+        proposal_id: UUID,
+        voter_id: int,
+        choice: str,
+    ) -> None:
+        await self.upsert_vote(
+            connection,
+            proposal_id=proposal_id,
+            voter_id=voter_id,
+            choice=choice,
+        )
+
+    @async_returns_result(DatabaseError)
+    async def fetch_tally_result(
+        self, connection: AsyncPGConnectionProto, *, proposal_id: UUID
+    ) -> Tally:
+        return await self.fetch_tally(connection, proposal_id=proposal_id)
+
+    @async_returns_result(DatabaseError)
+    async def list_due_proposals_result(
+        self, connection: AsyncPGConnectionProto
+    ) -> Sequence[Proposal]:
+        return await self.list_due_proposals(connection)
+
+    @async_returns_result(DatabaseError)
+    async def list_active_proposals_result(
+        self, connection: AsyncPGConnectionProto
+    ) -> Sequence[Proposal]:
+        return await self.list_active_proposals(connection)
+
+    @async_returns_result(DatabaseError)
+    async def list_unvoted_members_result(
+        self, connection: AsyncPGConnectionProto, *, proposal_id: UUID
+    ) -> Sequence[int]:
+        return await self.list_unvoted_members(connection, proposal_id=proposal_id)
+
+    @async_returns_result(DatabaseError)
+    async def mark_reminded_result(
+        self, connection: AsyncPGConnectionProto, *, proposal_id: UUID
+    ) -> None:
+        await self.mark_reminded(connection, proposal_id=proposal_id)
+
+    @async_returns_result(DatabaseError)
+    async def export_interval_result(
+        self,
+        connection: AsyncPGConnectionProto,
+        *,
+        guild_id: int,
+        start: datetime,
+        end: datetime,
+    ) -> list[dict[str, object]]:
+        return await self.export_interval(connection, guild_id=guild_id, start=start, end=end)
+
+    @async_returns_result(DatabaseError)
+    async def fetch_votes_detail_result(
+        self, connection: AsyncPGConnectionProto, *, proposal_id: UUID
+    ) -> Sequence[tuple[int, str]]:
+        return await self.fetch_votes_detail(connection, proposal_id=proposal_id)
+
+    @async_returns_result(DatabaseError)
+    async def create_summon_result(
+        self,
+        connection: AsyncPGConnectionProto,
+        *,
+        guild_id: int,
+        invoked_by: int,
+        target_id: int,
+        target_kind: str,
+        note: str | None = None,
+    ) -> Summon:
+        return await self.create_summon(
+            connection,
+            guild_id=guild_id,
+            invoked_by=invoked_by,
+            target_id=target_id,
+            target_kind=target_kind,
+            note=note,
+        )
+
+    @async_returns_result(DatabaseError)
+    async def mark_summon_delivered_result(
+        self, connection: AsyncPGConnectionProto, *, summon_id: UUID
+    ) -> None:
+        await self.mark_summon_delivered(connection, summon_id=summon_id)
+
+    @async_returns_result(DatabaseError)
+    async def list_summons_result(
+        self,
+        connection: AsyncPGConnectionProto,
+        *,
+        guild_id: int,
+        limit: int = 50,
+    ) -> Sequence[Summon]:
+        return await self.list_summons(connection, guild_id=guild_id, limit=limit)
 
 
 __all__ = [

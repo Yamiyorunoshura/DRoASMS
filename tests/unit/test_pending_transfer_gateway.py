@@ -15,6 +15,7 @@ from src.db.gateway.economy_pending_transfers import (
     PendingTransfer,
     PendingTransferGateway,
 )
+from src.infra.result import DatabaseError
 
 
 def _snowflake() -> int:
@@ -231,3 +232,41 @@ async def test_pending_transfer_dataclass() -> None:
     assert pending.expires_at == expires_at
     assert pending.created_at == created_at
     assert pending.updated_at == updated_at
+
+
+@pytest.mark.asyncio
+async def test_create_pending_transfer_result_success() -> None:
+    gateway = PendingTransferGateway()
+    mock_conn = AsyncMock(spec=asyncpg.Connection)
+    transfer_id = uuid4()
+    mock_conn.fetchval = AsyncMock(return_value=transfer_id)
+
+    result = await gateway.create_pending_transfer_result(
+        mock_conn,
+        guild_id=_snowflake(),
+        initiator_id=_snowflake(),
+        target_id=_snowflake(),
+        amount=100,
+    )
+
+    assert result.is_ok()
+    assert result.unwrap() == transfer_id
+
+
+@pytest.mark.asyncio
+async def test_create_pending_transfer_result_failure() -> None:
+    gateway = PendingTransferGateway()
+    mock_conn = AsyncMock(spec=asyncpg.Connection)
+    mock_conn.fetchval = AsyncMock(side_effect=RuntimeError("db error"))
+
+    result = await gateway.create_pending_transfer_result(
+        mock_conn,
+        guild_id=_snowflake(),
+        initiator_id=_snowflake(),
+        target_id=_snowflake(),
+        amount=100,
+    )
+
+    assert result.is_err()
+    error = result.unwrap_err()
+    assert isinstance(error, DatabaseError)

@@ -73,3 +73,6 @@ htmlcov_council/
 # opencode
 .opencode/
 opencode.json
+
+# gemini
+.gemini/

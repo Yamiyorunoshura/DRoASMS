@@ -119,24 +119,12 @@ time.sleep(ms/1000)
 PY
 done
 
-# 遷移策略：先嘗試升到 head；若失敗（常見於 004 需要 pg_cron），退回到設定目標（預設 003）
-: "${ALEMBIC_UPGRADE_TARGET:=003_economy_adjustments}"
-# 若使用者將目標設為 head，fallback 會無效；此時以 003 作為保守回退點
-FALLBACK_TARGET="${ALEMBIC_UPGRADE_TARGET}"
-if [[ "${FALLBACK_TARGET}" == "head" ]]; then
-  FALLBACK_TARGET="003_economy_adjustments"
+# 簡化的遷移策略：統一使用 alembic upgrade head
+json_log "INFO" "bot.migrate.start" "running alembic upgrade head" ""
+if ! alembic upgrade head; then
+  json_log "ERROR" "bot.migrate.error" "alembic upgrade head failed" "\"target\":\"head\""
+  exit 70
 fi
-
-json_log "INFO" "bot.migrate.start" "running alembic upgrade head (with fallback)" "\"fallback\":\"${FALLBACK_TARGET}\""
-if alembic upgrade head; then
-  json_log "INFO" "bot.migrate.done" "alembic upgrade head finished" "\"applied\":\"head\""
-else
-  json_log "WARN" "bot.migrate.head_failed" "head upgrade failed; falling back to target" "\"fallback\":\"${FALLBACK_TARGET}\""
-  if ! alembic upgrade "${FALLBACK_TARGET}"; then
-    json_log "ERROR" "bot.migrate.error" "alembic upgrade failed" "\"target\":\"${ALEMBIC_UPGRADE_TARGET}\""
-    exit 70
-  fi
-  json_log "INFO" "bot.migrate.done" "alembic upgrade finished (fallback)" "\"applied\":\"${FALLBACK_TARGET}\""
-fi
+json_log "INFO" "bot.migrate.done" "alembic upgrade head finished" "\"applied\":\"head\""
 
 exec python -m src.bot.main
