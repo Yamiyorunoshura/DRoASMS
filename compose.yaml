@@ -11,9 +11,9 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./docker/init:/docker-entrypoint-initdb.d:ro
     # 啟用 pg_cron 所需的 shared_preload_libraries 與 cron.database_name
-    command: ["postgres","-c","shared_preload_libraries=pg_cron","-c","cron.database_name=economy"]
+    command: [ "postgres", "-c", "shared_preload_libraries=pg_cron", "-c", "cron.database_name=economy" ]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bot -d economy"]
+      test: [ "CMD-SHELL", "pg_isready -U bot -d economy" ]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -25,8 +25,8 @@ services:
       target: production
       # 如需在 Apple Silicon 上建 linux/amd64 供 VPS 使用，取消下一行註解：
       # platforms: ["linux/amd64"]
-    # 或在服務層級指定平台（較直覺）：
-    # platform: linux/amd64
+      # 或在服務層級指定平台（較直覺）：
+      # platform: linux/amd64
     env_file:
       - .env
     environment:
@@ -35,7 +35,7 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
-    profiles: ["prod"]
+    profiles: [ "prod" ]
 
   bot-dev:
     build:
@@ -53,10 +53,10 @@ services:
       - ./src:/app/src
       - ./scripts:/app/scripts
       - ./tests:/app/tests
-    profiles: ["dev"]
+    profiles: [ "dev" ]
 
   pgadmin:
-    profiles: ["dev"]
+    profiles: [ "dev" ]
     image: dpage/pgadmin4:8
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
@@ -71,7 +71,7 @@ services:
       - pgadmin:/var/lib/pgadmin
 
   test:
-    profiles: ["test"]
+    profiles: [ "test" ]
     build:
       context: .
       dockerfile: docker/test.Dockerfile

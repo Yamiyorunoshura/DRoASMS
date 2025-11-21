@@ -1,0 +1,59 @@
+ARG UV_VERSION=0.7.3
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uvbin
+
+# Development container with full toolchain (tests, lint, type-check, Cython/mypyc, etc.)
+FROM python:3.13-slim AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_NO_COLOR=1 \
+    PIP_NO_CACHE_DIR=1
+
+# Install common development tools (git, build-essential) but keep image reasonable
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        build-essential \
+        git \
+        curl \
+        postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install uv for package and environment management
+COPY --from=uvbin /uv /uvx /usr/local/bin/
+RUN uv --version && uvx --version
+
+# Stage 1: dependency files first for caching
+COPY pyproject.toml uv.lock alembic.ini ./
+COPY README.md LICENSE ./
+
+# Stage 2: install base + dev dependency groups
+# - project.dependencies  → runtime deps
+# - [dependency-groups].dev → full dev toolchain (pytest, mypy, ruff, black, etc.)
+RUN uv venv .venv \
+    && . ./.venv/bin/activate \
+    && uv sync --frozen --group dev
+
+# Stage 3: copy source and tools
+COPY src ./src
+COPY scripts ./scripts
+RUN mkdir -p build/unified build/cython
+
+# Stage 4: compile performance modules incrementally for dev parity with production
+RUN . ./.venv/bin/activate \
+    && python scripts/compile_modules.py compile --incremental || true
+
+ENV PATH="/app/.venv/bin:${PATH}"
+ENV PYTHONPATH="/app/build/unified:/app"
+
+# Copy entrypoint script and set permissions (reuse production behavior)
+COPY docker/bin/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Development containers run as non-root where possible
+RUN useradd -m -u 65532 -s /bin/bash devuser || true
+USER devuser
+
+ENTRYPOINT ["/app/entrypoint.sh"]
