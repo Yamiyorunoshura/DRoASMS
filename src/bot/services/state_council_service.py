@@ -529,7 +529,13 @@ class StateCouncilService:
             code = dept.code if dept else 0
         except Exception:
             # Fallback to hardcoded mapping for backward compatibility
-            codes = {"內政部": 1, "財政部": 2, "國土安全部": 3, "中央銀行": 4}
+            codes = {
+                "內政部": 1,
+                "財政部": 2,
+                "國土安全部": 3,
+                "中央銀行": 4,
+                "法務部": 5,
+            }
             code = codes.get(department, 0)
         # 重要：避免乘以 10 造成 int64 溢位
         return int(base + int(guild_id) + code)
@@ -731,18 +737,43 @@ class StateCouncilService:
             tcm = await self._tx_cm(conn)
             async with tcm:
                 # 查詢現有帳戶
-                existing_accounts = await self._safe_fetch_accounts(
-                    conn_for_gateway, guild_id=guild_id
+                existing_accounts = list(
+                    await self._safe_fetch_accounts(conn_for_gateway, guild_id=guild_id)
                 )
 
-                # 定義四個部門及其對應的 account_id
-                departments = ["內政部", "財政部", "國土安全部", "中央銀行"]
+                # 定義核心部門及其對應的 account_id
+                departments: list[str] = ["內政部", "財政部", "國土安全部", "中央銀行"]
                 department_account_ids: dict[str, int] = {
                     "內政部": cfg.internal_affairs_account_id,
                     "財政部": cfg.finance_account_id,
                     "國土安全部": cfg.security_account_id,
                     "中央銀行": cfg.central_bank_account_id,
                 }
+
+                # 新增法務部支援：若資料庫已有法務部帳戶則沿用其 account_id；
+                # 否則使用導出規則建立穩定帳戶 ID，讓新部署（含雲端）能自動補齊。
+                justice_name = "法務部"
+                try:
+                    justice_account = next(
+                        (acc for acc in existing_accounts if acc.department == justice_name),
+                        None,
+                    )
+                except Exception:
+                    justice_account = None
+
+                if justice_account is not None:
+                    department_account_ids[justice_name] = int(justice_account.account_id)
+                    departments.append(justice_name)
+                else:
+                    try:
+                        justice_account_id = self.derive_department_account_id(
+                            guild_id, justice_name
+                        )
+                        department_account_ids[justice_name] = int(justice_account_id)
+                        departments.append(justice_name)
+                    except Exception:
+                        # 若導出失敗，不影響既有四個核心部門的帳戶同步。
+                        pass
 
                 created_accounts: list[str] = []
 

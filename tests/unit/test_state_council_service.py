@@ -157,10 +157,10 @@ class TestStateCouncilService:
                 leader_role_id=leader_role_id,
             )
 
-            # Verify gateway calls
+            # Verify gateway calls（目前仍僅針對四個核心部門寫入組態與帳戶）
             assert mock_gateway.upsert_state_council_config.called
-            assert mock_gateway.upsert_department_config.call_count == 4  # 4 departments
-            assert mock_gateway.upsert_government_account.call_count == 4  # 4 accounts
+            assert mock_gateway.upsert_department_config.call_count == 4  # 4 core departments
+            assert mock_gateway.upsert_government_account.call_count == 4  # 4 core accounts
 
             # Verify returned config
             assert config.guild_id == guild_id
@@ -1116,7 +1116,8 @@ class TestStateCouncilService:
             gw = cast(AsyncMock, service._gateway)
             gw.fetch_state_council_config.return_value = sample_config
 
-            # 所有四個部門帳戶都存在
+            # 所有核心部門帳戶都存在；另加入法務部帳戶以確保不會重複建立
+            justice_account_id = _snowflake()
             existing_accounts = [
                 GovernmentAccount(
                     sample_config.internal_affairs_account_id,
@@ -1147,6 +1148,14 @@ class TestStateCouncilService:
                     guild_id,
                     "中央銀行",
                     4000,
+                    datetime.now(tz=timezone.utc),
+                    datetime.now(tz=timezone.utc),
+                ),
+                GovernmentAccount(
+                    justice_account_id,
+                    guild_id,
+                    "法務部",
+                    5000,
                     datetime.now(tz=timezone.utc),
                     datetime.now(tz=timezone.utc),
                 ),
@@ -1184,7 +1193,8 @@ class TestStateCouncilService:
             gw = cast(AsyncMock, service._gateway)
             gw.fetch_state_council_config.return_value = sample_config
 
-            # 只有兩個部門帳戶存在（缺少財政部和中央銀行）
+            # 僅內政部、國土安全部與法務部已有帳戶（缺少財政部和中央銀行）
+            justice_account_id = _snowflake()
             existing_accounts = [
                 GovernmentAccount(
                     sample_config.internal_affairs_account_id,
@@ -1202,6 +1212,14 @@ class TestStateCouncilService:
                     datetime.now(tz=timezone.utc),
                     datetime.now(tz=timezone.utc),
                 ),
+                GovernmentAccount(
+                    justice_account_id,
+                    guild_id,
+                    "法務部",
+                    5000,
+                    datetime.now(tz=timezone.utc),
+                    datetime.now(tz=timezone.utc),
+                ),
             ]
             gw.fetch_government_accounts.return_value = existing_accounts
 
@@ -1212,6 +1230,7 @@ class TestStateCouncilService:
                 MagicMock(balance=2500),  # 財政部（缺失，建立時使用）
                 MagicMock(balance=3000),  # 國土安全部（已存在，檢查餘額同步）
                 MagicMock(balance=4500),  # 中央銀行（缺失，建立時使用）
+                MagicMock(balance=5000),  # 法務部（已存在，檢查餘額同步）
             ]
             service._economy = econ
 
@@ -1237,7 +1256,7 @@ class TestStateCouncilService:
 
             await service.ensure_government_accounts(guild_id=guild_id, admin_id=admin_id)
 
-            # 應建立兩個缺失的帳戶
+            # 應建立兩個缺失的帳戶（財政部與中央銀行）
             assert gw.upsert_government_account.call_count == 2
 
             # 驗證建立的帳戶使用配置中的 account_id
@@ -1361,8 +1380,8 @@ class TestStateCouncilService:
 
             await service.ensure_government_accounts(guild_id=guild_id, admin_id=admin_id)
 
-            # 應建立四個帳戶，每個餘額為 0（因為經濟系統查詢失敗）
-            assert gw.upsert_government_account.call_count == 4
+            # 應建立所有核心部門與法務部帳戶，每個餘額為 0（因為經濟系統查詢失敗）
+            assert gw.upsert_government_account.call_count == 5
             for call in gw.upsert_government_account.call_args_list:
                 assert call.kwargs["balance"] == 0
 
