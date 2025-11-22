@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2025-11-23
+
+### 修復
+- **司法服務記錄更正**：修復 `justice_service.py` 中的記錄錯誤
+  - 修正 `existing.id` 為 `existing.suspect_id`
+  - 修正 `suspect.id` 為 `suspect.suspect_id`
+  - 確保記錄的 ID 欄位與資料模型一致
+
 ## [1.0.0] - 2025-11-22
 
 ### ⚠️ 重大變更

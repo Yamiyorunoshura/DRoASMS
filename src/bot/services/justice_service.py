@@ -77,7 +77,7 @@ class JusticeService:
                     "justice_service.create_suspect_already_exists",
                     guild_id=guild_id,
                     member_id=member_id,
-                    existing_suspect_id=str(existing.id),
+                    existing_suspect_id=str(existing.suspect_id),
                 )
                 return existing
 
@@ -92,7 +92,7 @@ class JusticeService:
             LOGGER.info(
                 "justice_service.suspect_created",
                 guild_id=guild_id,
-                suspect_id=str(suspect.id),
+                suspect_id=str(suspect.suspect_id),
                 member_id=member_id,
                 arrested_by=arrested_by,
             )
