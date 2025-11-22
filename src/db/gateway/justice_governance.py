@@ -32,7 +32,7 @@ class JusticeGovernanceGateway:
                 arrested_at, created_at, updated_at
             ) VALUES ($1, $2, $3, $4, 'detained', $5, $6, $7)
             RETURNING
-                id, guild_id, member_id, arrested_by, arrest_reason,
+                suspect_id, guild_id, member_id, arrested_by, arrest_reason,
                 status, arrested_at, charged_at, released_at, created_at, updated_at
         """
 
@@ -48,7 +48,7 @@ class JusticeGovernanceGateway:
         )
 
         return Suspect(
-            id=int(row["id"]),
+            suspect_id=int(row["suspect_id"]),
             guild_id=int(row["guild_id"]),
             member_id=int(row["member_id"]),
             arrested_by=int(row["arrested_by"]),
@@ -82,7 +82,7 @@ class JusticeGovernanceGateway:
 
         query = f"""
             SELECT
-                id, guild_id, member_id, arrested_by, arrest_reason,
+                suspect_id, guild_id, member_id, arrested_by, arrest_reason,
                 status, arrested_at, charged_at, released_at, created_at, updated_at
             FROM {self._schema}.suspects
             WHERE guild_id = $1 AND status = ANY($2::text[])
@@ -94,7 +94,7 @@ class JusticeGovernanceGateway:
 
         return [
             Suspect(
-                id=int(row["id"]),
+                suspect_id=int(row["suspect_id"]),
                 guild_id=int(row["guild_id"]),
                 member_id=int(row["member_id"]),
                 arrested_by=int(row["arrested_by"]),
@@ -119,7 +119,7 @@ class JusticeGovernanceGateway:
         """Get the active suspect record for a member."""
         query = f"""
             SELECT
-                id, guild_id, member_id, arrested_by, arrest_reason,
+                suspect_id, guild_id, member_id, arrested_by, arrest_reason,
                 status, arrested_at, charged_at, released_at, created_at, updated_at
             FROM {self._schema}.suspects
             WHERE guild_id = $1 AND member_id = $2 AND status IN ('detained', 'charged')
@@ -133,7 +133,7 @@ class JusticeGovernanceGateway:
             return None
 
         return Suspect(
-            id=int(row["id"]),
+            suspect_id=int(row["suspect_id"]),
             guild_id=int(row["guild_id"]),
             member_id=int(row["member_id"]),
             arrested_by=int(row["arrested_by"]),
@@ -156,7 +156,7 @@ class JusticeGovernanceGateway:
         """Get the latest suspect record for a member (regardless of status)."""
         query = f"""
             SELECT
-                id, guild_id, member_id, arrested_by, arrest_reason,
+                suspect_id, guild_id, member_id, arrested_by, arrest_reason,
                 status, arrested_at, charged_at, released_at, created_at, updated_at
             FROM {self._schema}.suspects
             WHERE guild_id = $1 AND member_id = $2
@@ -170,7 +170,7 @@ class JusticeGovernanceGateway:
             return None
 
         return Suspect(
-            id=int(row["id"]),
+            suspect_id=int(row["suspect_id"]),
             guild_id=int(row["guild_id"]),
             member_id=int(row["member_id"]),
             arrested_by=int(row["arrested_by"]),
@@ -195,9 +195,9 @@ class JusticeGovernanceGateway:
         query = f"""
             UPDATE {self._schema}.suspects
             SET status = 'charged', charged_at = $1, updated_at = $2
-            WHERE id = $3 AND status = 'detained'
+            WHERE suspect_id = $3 AND status = 'detained'
             RETURNING
-                id, guild_id, member_id, arrested_by, arrest_reason,
+                suspect_id, guild_id, member_id, arrested_by, arrest_reason,
                 status, arrested_at, charged_at, released_at, created_at, updated_at
         """
 
@@ -207,7 +207,7 @@ class JusticeGovernanceGateway:
             raise ValueError("Suspect not found or already charged")
 
         return Suspect(
-            id=int(row["id"]),
+            suspect_id=int(row["suspect_id"]),
             guild_id=int(row["guild_id"]),
             member_id=int(row["member_id"]),
             arrested_by=int(row["arrested_by"]),
@@ -235,9 +235,9 @@ class JusticeGovernanceGateway:
         query = f"""
             UPDATE {self._schema}.suspects
             SET status = 'detained', charged_at = NULL, updated_at = $1
-            WHERE id = $2 AND status = 'charged'
+            WHERE suspect_id = $2 AND status = 'charged'
             RETURNING
-                id, guild_id, member_id, arrested_by, arrest_reason,
+                suspect_id, guild_id, member_id, arrested_by, arrest_reason,
                 status, arrested_at, charged_at, released_at, created_at, updated_at
         """
 
@@ -247,7 +247,7 @@ class JusticeGovernanceGateway:
             raise ValueError("Suspect not found or not charged")
 
         return Suspect(
-            id=int(row["id"]),
+            suspect_id=int(row["suspect_id"]),
             guild_id=int(row["guild_id"]),
             member_id=int(row["member_id"]),
             arrested_by=int(row["arrested_by"]),
@@ -272,9 +272,9 @@ class JusticeGovernanceGateway:
         query = f"""
             UPDATE {self._schema}.suspects
             SET status = 'released', released_at = $1, updated_at = $2
-            WHERE id = $3 AND status IN ('detained', 'charged')
+            WHERE suspect_id = $3 AND status IN ('detained', 'charged')
             RETURNING
-                id, guild_id, member_id, arrested_by, arrest_reason,
+                suspect_id, guild_id, member_id, arrested_by, arrest_reason,
                 status, arrested_at, charged_at, released_at, created_at, updated_at
         """
 
@@ -284,7 +284,7 @@ class JusticeGovernanceGateway:
             raise ValueError("Suspect not found or already released")
 
         return Suspect(
-            id=int(row["id"]),
+            suspect_id=int(row["suspect_id"]),
             guild_id=int(row["guild_id"]),
             member_id=int(row["member_id"]),
             arrested_by=int(row["arrested_by"]),

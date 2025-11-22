@@ -4107,7 +4107,7 @@ class JusticeSuspectsPanelView(discord.ui.View):
         if self.current_page >= total_pages:
             self.current_page = max(total_pages - 1, 0)
         # 僅保留目前頁面存在的嫌犯選取狀態
-        valid_ids = {str(suspect.id) for suspect in self._suspects}
+        valid_ids = {str(suspect.suspect_id) for suspect in self._suspects}
         self._selected_ids &= valid_ids
 
     @property
@@ -4268,7 +4268,7 @@ class JusticeSuspectsPanelView(discord.ui.View):
                 discord.SelectOption(
                     label=member_name[:95],
                     description=description[:95],
-                    value=str(suspect.id),
+                    value=str(suspect.suspect_id),
                 )
             )
 
@@ -4497,7 +4497,7 @@ class JusticeSuspectsPanelView(discord.ui.View):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        selected_map = {str(suspect.id): suspect for suspect in self._suspects}
+        selected_map = {str(suspect.suspect_id): suspect for suspect in self._suspects}
         success = 0
         failures: list[str] = []
 
@@ -4566,7 +4566,7 @@ class JusticeSuspectsPanelView(discord.ui.View):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        selected_map = {str(suspect.id): suspect for suspect in self._suspects}
+        selected_map = {str(suspect.suspect_id): suspect for suspect in self._suspects}
         success = 0
         failures: list[str] = []
 
@@ -4633,7 +4633,7 @@ class JusticeSuspectsPanelView(discord.ui.View):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        selected_map = {str(suspect.id): suspect for suspect in self._suspects}
+        selected_map = {str(suspect.suspect_id): suspect for suspect in self._suspects}
         member_ids: list[int] = []
         failures: list[str] = []
 

@@ -215,7 +215,7 @@ class StateCouncilSummary:
 
 @dataclass(slots=True, frozen=True)
 class Suspect:
-    id: int
+    suspect_id: int
     guild_id: int
     member_id: int
     arrested_by: int

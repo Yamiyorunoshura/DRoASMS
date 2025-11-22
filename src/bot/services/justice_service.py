@@ -279,7 +279,7 @@ class JusticeService:
             if not suspect or suspect.status == "released":
                 return
             try:
-                await self._gateway.release_suspect(conn, suspect_id=suspect.id)
+                await self._gateway.release_suspect(conn, suspect_id=suspect.suspect_id)
             except ValueError:
                 # 已被其他流程更新為 released 或記錄不存在時，視為已同步
                 return
