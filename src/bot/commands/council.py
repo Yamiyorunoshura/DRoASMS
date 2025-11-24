@@ -160,7 +160,7 @@ def register(
 ) -> None:
     """Register the /council slash command group with the provided command tree."""
     if container is None:
-        # Fallback to old behavior for backward compatibility during migration
+        # Fallback to unified service implementation
         service = CouncilService()
         service_result = CouncilServiceResult()
         state_council_service = StateCouncilService()

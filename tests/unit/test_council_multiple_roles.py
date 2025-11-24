@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Sequence
 
 import pytest
 
 from src.bot.services.council_service import CouncilService
-from src.db.gateway.council_governance import CouncilConfig, CouncilRoleConfig
+from src.db.gateway.council_governance import (
+    CouncilConfig,
+    CouncilGovernanceGateway,
+    CouncilRoleConfig,
+)
 
 # ---- Fakes for multiple role testing ----
 
@@ -22,7 +26,7 @@ class _FakeTxn:
 
 
 class _FakeConnection:
-    def __init__(self, gw: "_FakeGateway") -> None:
+    def __init__(self, gw: _FakeGateway) -> None:
         self._gw = gw
 
     def transaction(self) -> _FakeTxn:
@@ -32,7 +36,7 @@ class _FakeConnection:
         # Mock SQL responses based on function calls
         if "fn_get_council_role_ids" in sql:
             guild_id = args[0]
-            return self._gw._council_role_ids.get(guild_id, [])
+            return self._gw.council_role_ids.get(guild_id, [])
         return None
 
     async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
@@ -42,8 +46,8 @@ class _FakeConnection:
             in sql
         ):
             guild_id = args[0]
-            configs = []
-            for role_id in self._gw._council_role_ids.get(guild_id, []):
+            configs: list[dict[str, Any]] = []
+            for role_id in self._gw.council_role_ids.get(guild_id, []):
                 configs.append(
                     {
                         "guild_id": guild_id,
@@ -75,16 +79,26 @@ class _FakePool:
         return _FakeAcquire(self._conn)
 
 
-class _FakeGateway:
+class _FakeGateway(CouncilGovernanceGateway):
     def __init__(self, *, schema: str = "governance") -> None:
         # Don't call super().__init__() to avoid inheritance issues
         self._schema = schema
         self._cfg: dict[int, CouncilConfig] = {}
         self._council_role_ids: dict[int, list[int]] = {}
 
+    @property
+    def council_role_ids(self) -> dict[int, list[int]]:
+        """Public property for test access."""
+        return self._council_role_ids
+
     # config
     async def upsert_config(
-        self, conn: Any, *, guild_id: int, council_role_id: int, council_account_member_id: int
+        self,
+        connection: Any,
+        *,
+        guild_id: int,
+        council_role_id: int,
+        council_account_member_id: int,
     ) -> CouncilConfig:
         cfg = CouncilConfig(
             guild_id=guild_id,
@@ -96,23 +110,23 @@ class _FakeGateway:
         self._cfg[guild_id] = cfg
         return cfg
 
-    async def fetch_config(self, conn: Any, *, guild_id: int) -> CouncilConfig | None:
+    async def fetch_config(self, connection: Any, *, guild_id: int) -> CouncilConfig | None:
         return self._cfg.get(guild_id)
 
     # council role management
-    async def get_council_role_ids(self, conn: Any, *, guild_id: int) -> list[int]:
+    async def get_council_role_ids(self, connection: Any, *, guild_id: int) -> Sequence[int]:
         return self._council_role_ids.get(guild_id, [])
 
-    async def add_council_role(self, conn: Any, *, guild_id: int, role_id: int) -> bool:
-        existing_roles = self._council_role_ids.get(guild_id, [])
+    async def add_council_role(self, connection: Any, *, guild_id: int, role_id: int) -> bool:
+        existing_roles: list[int] = list(self._council_role_ids.get(guild_id, []))
         if role_id in existing_roles:
             return False
         existing_roles.append(role_id)
         self._council_role_ids[guild_id] = existing_roles
         return True
 
-    async def remove_council_role(self, conn: Any, *, guild_id: int, role_id: int) -> bool:
-        existing_roles = self._council_role_ids.get(guild_id, [])
+    async def remove_council_role(self, connection: Any, *, guild_id: int, role_id: int) -> bool:
+        existing_roles: list[int] = list(self._council_role_ids.get(guild_id, []))
         if role_id not in existing_roles:
             return False
         existing_roles.remove(role_id)
@@ -120,9 +134,9 @@ class _FakeGateway:
         return True
 
     async def list_council_role_configs(
-        self, conn: Any, *, guild_id: int
+        self, connection: Any, *, guild_id: int
     ) -> list[CouncilRoleConfig]:
-        configs = []
+        configs: list[CouncilRoleConfig] = []
         for role_id in self._council_role_ids.get(guild_id, []):
             configs.append(
                 CouncilRoleConfig(
@@ -176,7 +190,7 @@ async def test_check_council_permission_single_role(monkeypatch: pytest.MonkeyPa
     gw = _FakeGateway()
     conn = _FakeConnection(gw)
     pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
 
@@ -200,7 +214,7 @@ async def test_check_council_permission_multiple_roles(monkeypatch: pytest.Monke
     gw = _FakeGateway()
     conn = _FakeConnection(gw)
     pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
 
@@ -228,7 +242,7 @@ async def test_add_council_role(monkeypatch: pytest.MonkeyPatch) -> None:
     gw = _FakeGateway()
     conn = _FakeConnection(gw)
     pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
     await svc.set_config(guild_id=100, council_role_id=200)
@@ -253,7 +267,7 @@ async def test_remove_council_role(monkeypatch: pytest.MonkeyPatch) -> None:
     gw = _FakeGateway()
     conn = _FakeConnection(gw)
     pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
     await svc.set_config(guild_id=100, council_role_id=200)
@@ -279,7 +293,7 @@ async def test_get_council_role_ids_empty(monkeypatch: pytest.MonkeyPatch) -> No
     gw = _FakeGateway()
     conn = _FakeConnection(gw)
     pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
 
@@ -295,7 +309,7 @@ async def test_list_council_role_configs(monkeypatch: pytest.MonkeyPatch) -> Non
     gw = _FakeGateway()
     conn = _FakeConnection(gw)
     pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
     await svc.set_config(guild_id=100, council_role_id=200)
@@ -320,7 +334,7 @@ async def test_backward_compatibility_with_existing_config(monkeypatch: pytest.M
     gw = _FakeGateway()
     conn = _FakeConnection(gw)
     pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
 

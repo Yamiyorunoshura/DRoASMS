@@ -9,14 +9,14 @@ import pytest
 from src.bot.services.council_service import CouncilService
 from src.bot.services.department_registry import get_registry
 from tests.unit.test_council_service import (
-    _FakeConnection,
-    _FakeGateway,
-    _FakePool,
-    _FakeTransferService,
+    FakeConnection,
+    FakeGateway,
+    FakePool,
+    FakeTransferService,
 )
 
 
-class _FakeGatewayWithList(_FakeGateway):
+class _FakeGatewayWithList(FakeGateway):
     async def list_active_proposals(self, conn: Any) -> Any:
         return [p for p in self._proposals.values() if p.status == "進行中"]
 
@@ -27,11 +27,11 @@ class _FakeGatewayWithList(_FakeGateway):
 async def test_transfer_to_user_full_flow(monkeypatch: pytest.MonkeyPatch) -> None:
     """完整流程：選擇轉帳給使用者 → 選擇使用者 → 填寫資訊 → 建立提案 → 投票"""
     gw = _FakeGatewayWithList()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw, transfer_service=cast(Any, _FakeTransferService()))
+    svc = CouncilService(gateway=gw, transfer_service=cast(Any, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # Step 1: Create proposal for user transfer
@@ -70,11 +70,11 @@ async def test_transfer_to_user_full_flow(monkeypatch: pytest.MonkeyPatch) -> No
 async def test_transfer_to_department_full_flow(monkeypatch: pytest.MonkeyPatch) -> None:
     """完整流程：選擇轉帳給政府部門 → 選擇部門 → 填寫資訊 → 建立提案 → 投票"""
     gw = _FakeGatewayWithList()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw, transfer_service=cast(Any, _FakeTransferService()))
+    svc = CouncilService(gateway=gw, transfer_service=cast(Any, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # Get department registry

@@ -16,13 +16,21 @@ from src.db.gateway.economy_transfers import (
     EconomyTransferGateway,
     TransferProcedureResult,
 )
-from src.infra.result import BusinessLogicError, DatabaseError, Err, Ok, Result, ValidationError
+from src.infra.result import (
+    BusinessLogicError,
+    DatabaseError,
+    Err,
+    Error,
+    Ok,
+    Result,
+    ValidationError,
+)
 from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
 
 
-class TransferError(RuntimeError):
+class TransferError(Error):
     """Base error raised for transfer-related failures."""
 
 
@@ -33,9 +41,17 @@ class TransferValidationError(TransferError):
 class InsufficientBalanceError(TransferError):
     """Raised when the initiator lacks sufficient balance."""
 
+    def __init__(self, message: str = "Insufficient balance for transfer", **kwargs: Any) -> None:
+        super().__init__(message, **kwargs)
+
 
 class TransferThrottleError(TransferError):
     """Raised when the initiator is throttled by daily limits."""
+
+    def __init__(
+        self, message: str = "Transfer throttled due to daily limits", **kwargs: Any
+    ) -> None:
+        super().__init__(message, **kwargs)
 
 
 class TransferService:

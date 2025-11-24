@@ -6,13 +6,13 @@ import pytest
 
 from src.bot.services.council_service import CouncilService
 from tests.unit.test_council_service import (
-    _FakeConnection,
-    _FakeGateway,
-    _FakePool,
+    FakeConnection,
+    FakeGateway,
+    FakePool,
 )
 
 
-class _FakeGatewayWithList(_FakeGateway):
+class _FakeGatewayWithList(FakeGateway):
     async def list_active_proposals(self, conn: Any) -> Any:
         return [p for p in self._proposals.values() if p.status == "進行中"]
 
@@ -23,9 +23,9 @@ class _FakeGatewayWithList(_FakeGateway):
 async def test_panel_contract_flow(monkeypatch: pytest.MonkeyPatch) -> None:
     """合約測試（服務層）：建案→面板列出→投票→撤案（條件）。"""
     gw = _FakeGatewayWithList()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
     await svc.set_config(guild_id=100, council_role_id=200)

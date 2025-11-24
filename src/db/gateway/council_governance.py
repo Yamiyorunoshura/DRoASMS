@@ -226,7 +226,7 @@ class CouncilGovernanceGateway:
         rows = await connection.fetch(
             f"SELECT * FROM {self._schema}.fn_get_snapshot_members($1)", proposal_id
         )
-        return [int(r["fn_get_snapshot_members"]) for r in rows]
+        return [int(r["member_id"]) for r in rows]
 
     async def count_active_by_guild(self, connection: ConnectionProtocol, *, guild_id: int) -> int:
         val = await connection.fetchval(
@@ -325,7 +325,7 @@ class CouncilGovernanceGateway:
         rows = await connection.fetch(
             f"SELECT * FROM {self._schema}.fn_list_unvoted_members($1)", proposal_id
         )
-        return [int(r["fn_list_unvoted_members"]) for r in rows]
+        return [int(r["member_id"]) for r in rows]
 
     # --- Result-based wrapper methods ---
     @async_returns_result(DatabaseError)

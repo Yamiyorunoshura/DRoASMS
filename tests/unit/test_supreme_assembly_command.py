@@ -118,7 +118,7 @@ class TestSupremeAssemblyCommand:
             patch("src.bot.commands.supreme_assembly.build_supreme_assembly_group") as mock_build,
             patch("src.bot.commands.supreme_assembly.SupremeAssemblyService") as mock_service_cls,
             patch("src.bot.commands.supreme_assembly.PermissionService") as mock_permission_cls,
-            patch("src.bot.commands.supreme_assembly.CouncilService") as mock_council_cls,
+            patch("src.bot.commands.supreme_assembly.CouncilServiceResult") as mock_council_cls,
             patch("src.bot.commands.supreme_assembly.StateCouncilService") as mock_state_cls,
         ):
             mock_group = MagicMock()
@@ -225,7 +225,6 @@ class TestSupremeAssemblyPanelView:
             patch("discord.ui.View.add_item") as mock_add_item,
             patch.object(SupremeAssemblyPanelView, "timeout", 600),
         ):
-
             # 設置模擬屬性
             mock_init.return_value = None
 
@@ -255,7 +254,6 @@ class TestSupremeAssemblyPanelView:
     def test_panel_view_components(self, mock_service: MagicMock, mock_guild: MagicMock) -> None:
         """測試面板視圖組件。"""
         with patch("discord.ui.View.__init__"), patch("discord.ui.View.add_item"):
-
             view = SupremeAssemblyPanelView(
                 service=mock_service,
                 guild=mock_guild,

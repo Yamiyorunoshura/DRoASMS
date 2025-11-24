@@ -12,7 +12,8 @@ from src.bot.services.adjustment_service import (
     AdjustmentService,
     ValidationError,
 )
-from src.bot.services.council_service import CouncilService, GovernanceNotConfiguredError
+from src.bot.services.council_service import GovernanceNotConfiguredError
+from src.bot.services.council_service_result import CouncilServiceResult
 from src.bot.services.currency_config_service import (
     CurrencyConfigResult,
     CurrencyConfigService,
@@ -27,6 +28,7 @@ from src.bot.services.supreme_assembly_service import (
 from src.bot.services.supreme_assembly_service import (
     SupremeAssemblyService,
 )
+from src.db.gateway.council_governance import CouncilConfig
 from src.infra.di.container import DependencyContainer
 from src.infra.result import Err, Ok
 
@@ -185,12 +187,18 @@ def build_adjust_command(
         target_id: int
         if isinstance(target, discord.Role):
             # 先嘗試理事會身分組
+            cfg: CouncilConfig | None = None
             try:
-                cfg = await CouncilService().get_config(guild_id=guild_id)
+                service_result = await CouncilServiceResult().get_config(guild_id=guild_id)
+
+                if isinstance(service_result, Ok):
+                    cfg = service_result.value  # type: ignore[assignment]
+                else:
+                    cfg = None
             except GovernanceNotConfiguredError:
                 cfg = None  # 容忍未設定，改試其他身分組
             if cfg and target.id == cfg.council_role_id:
-                target_id = CouncilService.derive_council_account_id(guild_id)
+                target_id = CouncilServiceResult.derive_council_account_id(guild_id)
             else:
                 # 嘗試最高人民會議議長身分組
                 sa_service = SupremeAssemblyService()

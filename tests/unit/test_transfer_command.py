@@ -112,19 +112,41 @@ async def test_transfer_command_maps_council_role_to_council_account(monkeypatch
     # 建立後再 Patch transfer 模組中的 discord.Role 為測試替身型別，使 isinstance 成立
     monkeypatch.setattr(transfer_mod.discord, "Role", _StubRole, raising=True)
 
-    # Patch CouncilService 類別為無資料庫相依的替身
+    # Patch CouncilServiceResult 類別為無資料庫相依的替身
     class _CouncilCfg(SimpleNamespace):
         council_role_id: int
 
     from src.bot.services.council_service import CouncilService as _RealCS
+    from src.infra.result import Err, Ok
 
-    class _CSStub:
+    class _CSRStub:
         derive_council_account_id = staticmethod(_RealCS.derive_council_account_id)
 
-        async def get_config(self, *, guild_id: int) -> Any:  # noqa: ANN401
-            return _CouncilCfg(council_role_id=council_role_id)
+        async def get_config(
+            self, *, guild_id: int
+        ) -> Ok[Any, Any] | Err[Any, Any]:  # noqa: ANN401
+            return Ok(_CouncilCfg(council_role_id=council_role_id))
 
-    monkeypatch.setattr(transfer_mod, "CouncilService", _CSStub, raising=True)
+    monkeypatch.setattr(transfer_mod, "CouncilServiceResult", _CSRStub, raising=True)
+
+    # Patch SupremeAssemblyService 類別為無資料庫相依的替身
+    class _SASStub:
+        async def get_config(self, *, guild_id: int) -> Any:  # noqa: ANN401
+            return None
+
+    monkeypatch.setattr(transfer_mod, "SupremeAssemblyService", _SASStub, raising=True)
+
+    # Patch StateCouncilService 類別為無資料庫相依的替身
+    class _SCSStub:
+        async def get_config(self, *, guild_id: int) -> Any:  # noqa: ANN401
+            return None
+
+        async def find_department_by_role(
+            self, *, guild_id: int, role_id: int
+        ) -> Any:  # noqa: ANN401
+            return None
+
+    monkeypatch.setattr(transfer_mod, "StateCouncilService", _SCSStub, raising=True)
 
     interaction = _StubInteraction(guild_id=guild_id, user_id=initiator_id)
     target_role = _StubRole(id=council_role_id)
@@ -133,7 +155,7 @@ async def test_transfer_command_maps_council_role_to_council_account(monkeypatch
 
     # 期望以理事會公共帳戶 ID 作為 target_id
     service.transfer_currency.assert_awaited_once()
-    kwargs = service.transfer_currency.await_args.kwargs  # type: ignore[attr-defined]
+    kwargs = service.transfer_currency.await_args.kwargs
     from src.bot.services.council_service import CouncilService as _CS
 
     assert kwargs["target_id"] == _CS.derive_council_account_id(guild_id)
@@ -175,15 +197,15 @@ async def test_transfer_command_maps_sc_leader_role_to_main_account(monkeypatch:
     # 讓 isinstance(target, discord.Role) 成立（建完 command 後再 patch）
     monkeypatch.setattr(transfer_mod.discord, "Role", _StubRole, raising=True)
 
-    # Patch CouncilService 類別為無資料庫相依的替身（未設定）
+    # Patch CouncilServiceResult 類別為無資料庫相依的替身（未設定）
     class _CouncilCfg(SimpleNamespace):
         council_role_id: int
 
-    class _CSStub:
+    class _CSRStub:
         async def get_config(self, *, guild_id: int) -> Any:  # noqa: ANN401
             raise GovernanceNotConfiguredError()
 
-    monkeypatch.setattr(transfer_mod, "CouncilService", _CSStub, raising=True)
+    monkeypatch.setattr(transfer_mod, "CouncilServiceResult", _CSRStub, raising=True)
 
     # StateCouncil 類別替身：設定有 leader_role_id，且不命中任何部門
     class _Cfg(SimpleNamespace):
@@ -255,12 +277,12 @@ async def test_transfer_command_maps_department_leader_role_to_department_accoun
     # 讓 isinstance(target, discord.Role) 成立（建完 command 後再 patch）
     monkeypatch.setattr(transfer_mod.discord, "Role", _StubRole, raising=True)
 
-    # Council 類別替身：未設定
-    class _CSStub:
+    # CouncilServiceResult 類別替身：未設定
+    class _CSRStub:
         async def get_config(self, *, guild_id: int) -> Any:  # noqa: ANN401
             raise GovernanceNotConfiguredError()
 
-    monkeypatch.setattr(transfer_mod, "CouncilService", _CSStub, raising=True)
+    monkeypatch.setattr(transfer_mod, "CouncilServiceResult", _CSRStub, raising=True)
 
     # StateCouncil 類別替身：沒有 leader 命中；find_department_by_role 命中部門；get_department_account_id 回傳期望值
     from src.bot.services.state_council_service import StateCouncilService as _RealSCS
@@ -464,14 +486,14 @@ async def test_transfer_command_maps_state_council_leader_role_to_main_account(
     initiator_id = _snowflake()
     leader_role_id = _snowflake()
 
-    # Patch CouncilService：視為尚未設定或不符合
+    # Patch CouncilServiceResult：視為尚未設定或不符合
     import src.bot.commands.transfer as transfer_mod
 
     async def _council_get_config_unset(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         raise GovernanceNotConfiguredError()
 
     monkeypatch.setattr(
-        transfer_mod.CouncilService, "get_config", _council_get_config_unset, raising=True
+        transfer_mod.CouncilServiceResult, "get_config", _council_get_config_unset, raising=True
     )
 
     # Patch StateCouncilService：回傳含 leader_role_id 的配置

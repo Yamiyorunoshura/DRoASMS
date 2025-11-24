@@ -14,7 +14,7 @@ from src.bot.interaction_compat import (
     send_modal_compat,
 )
 from src.bot.services.balance_service import BalanceService
-from src.bot.services.council_service import CouncilService
+from src.bot.services.council_service_result import CouncilServiceResult
 from src.bot.services.department_registry import get_registry
 from src.bot.services.permission_service import PermissionService
 from src.bot.services.state_council_service import StateCouncilService
@@ -48,12 +48,8 @@ def _extract_select_values(interaction: discord.Interaction) -> list[str]:
     raw_values = data.get("values")
     if not isinstance(raw_values, list):
         return []
-    typed_values = cast(list[Any], raw_values)  # type: ignore[redundant-cast]
-    vals: list[str] = []
-    for item in typed_values:
-        if isinstance(item, str):
-            vals.append(item)
-    return vals
+    typed_values = cast(list[str], raw_values)
+    return typed_values
 
 
 def get_help_data() -> dict[str, HelpData]:
@@ -118,7 +114,7 @@ def register(
         # Fallback to old behavior for backward compatibility during migration
         service = SupremeAssemblyService()
         service_result = SupremeAssemblyServiceResult(legacy_service=service)
-        council_service = CouncilService()
+        council_service = CouncilServiceResult()
         state_council_service = StateCouncilService()
         permission_service = PermissionService(
             council_service=council_service,
@@ -1148,7 +1144,7 @@ class SupremeAssemblyTransferModal(discord.ui.Modal, title="轉帳"):
         if self.target_type == "user" and self.target_user_id:
             target_id = self.target_user_id
         elif self.target_type == "council":
-            target_id = CouncilService.derive_council_account_id(self.guild.id)
+            target_id = CouncilServiceResult.derive_council_account_id(self.guild.id)
         elif self.target_type == "department" and self.target_department_id:
             registry = get_registry()
             dept = registry.get_by_id(self.target_department_id)
@@ -1918,9 +1914,9 @@ class SummonPermanentCouncilView(discord.ui.View):
 
         try:
             # Create summon records for each selected member
-            from src.bot.services.council_service import CouncilService
+            from src.bot.services.council_service_result import CouncilServiceResult
 
-            target_id = CouncilService.derive_council_account_id(self.guild.id)
+            target_id = CouncilServiceResult.derive_council_account_id(self.guild.id)
             target_name = "常任理事會成員"
 
             # Prepare DM content

@@ -9,7 +9,8 @@ import structlog
 from discord import app_commands
 
 from src.bot.commands.help_data import HelpData
-from src.bot.services.council_service import CouncilService, GovernanceNotConfiguredError
+from src.bot.services.council_service import GovernanceNotConfiguredError
+from src.bot.services.council_service_result import CouncilServiceResult
 from src.bot.services.currency_config_service import (
     CurrencyConfigResult,
     CurrencyConfigService,
@@ -29,6 +30,7 @@ from src.bot.services.transfer_service import (
     TransferResult,
     TransferService,
 )
+from src.db.gateway.council_governance import CouncilConfig
 from src.infra.di.container import DependencyContainer
 from src.infra.result import BusinessLogicError, Err, Ok, ValidationError
 
@@ -152,15 +154,21 @@ def build_transfer_command(
         target_id: int
         if isinstance(target, discord.Role):
             # 嘗試理事會身分組
-            # Note: CouncilService and StateCouncilService are resolved directly
+            # Note: CouncilServiceResult and StateCouncilService are resolved directly
             # since they don't need the container in this context
             # (they're stateless for these calls)
+            cfg: CouncilConfig | None = None
             try:
-                cfg = await CouncilService().get_config(guild_id=guild_id)
+                service_result = await CouncilServiceResult().get_config(guild_id=guild_id)
+
+                if isinstance(service_result, Ok):
+                    cfg = service_result.value  # type: ignore[assignment]
+                else:
+                    cfg = None
             except GovernanceNotConfiguredError:
                 cfg = None
             if cfg and target.id == cfg.council_role_id:
-                target_id = CouncilService.derive_council_account_id(guild_id)
+                target_id = CouncilServiceResult.derive_council_account_id(guild_id)
             else:
                 # 嘗試最高人民會議議長身分組
                 sa_service = SupremeAssemblyService()

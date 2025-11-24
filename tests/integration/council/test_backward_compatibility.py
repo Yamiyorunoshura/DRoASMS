@@ -9,13 +9,13 @@ import pytest
 from src.bot.services.council_service import CouncilService
 from src.bot.services.department_registry import get_registry
 from tests.unit.test_council_service import (
-    _FakeConnection,
-    _FakeGateway,
-    _FakePool,
+    FakeConnection,
+    FakeGateway,
+    FakePool,
 )
 
 
-class _FakeGatewayWithList(_FakeGateway):
+class _FakeGatewayWithList(FakeGateway):
     async def list_active_proposals(self, conn: Any) -> Any:
         return [p for p in self._proposals.values() if p.status == "進行中"]
 
@@ -26,9 +26,9 @@ class _FakeGatewayWithList(_FakeGateway):
 async def test_old_proposal_without_department_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """契約測試：舊提案（無 target_department_id）仍可正常顯示與操作"""
     gw = _FakeGatewayWithList()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
     await svc.set_config(guild_id=100, council_role_id=200)
@@ -87,9 +87,9 @@ async def test_old_proposal_without_department_id(monkeypatch: pytest.MonkeyPatc
 async def test_mixed_old_and_new_proposals(monkeypatch: pytest.MonkeyPatch) -> None:
     """契約測試：舊提案與新提案（有 target_department_id）可共存"""
     gw = _FakeGatewayWithList()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
     await svc.set_config(guild_id=100, council_role_id=200)

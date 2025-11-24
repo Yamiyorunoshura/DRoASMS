@@ -6,15 +6,16 @@ import os
 import secrets
 import statistics
 import time
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from src.bot.services.council_service import CouncilService
+from src.bot.services.transfer_service import TransferService
 from tests.unit.test_council_service import (
-    _FakeConnection,
-    _FakeGateway,
-    _FakePool,
+    FakeConnection,
+    FakeGateway,
+    FakePool,
 )
 
 
@@ -23,11 +24,50 @@ def _snowflake() -> int:
     return secrets.randbits(63)
 
 
-class _FakeGatewayWithPerformance(_FakeGateway):
+class _FakeGatewayWithPerformance(FakeGateway):
     """擴展的 Fake Gateway，支援效能測試。"""
 
-    async def list_active_proposals(self, conn: Any) -> Any:
+    async def list_active_proposals(self, connection: Any) -> Any:
         return [p for p in self._proposals.values() if p.status == "進行中"]
+
+
+class FakeTransferService:
+    def __init__(self, *, should_fail: bool = False) -> None:
+        self.should_fail = should_fail
+        self.calls: list[tuple[int, int, int]] = []
+
+    async def transfer_currency(
+        self,
+        *,
+        guild_id: int,
+        initiator_id: int,
+        target_id: int,
+        amount: int,
+        reason: str | None = None,
+        connection: Any | None = None,
+    ) -> Any:
+        from datetime import datetime, timezone
+        from uuid import uuid4
+
+        from src.bot.services.transfer_service import TransferError, TransferResult
+
+        if self.should_fail:
+            raise TransferError("insufficient funds")
+        self.calls.append((initiator_id, target_id, amount))
+        # 假回傳成功結果
+        return TransferResult(
+            transaction_id=uuid4(),
+            guild_id=guild_id,
+            initiator_id=initiator_id,
+            target_id=target_id,
+            amount=amount,
+            initiator_balance=0,
+            target_balance=0,
+            direction="transfer",
+            created_at=datetime.now(timezone.utc),
+            throttled_until=None,
+            metadata={},
+        )
 
 
 @pytest.mark.performance
@@ -40,11 +80,12 @@ async def test_council_voting_latency_p95_under_3s(
     total_votes = int(os.getenv("PERF_COUNCIL_VOTE_COUNT", "100"))
 
     gw = _FakeGatewayWithPerformance()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    fake_transfer = FakeTransferService()
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw)
+    svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, fake_transfer))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # 建立一個提案（需要多票才能通過）
@@ -96,11 +137,12 @@ async def test_council_proposal_creation_latency(
     total_proposals = int(os.getenv("PERF_COUNCIL_PROPOSAL_COUNT", "50"))
 
     gw = _FakeGatewayWithPerformance()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    fake_transfer = FakeTransferService()
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw)
+    svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, fake_transfer))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     latencies: list[float] = []
@@ -139,11 +181,12 @@ async def test_council_list_active_proposals_latency(
     total_proposals = int(os.getenv("PERF_COUNCIL_LIST_PROPOSAL_COUNT", "20"))
 
     gw = _FakeGatewayWithPerformance()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    fake_transfer = FakeTransferService()
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw)
+    svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, fake_transfer))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # 預先建立多個提案

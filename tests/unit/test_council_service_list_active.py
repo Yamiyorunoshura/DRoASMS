@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 import pytest
 from faker import Faker
 
 from src.bot.services.council_service import CouncilService
-from tests.unit.test_council_service import _FakeConnection, _FakeGateway, _FakePool
+from tests.unit.test_council_service import FakeConnection, FakeGateway, FakePool
 
 
-class _FakeGatewayWithList(_FakeGateway):
-    async def list_active_proposals(self, conn: Any) -> list[Any]:
+class FakeGatewayWithList(FakeGateway):
+    async def list_active_proposals(self, connection: Any) -> Sequence[Any]:
         return [p for p in self._proposals.values() if p.status == "進行中"]
 
 
@@ -19,10 +19,10 @@ class _FakeGatewayWithList(_FakeGateway):
 async def test_list_active_proposals_returns_in_progress(
     monkeypatch: pytest.MonkeyPatch, faker: Faker
 ) -> None:
-    gw = _FakeGatewayWithList()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    gw = FakeGatewayWithList()
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
     guild_id = faker.random_int(min=1, max=1000000)

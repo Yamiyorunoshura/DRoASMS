@@ -20,6 +20,11 @@ class CouncilError(Error):
 class GovernanceNotConfiguredError(CouncilError):
     """Raised when council governance is not configured for a guild."""
 
+    def __init__(
+        self, message: str = "Council governance is not configured for this guild", **kwargs: Any
+    ) -> None:
+        super().__init__(message, **kwargs)
+
 
 class CouncilValidationError(CouncilError, ValidationError):
     """Validation error for council operations."""

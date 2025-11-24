@@ -28,7 +28,7 @@ def exponential_backoff_with_jitter(
     0.1±10% 的斷言。
     """
 
-    class _FixedWithFractionalJitter(wait_fixed):  # type: ignore[misc]
+    class _FixedWithFractionalJitter(wait_fixed):
         def __init__(self, base: float, max_wait: float, jitter: tuple[float, float]) -> None:
             self._base = float(base)
             self._max = float(max_wait)

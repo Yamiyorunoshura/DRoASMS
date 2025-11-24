@@ -6,10 +6,10 @@ import pytest
 
 from src.bot.services.council_service import CouncilService
 from tests.unit.test_council_service import (
-    _FakeConnection,
-    _FakeGateway,
-    _FakePool,
-    _FakeTransferService,
+    FakeConnection,
+    FakeGateway,
+    FakePool,
+    FakeTransferService,
 )
 
 
@@ -18,12 +18,12 @@ from tests.unit.test_council_service import (
 @pytest.mark.asyncio
 async def test_propose_vote_execute_success(monkeypatch: pytest.MonkeyPatch) -> None:
     """整合流程（假件）：建案→投票達標→執行成功。"""
-    gw = _FakeGateway()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    gw = FakeGateway()
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw, transfer_service=cast(Any, _FakeTransferService()))
+    svc = CouncilService(gateway=gw, transfer_service=cast(Any, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
     p = await svc.create_transfer_proposal(
         guild_id=100,
@@ -43,13 +43,13 @@ async def test_propose_vote_execute_success(monkeypatch: pytest.MonkeyPatch) -> 
 @pytest.mark.asyncio
 async def test_propose_vote_execute_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """整合流程（假件）：建案→投票達標→執行失敗。"""
-    gw = _FakeGateway()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    gw = FakeGateway()
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
     svc = CouncilService(
-        gateway=gw, transfer_service=cast(Any, _FakeTransferService(should_fail=True))
+        gateway=gw, transfer_service=cast(Any, FakeTransferService(should_fail=True))
     )
     await svc.set_config(guild_id=1, council_role_id=2)
     p = await svc.create_transfer_proposal(

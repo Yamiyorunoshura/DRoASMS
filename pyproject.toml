@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "droasms-bot"
-version = "1.0.1"
+version = "2.0.0"
 description = "Discord bot economy foundations."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -150,6 +150,7 @@ ignore_errors = true
 module = [
     "src.bot.*",
     "src.config.*",
+    "src.infra.*",
 ]
 disable_error_code = ["attr-defined", "method-assign", "misc", "call-arg"]
 

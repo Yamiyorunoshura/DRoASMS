@@ -7,9 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2025-11-24
+
+### Added
+
+- Council Service Result pattern implementation with unified error handling
+- Comprehensive migration guide for transitioning from exception-based to Result pattern
+- Performance benchmarks for council service operations
+- New `CouncilServiceResult` class for type-safe error handling
+- Enhanced test coverage for Result pattern operations
+
+### Changed
+
+- **BREAKING**: Refactored council service architecture to use Result pattern internally
+- Updated all council-related commands to use unified service implementation
+- Modified service dependencies to support both exception and Result patterns
+- Improved error handling consistency across council operations
+- Enhanced performance testing with detailed benchmarking
+
+### Deprecated
+
+- Direct exception handling in council services (use Result pattern for new code)
+
+### Fixed
+
+- Performance bottlenecks in error handling paths (Result pattern ~2x faster than exceptions)
+- Type safety issues in council service error handling
+- Memory efficiency improvements in service initialization
+
+### Security
+
+- No security changes in this release
+
+### Migration Notes
+
+This release introduces a major architectural change while maintaining backward compatibility. Existing code using `CouncilService()` will continue to work, but new development should use `CouncilServiceResult()` for better type safety and performance. See `docs/COUNCIL_SERVICE_MIGRATION_GUIDE.md` for detailed migration instructions.
+
+[Compare changes](https://github.com/Yamiyorunoshura/DRoASMS/compare/v1.0.1...v2.0.0)
+
 ## [1.0.1] - 2025-11-23
 
 ### 修復
+
 - **司法服務記錄更正**：修復 `justice_service.py` 中的記錄錯誤
   - 修正 `existing.id` 為 `existing.suspect_id`
   - 修正 `suspect.id` 為 `suspect.suspect_id`
@@ -18,12 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - 2025-11-22
 
 ### ⚠️ 重大變更
+
 - **資料模型結構調整**：
   - 將 `Suspect` 類別的 `id` 欄位更名為 `suspect_id`，統一識別碼命名規範
   - 更新所有相關的資料庫查詢、服務邏輯和 UI 元件以使用新欄位名稱
   - 此變更需要資料庫遷移，請確保在部署前執行完整的遷移流程
 
 ### 修改
+
 - **資料庫結構優化**：
   - 統一 suspects 資料表的主鍵欄位名稱從 `id` 改為 `suspect_id`
   - 更新所有相關的 SQL 查詢語句和索引定義
@@ -35,6 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.23.2] - 2025-11-21
 
 ### 修改
+
 - **Docker 配置優化**：
   - 分離生產與開發環境配置，使用 profile 管理不同環境
   - 生產環境使用 `target: production` 優化建置流程
@@ -48,12 +90,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **開發工具改進**：更新 Makefile 中的說明文字，澄清開發與生產環境啟動方式
 
 ### 修復
+
 - **Docker 最佳化**：清理生產映像檔中的不必要建置檔案，減少映像檔大小
 - **測試執行**：修正測試腳本使用 marker 執行特定類型測試
 
 ## [0.23.1] - 2025-11-21
 
 ### 修改
+
 - **依賴更新**：更新多個開發依賴版本以提升穩定性
   - `pytest-asyncio` 從 0.23.0 更新到 0.24.0
   - `pytest-xdist` 從 3.6.0 更新到 3.6.1
@@ -82,6 +126,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 清理文件結尾的換行符問題
 
 ### 修復
+
 - **類型安全**：改進重試機制中的類型處理，移除不必要的 `type: ignore[misc]` 註釋
 - **測試執行**：修復測試腳本中的路徑問題，改用統一的 marker 系統
 - **依賴一致性**：更新 `uv.lock` 確保依賴版本一致性
@@ -89,6 +134,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.23.0] - 2025-11-21
 
 ### 新增
+
 - **權限邊界案例測試**：新增 `tests/unit/test_permission_boundary_cases.py`，涵蓋特殊場景權限檢查
 - **權限邊界案例測試工具**：新增 `tests/unit/test_homeland_security_permission.py`，提供國土安全部門權限驗證
 - **資料庫錯誤處理工具**：新增 `src/infra/db_errors.py`，提供統一的資料庫錯誤類型與處理
@@ -96,20 +142,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **資料庫邊界案例測試**：新增 `tests/unit/test_permission_boundary_cases.py` 和 `tests/unit/test_homeland_security_permission.py`
 
 ### 修復
+
 - 權限檢查邏輯增強：在多個權限檢查点加入更嚴格的邊界案例處理
 - 資料庫操作穩定性改進：統一錯誤處理方式，提升穩定性
 - 資源釋放機制優化：在各種邊緣情況下確保資源正確釋放
 
 ### 修改
+
 - 權限檢查邏輯重構：精簡權限檢查邏輯，提高效能與可讀性
 - 錯誤處理標準化：統一錯誤類型與處理方式
 - 邊界檢查擴充：適應特殊場景的邊界檢查
 - 安全機制加強：提高資源敏感度，提升系統安全強度
 
-
 ## [0.22.0] - 2025-11-19
 
 ### 新增
+
 - **Result<T,E> 模式系統**：完整的 Rust 風格錯誤處理機制
   - 新增 `src/common/result.py` 和 `src/infra/result.py`：核心 Result 類型實現
   - 新增 `src/infra/result_compat.py`：向後相容性適配層
@@ -131,6 +179,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 新增 `tests/integration/test_result_integration.py`：整合測試
 
 ### 修改
+
 - **服務層重構**：將異常處理模式遷移到 Result 模式
   - 更新 `src/bot/services/adjustment_service.py`：使用 Result 包裝錯誤處理
   - 更新 `src/bot/services/balance_service.py`：加入 Result 類型支援
@@ -166,11 +215,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 更新 `tests/unit/test_result_types.py`：Result 類型測試擴展
 
 ### 修復
+
 - **型別檢查**：更新 `pyrightconfig.json` 改善 Result 類型推斷
 - **依賴鎖定**：更新 `uv.lock` 確保依賴一致性
 - **Git 忽略**：更新 `.gitignore` 排除臨時檔案
 
 ### 破壞性變更
+
 - **錯誤處理模式**：從基於異常的錯誤處理遷移到 Rust 風格的 Result<T,E> 模式
 - **API 介面**：所有受影響的服務方法現在使用 Result 類型而非拋出異常
 - **錯誤處理**：呼叫端需要適應新的 `result.is_ok()` 和 `result.unwrap()` 模式
@@ -178,6 +229,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.21.0] - 2025-11-17
 
 ### 新增
+
 - **司法系統模組**：完整的司法部門管理功能
   - 新增 `src/bot/services/justice_service.py`：司法服務核心邏輯
   - 新增 `src/db/gateway/justice_governance.py`：司法治理資料庫閘道
@@ -189,6 +241,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 更新 `tests/unit/test_suspects_management.py`
 
 ### 修改
+
 - **州議會命令擴展**：大幅擴展 `src/bot/commands/state_council.py` 支援司法領導權限檢查
 - **調整命令優化**：更新 `src/bot/commands/adjust.py` 支援司法部門調整權限
 - **部門註冊表更新**：擴展 `src/bot/services/department_registry.py` 支援司法部門
@@ -199,11 +252,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **測試更新**：更新 `tests/db/test_fn_create_identity_record.sql` 支援新的身份記錄功能
 
 ### 修復
+
 - **依賴鎖定**：更新 `uv.lock` 確保依賴一致性
 
 ## [0.20.0] - 2025-11-15
 
 ### 修改
+
 - **持續整合改善**：優化 GitHub Actions 工作流程配置
 - **編譯系統優化**：改進 Cython 模組編譯流程
 - **性能調整**：優化轉移池和經濟調整模組的運行效率
@@ -213,6 +268,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.19.0] - 2025-11-14
 
 ### 新增
+
 - **Cython 編譯器系統**：完整的 Cython 擴展模組架構，提升性能優化能力
   - 新增 `src/cython_ext/` 目錄，包含 13 個核心模組的 Cython 實現
   - 經濟模組：`currency_models`、`economy_configuration_models`、`economy_query_models`、`economy_balance_models`、`economy_transfer_models`、`economy_adjustment_models`、`pending_transfer_models`、`transfer_pool_core`
@@ -230,6 +286,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **依賴管理**：新增 `requirements.txt` 簡化依賴管理
 
 ### 修改
+
 - **編譯器工作流程**：從 mypc 編譯器完全遷移到 Cython 編譯器
   - 移除 `.github/workflows/mypc-compile.yml`，新增 `.github/workflows/cython-compile.yml`
   - 更新 `Makefile` 支援 Cython 編譯流程
@@ -246,10 +303,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **測試擴充**：更新現有測試檔案支援新的編譯器架構
 
 ### 修復
+
 - **類型安全改進**：修復多個模組中的類型提示問題，提升代碼品質
 - **錯誤處理優化**：改進編譯過程中的錯誤處理和回報機制
 
 ### 清理
+
 - **舊檔案歸檔**：將不再需要的舊編譯器相關檔案移至 `scripts/archive/` 目錄
   - `bench_economy.py` → `scripts/archive/bench_economy.py`
   - `migrate_unified_config.py` → `scripts/archive/migrate_unified_config.py`
@@ -257,6 +316,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **測試腳本移除**：刪除 `tests/scripts/test_performance_monitor.py`，由新的性能測試框架取代
 
 ### 注意
+
 - 此版本為重大架構升級，從 mypc 編譯器完全遷移到 Cython
 - 所有變更保持向後相容性，未編譯的 Python 版本仍可正常運行
 - 新的性能基線測試工具將為後續的性能優化提供數據支撐
@@ -265,6 +325,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.18.1] - 2025-11-13
 
 ### 修改
+
 - **類型檢查增強**：新增 Pyright 到 CI 工作流程，提供更嚴格的類型檢查
   - 更新 `.github/workflows/ci.yml` 加入 pyright-check 工作項目
   - 透過 uv 執行 Pyright 類型檢查，確保代碼品質
@@ -278,17 +339,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **配置文件調整**：小幅更新 Makefile 和其他配置檔案
 
 ### 修復
+
 - **類型安全修復**：解決多個模組中的類型提示問題
   - 修復 `src/bot/commands/help_collector.py` 中的 JSON 類型處理
   - 改進 `src/db/pool.py` 和 `src/infra/logging/config.py` 的類型注釋
 
 ### 注意
+
 - 此版本為維護性發布，主要專注於代碼品質和類型安全改進
 - 所有變更均保持向後兼容性，不影響現有功能運行
 
 ## [0.18.0] - 2025-11-13
 
 ### 新增
+
 - **權限服務模組**：新增 `permission_service.py`，提供統一的權限檢查和管理機制
   - 實作角色權限驗證，支持治理系統的複雜權限需求
   - 新增國土安全部門特殊權限處理，增強系統安全性
@@ -300,6 +364,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `041_sc_department_multi_roles.py`：支持州議會部門多重角色功能
 
 ### 修改
+
 - **治理系統增強**：大幅改進治理相關的命令和服務
   - 重構 `council.py`，增強議會管理功能和用戶界面
   - 更新 `state_council.py`，改進州議會操作流程和權限控制
@@ -313,22 +378,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 提升大量數據展示的性能和用戶體驗
 
 ### 修復
+
 - **權限邊界案例**：修復多個權限檢查的邊界案例問題
   - 新增 `test_permission_boundary_cases.py` 測試確保權限系統穩定性
   - 修復國土安全部門的權限檢查邏輯
 
 ### 清理
+
 - **備份文件移除**：清理 `backup/` 目錄下的舊版經濟模組文件
   - 移除超過 3000 行的重複代碼，減少維護負擔
   - 保留核心邏輯在主代碼庫中，確保系統整潔性
 
 ### 測試改進
+
 - **新增測試文件**：擴展測試覆蓋範圍
   - `test_council_multiple_roles.py`：測試議會多重角色功能
   - `test_homeland_security_permission.py`：測試國土安全部門權限
   - `test_state_council_department_multiple_roles.py`：測試州議會部門多重角色
 
 ### 注意
+
 - 此版本主要專注於治理系統的功能增強和權限管理改進
 - 所有變更均保持向後兼容性，不影響現有系統運行
 - 新增的權限服務將為未來的功能擴展提供堅實基礎
@@ -336,6 +405,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.17.0] - 2025-11-12
 
 ### 新增
+
 - **擴展的幫助系統**：大幅改進 Discord 機器人的幫助指令功能
   - 新增 `HelpParameter` 類型，提供更豐富的參數資訊展示
   - 重構 `help_collector.py`，提供更完善的指令資訊收集機制
@@ -349,6 +419,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 重構 `state_council_service.py`，提升代碼品質和效能
 
 ### 修改
+
 - **錯誤處理優化**：改進多個模組的錯誤處理機制
   - 更新 `retry.py` 的重試邏輯，提供更可靠的錯誤恢復
   - 改進 `state_council.py` 的資料庫連接處理
@@ -358,10 +429,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **依賴更新**：更新專案依賴鎖定檔案 `uv.lock`，確保依賴版本的一致性
 
 ### 修復
+
 - **State Council 指令修復**：修復 `state_council.py` 中的資料庫連接問題
 - **類型提示改進**：修復多個模組中的類型提示問題，提升代碼品質
 
 ### 注意
+
 - 此版本主要專注於穩定性改進和功能增強
 - 保持完全向後相容性，不影響現有的治理和經濟系統功能
 - 幫助系統的改進將提升使用者體驗和系統可用性
@@ -369,6 +442,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.16.0] - 2025-11-12
 
 ### 新增
+
 - **國務院嫌疑人管理系統重構**：全面重構 State Council 嫌疑人管理功能
   - 新增 `SuspectProfile` 和 `SuspectReleaseResult` 資料類型，提供完整的嫌疑人資訊管理
   - 實作自動釋放機制，支援定時釋放嫌疑人的排程功能
@@ -378,6 +452,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **測試覆蓋率擴充**：更新相關單元測試，確保新功能的穩定性
 
 ### 修改
+
 - **State Council 指令重構**：大幅修改 `state_council.py`，移除舊的 suspects 指令實作
   - 重新設計指令架構，提升程式碼組織性
   - 更新幫助資料結構，移除過時的指令說明
@@ -386,6 +461,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **依賴鎖定更新**：更新 `uv.lock` 以反映最新的依賴版本
 
 ### 注意
+
 - 此版本為重大功能更新，新增了完整的嫌疑人生命週期管理
 - 移除了舊版的嫌疑人管理指令，新的實作提供更好的擴展性
 - 所有變更保持向後相容性，不影響現有的治理流程
@@ -393,6 +469,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.15.0] - 2025-11-12
 
 ### 新增
+
 - **統一編譯器系統（Unified Compiler）**：實現 mypyc 與 mypc 編譯後端的統一管理
   - 支援經濟模組使用 mypyc 編譯，治理模組使用 mypc 編譯
   - 新增 `scripts/compile_modules.py` 統一編譯腳本，支援自動依賴解析與並行編譯
@@ -416,6 +493,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **編譯模組備份機制**：在 `backup/` 目錄下儲存 Python 原始版本，用於對比測試
 
 ### 修改
+
 - **pyproject.toml**：
   - 新增統一編譯器配置區段 `[tool.unified-compiler]`
   - 擴充 mypyc 配置支援經濟與治理模組
@@ -427,6 +505,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **服務層改進**：更新 `state_council_service.py` 與 `supreme_assembly_service.py` 以支援編譯後模組
 
 ### 注意
+
 - 統一編譯器預設使用 mypyc 作為經濟模組後端，mypc 作為治理模組後端
 - 編譯過程包含完整的錯誤處理與回滾機制
 - 所有變更保持向後相容性，未編譯的 Python 版本仍可正常運行
@@ -435,16 +514,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.14.0] - 2025-11-11
 
 ### 新增
+
 - **國土安全部嫌疑人管理功能**：新增 `/council suspects` 指令，提供完整的嫌疑人管理介面
   - 支援查看所有嫌疑人（以嫌犯身分組成員為清單）
   - 提供下拉選單進行單選/多選釋放
-  - 設定自動釋放時間（1-168小時）
+  - 設定自動釋放時間（1-168 小時）
   - 完整的審計軌跡記錄
-- **統一JSON指令註冊表**：建立標準化的指令資訊管理系統
+- **統一 JSON 指令註冊表**：建立標準化的指令資訊管理系統
   - 新增 `src/bot/commands/help_data/` 目錄結構
   - 支援階層式指令結構（主指令/子指令）
-  - 優先從JSON註冊表讀取指令資訊，保持向後相容
-  - 新增主要指令的JSON註冊檔
+  - 優先從 JSON 註冊表讀取指令資訊，保持向後相容
+  - 新增主要指令的 JSON 註冊檔
 - **政府註冊表擴充**：增強政府組織結構管理
   - 新增「常任理事會」作為最高決策機構
   - 明確政府階層：常任理事會 → 國務院 → 各部門
@@ -452,29 +532,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 更新 `departments.json` 支援新的組織結構
 - **自動釋放排程功能**：新增記憶體式自動釋放系統
   - 整合至現有的 `state_council_scheduler.py`
-  - 支援設定1-168小時的自動釋放時間
+  - 支援設定 1-168 小時的自動釋放時間
   - 最小實作（記憶體儲存，重啟後失效）
 
 ### 修改
-- **help_collector.py**：調整優先順序，優先使用JSON註冊表
+
+- **help_collector.py**：調整優先順序，優先使用 JSON 註冊表
 - **StateCouncilService**：新增 `record_identity_action()` 方法
 - **DepartmentRegistry**：擴充支援政府階層結構
 - **state_council.py**：新增 suspects 子指令和 SuspectsManagementView
 
 ### 測試
-- 新增 `test_help_collector_json.py` - 測試JSON指令註冊表功能
+
+- 新增 `test_help_collector_json.py` - 測試 JSON 指令註冊表功能
 - 新增 `test_suspects_management.py` - 測試嫌疑人管理功能
 - 新增 `test_department_registry_hierarchy.py` - 測試政府層次結構
 - 新增 `test_state_council_government_hierarchy.py` - 測試政府層次查詢
 
 ### 注意
+
 - 自動釋放功能為最小實作，設定在機器人重啟後會失效
 - 所有變更保持向後相容性
-- 新的JSON註冊表系統不影響現有功能
+- 新的 JSON 註冊表系統不影響現有功能
 
 ## [0.13.1] - 2025-11-09
 
 ### Fixed
+
 - **合併衝突修復**：修復 v0.13.0 發佈過程中的合併衝突
   - 修復 `src/bot/commands/state_council.py` 中的格式化衝突
   - 修復 `src/bot/services/state_council_service.py` 中的錯誤訊息格式化
@@ -483,6 +567,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.13.0] - 2025-11-09
 
 ### Added
+
 - **國務院身分管理系統（State Council Identity Management）**：實現完整的公民與嫌犯身分管理機制
   - `/state_council config_citizen_role`：設定公民身分組（需管理員或管理伺服器權限）
   - `/state_council config_suspect_role`：設定嫌犯身分組（需管理員或管理伺服器權限）
@@ -496,6 +581,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **測試覆蓋提升**：新增完整的單元測試與整合測試覆蓋新功能
 
 ### Changed
+
 - **重試機制優化**：改進 `src/infra/retry.py` 的錯誤處理邏輯
 - **資料庫連線管理**：增強 `src/db/pool.py` 的連線池配置
 - **測試基礎設施**：更新 `.gitignore` 與 `docker/bin/test.sh` 以支援新的測試需求
@@ -503,6 +589,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.12.1] - 2025-11-08
 
 ### Fixed
+
 - **CI/CD 管道修復**：修復 6 個 CI/CD 檢查失敗問題
   - 修復 pre-commit 檢查的 Git 環境配置，添加 `fetch-depth: 0` 和 git 安裝步驟
   - 修復 Integration Tests 的 Docker-in-Docker 連接問題，添加 Docker daemon 就緒等待機制
@@ -516,6 +603,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.12.0] - 2025-11-08
 
 ### Added
+
 - **最高人民會議治理系統（Supreme Assembly Governance）**：實現完整的最高人民會議提案與投票機制
   - `/supreme_assembly config_speaker_role`：設定最高人民會議議長身分組（需管理員或管理伺服器權限）
   - `/supreme_assembly config_member_role`：設定最高人民會議議員身分組（需管理員或管理伺服器權限）
@@ -545,6 +633,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 新增資料庫函數測試：`test_fn_get_supreme_assembly_config.sql`、`test_fn_is_sa_account.sql`、`test_fn_sa_account_id.sql`、`test_fn_upsert_supreme_assembly_config.sql`
 
 ### Changed
+
 - **依賴注入**：更新 `bootstrap.py` 以註冊 `SupremeAssemblyService` 和 `SupremeAssemblyGovernanceGateway`
 - **重試機制**：更新 `src/infra/retry.py` 以支援新的錯誤類型
 - **測試基礎設施**：更新 `conftest.py` 以支援最高人民會議相關測試
@@ -552,6 +641,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.11.0] - 2025-11-08
 
 ### Added
+
 - **Mypyc Compilation Support**: Enabled mypyc compilation for economy modules to improve performance
   - Configured mypyc compilation targets for core economy services (`adjustment_service`, `transfer_service`, `balance_service`, `transfer_event_pool`, `currency_config_service`)
   - Configured mypyc compilation targets for economy database gateways (`economy_adjustments`, `economy_transfers`, `economy_queries`, `economy_pending_transfers`, `economy_configuration`)
@@ -561,17 +651,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `setuptools>=68.0.0` and `wheel>=0.43.0` to dev dependencies for mypyc compilation support
 
 ### Changed
+
 - **Build Process**: Updated Dockerfiles to include `build-essential` and compile economy modules during build
   - Production Dockerfile now compiles economy modules to `build/mypyc_out` during image build
   - Test Dockerfile includes compilation support for testing compiled modules
   - Set `PYTHONPATH` to prioritize compiled modules over pure Python versions
 
 ### Fixed
+
 - **Type Safety**: Removed unnecessary `type: ignore[misc]` annotation in `src/infra/retry.py`
 
 ## [0.10.0] - 2025-11-08
 
 ### Added
+
 - **Transfer Command Enhancement**: Support mapping State Council leader role to main government account
   - `/transfer` command now supports State Council leader role as target (automatically maps to main government account)
   - Added `StateCouncilService.derive_main_account_id()` method for stable account ID derivation
@@ -581,15 +674,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Pre-configured mypyc settings in `pyproject.toml` for future compilation optimization
 
 ### Changed
+
 - **Documentation**: Updated README.md examples to reflect role targets (Council, State Council leader, Department leader)
 - **Code Quality**: Fixed type annotation in `retry.py` (`type: ignore[misc]` removed)
 
 ### Fixed
+
 - Improved type safety in retry mechanism
 
 ## [0.9.0] - 2025-11-07
 
 ### Added
+
 - **Currency Configuration Command**: New `/currency_config` command for administrators to customize currency name and icon per server
   - Supports setting currency name (1-20 characters) and icon (single emoji or Unicode character)
   - Currency configuration is displayed in all economy-related commands (`/balance`, `/transfer`, `/adjust`, `/history`) and State Council panel
@@ -611,6 +707,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Unit Tests**: New test files for currency configuration command, service, and gateway
 
 ### Changed
+
 - **Enhanced Commands**: Updated `/balance`, `/adjust`, `/transfer`, and `/state_council` commands to display custom currency name and icon
 - **State Council Reports**: Enhanced to use custom currency configuration in reports and exports
 - **SQL Functions**: Updated multiple SQL functions to support relaxed constraints and zero-amount operations
@@ -621,12 +718,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Test Infrastructure**: Enhanced contract tests and unit tests to cover currency configuration scenarios
 
 ### Fixed
+
 - Improved governance constraint flexibility by allowing both Chinese and English enum values
 - Enhanced validation for zero-amount operations in currency issuance and interdepartment transfers
 
 ## [0.8.0] - 2025-11-07
 
 ### Added
+
 - **Dependency Injection Infrastructure**: Introduced comprehensive DI container system
   - New DependencyContainer with lifecycle management (singleton, transient, scoped)
   - Automatic dependency resolution with type inference
@@ -635,6 +734,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Comprehensive test coverage
 
 ### Changed
+
 - **Command Registration**: Refactored command registration to support dependency injection
   - Commands now accept optional container parameter for service resolution
   - Backward compatible: falls back to direct instantiation if container not provided
@@ -643,15 +743,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Test Infrastructure**: Enhanced test fixtures with DI container support
 
 ### Fixed
+
 - Improved service lifecycle management and resource cleanup
 
 ## [0.6.1] - 2025-01-27
 
 ### Added
+
 - **歷史記錄分頁輔助函數**：新增資料庫遷移 `030_history_pagination_helpers.py`，提供 `fn_has_more_history` 輔助函數，支援游標式分頁查詢
 - **餘額快照查詢**：新增 `EconomyQueryGateway.fetch_balance_snapshot()` 方法，提供唯讀餘額查詢，避免 `fn_get_balance` 的副作用（鎖等待）
 
 ### Changed
+
 - **測試基礎設施改進**：新增 `pytest-timeout>=2.3.0` 依賴，設定 300 秒測試超時時間
 - **可觀測性改進**：改進 `TelemetryListener` 的餘額查詢邏輯，優先使用快照查詢以避免鎖等待
 - **測試隔離改進**：增強 Docker Compose 測試隔離，使用唯一的專案名稱避免測試間衝突
@@ -659,12 +762,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **開發工具改進**：更新 Makefile 命令，使用本地 `uv` 而非 Docker Compose，提升開發效率
 
 ### Fixed
+
 - 修復 `test_multi_guild.py` 中的 SQL 佔位符問題
 - 改進測試清理與資源管理
 
 ## [0.6.0] - 2025-11-07
 
 ### Added
+
 - **測試容器基礎設施**：新增獨立的測試容器，提供一致的測試執行環境
   - 建立 `docker/test.Dockerfile`：基於 Python 3.13，包含所有測試依賴（dev dependencies）
   - 建立 `docker/bin/test.sh`：統一的測試執行腳本，支援不同測試類型（unit, contract, integration, performance, db, economy, council, ci）
@@ -695,6 +800,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 改進現有測試：更新多個測試檔案以提升覆蓋率與穩定性
 
 ### Changed
+
 - **重試機制改進**：改進 `src/infra/retry.py` 的重試邏輯，提升錯誤處理與可觀測性
 - **國務院服務增強**：改進 `state_council_service.py` 與 `state_council_governance.py`，提升功能完整性
 - **命令改進**：改進 `balance.py`、`state_council.py`、`transfer.py` 等命令的實作
@@ -704,12 +810,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.1] - 2025-11-04
 
 ### Fixed
+
 - **資料庫連線重試邏輯**：修復 `entrypoint.sh` 中的重試機制，確保至少嘗試 `RETRY_MAX_ATTEMPTS` 次
   - 調整檢查順序，避免單次連線耗時過長導致過早終止
   - 新增負數保護，避免計算錯誤導致 sleep 時間為負
   - 改善可觀測性，確保完整的重試次數與退避行為可見
 
 ### Changed
+
 - **轉帳事件池測試改進**：允許測試時傳入資料庫連線參數
   - `TransferEventPoolCoordinator._retry_checks()` 與 `_cleanup_expired()` 現在支援可選的 `connection` 參數
   - 允許測試在同一交易連線中執行，避免跨連線看不到未提交的變更
@@ -721,6 +829,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.0] - 2025-11-04
 
 ### Added
+
 - **開發工具堆疊**：引入業界標準工具提升開發效率與程式碼品質
   - **Pydantic v2**：重構設定管理為 Pydantic 模型，提供型別安全與自動驗證
     - `BotSettings`：Discord bot 設定（`src/config/settings.py`）
@@ -749,6 +858,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **watchfiles**：開發時自動重載支援（選用）
 
 ### Changed
+
 - 設定載入：從手動 `os.getenv()` 遷移至 Pydantic 模型
   - `src/bot/main.py`：使用新的 `BotSettings` Pydantic 模型
   - `src/db/pool.py`：使用新的 `PoolConfig` Pydantic 模型
@@ -764,6 +874,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - 2025-11-03
 
 ### Added
+
 - **轉帳事件池（Transfer Event Pool）**：實現事件驅動的異步轉帳處理架構
   - 透過 PostgreSQL NOTIFY/LISTEN 機制實現自動檢查與重試
   - 支援餘額、冷卻時間、每日上限的異步檢查
@@ -795,6 +906,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 自動測試轉帳事件池、國務院治理等新功能
 
 ### Changed
+
 - `/transfer`：支援事件池模式（當 `TRANSFER_EVENT_POOL_ENABLED=true` 時）
 - `/adjust`：支援以部門領導人身分組為目標（自動映射至對應政府帳戶）
 - `/balance`：改善分頁顯示與歷史記錄查詢
@@ -803,22 +915,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 測試架構：擴充測試工具與契約測試覆蓋
 
 ### Planned
+
 - 進一步的監控與可觀測性（metrics/log tracing）
 - 更多治理功能與工作流程命令
 
 ## [0.3.1] - 2025-10-30
 
 ### Fixed
+
 - **斜線指令重複顯示問題**：修復使用 Guild Allowlist 時，允許清單中的伺服器同時看到全域與 Guild 專屬兩份指令的問題
   - Guild Allowlist 現在會自動去重，避免同一 Guild 被重複同步造成潛在副作用或額外延遲
   - 完成 Guild 指令同步後，自動清除全域指令，避免歷史遺留的全域指令與 Guild 指令重複
 
 ### Changed
+
 - 改善程式碼品質：優化 import 語句排序、加強類型註解、改善字串格式化
 
 ## [0.3.0] - 2025-10-30
 
 ### Added
+
 - **治理系統（Council Governance）**：實現完整的常任理事會提案與投票機制
   - `/council config_role`：設定常任理事身分組（需管理員權限）
   - `/council panel`：開啟理事會面板，整合建案、投票、撤案與匯出功能
@@ -842,6 +958,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 新增 `AGENTS.md`：OpenSpec 指引（AI 助手開發規範）
 
 ### Changed
+
 - `/adjust` 與 `/transfer` 命令支援以理事會身分組為目標（自動映射至理事會帳戶）
 - `src/bot/main.py`：啟用成員 Intent（`intents.members = True`）以讀取角色成員清單
 - `src/bot/main.py`：改進指令同步機制（使用 `copy_global_to()` 加速公會內指令可見性）
@@ -851,10 +968,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README.md：新增「治理（Council Governance，MVP）」與「理事會面板（Panel）」完整使用說明
 
 ### Removed
+
 - 刪除 `.envrc`（已加入 .gitignore）
 - 清理所有 `__pycache__/*.pyc` 編譯快取檔案
 
 ### Notes
+
 - 治理功能需要 Discord 開發者後台啟用「成員 Intent」
 - MVP 版本僅透過 DM 進行互動與通知，無公開頻道摘要
 - 需要 PostgreSQL 安裝 pg_cron 擴充以支援背景排程任務
@@ -862,6 +981,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.2] - 2025-10-24
 
 ### Added
+
 - 新增 `docker/Dockerfile`（基於 uv 的精簡建置流程）與 `docker/bin/entrypoint.sh`（啟動前環境檢查、DB 連線重試、Alembic 自動遷移、結構化 JSON 日誌事件）。
 - 新增 `src/infra/logging/config.py`：統一 JSON Lines 日誌格式（鍵包含 `ts`,`level`,`msg`,`event`），並內建敏感值遮罩（`token`/`authorization`/`password` 等）。
 - 新增契約與規格（`specs/002-docker-run-bot`）：Compose 環境變數 Schema、日誌事件 Schema、OpenAPI 草案等。
@@ -871,33 +991,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 新增 `scripts/check_image_layers.sh` 供鏡像層級敏感字樣掃描；新增 `.envrc`（direnv）。
 
 ### Changed
+
 - 將根目錄 `Dockerfile` 移至 `docker/Dockerfile`，`compose.yaml` 改以新路徑建置；調整 `.dockerignore` 以縮小映像內容。
 - 更新 `.env.example`：新增 `ALEMBIC_UPGRADE_TARGET` 與 pgAdmin 預設設定與說明。
 - README：新增「日誌與可觀測性」章節，補充就緒事件與退出碼說明。
 
 ### Security
+
 - 日誌遮罩常見敏感鍵，避免在 stdout 泄露密碼或 Token。
 
 ### Notes
+
 - 無安裝 `pg_cron` 的環境預設遷移目標為 `003_economy_adjustments`；如需每日歸檔請安裝 `pg_cron` 後升級至 `head`。
 - 直接透過 Docker 建置時請使用 `-f docker/Dockerfile`。
 
 ## [0.2.1] - 2025-10-23
 
 ### Added
+
 - 新增 `compose.yaml` + `Dockerfile`，可透過 `docker compose up -d` 一鍵啟動 Bot 與 PostgreSQL（與選用 pgAdmin），避免因未啟動資料庫導致連線被拒。
 - 新增 `docker/init/001_extensions.sql`，首次啟動自動建立 `pgcrypto` 擴充。
 
 ### Changed
+
 - README：擴充安裝與啟動指南，加入 Docker Compose（可直接啟動 Bot）、連線自測、故障排除，並新增「使用 Git 更新專案」章節。
 - 專案版本提升至 0.2.1。
 
 ### Notes
+
 - Alembic 遷移 `004_economy_archival` 需要 `pg_cron`。若環境未安裝 `pg_cron`，可先升級至 `003_economy_adjustments` 後再升級至 `head`。
 
 ## [0.2.0] - 2025-10-23
 
 ### Added
+
 - 實現完整的 Discord 經濟系統功能
 - 新增 `/balance` 斜杠命令，支援查詢個人和他人餘額
 - 新增 `/history` 斜杠命令，支援查看交易歷史記錄
@@ -911,17 +1038,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 新增多伺服器支援，每個 Discord 伺服器有獨立的經濟系統
 
 ### Changed
+
 - 更新項目描述，反映經濟系統功能
 - 更新安裝和配置說明，包含資料庫設定步驟
 - 更新 README.md，添加詳細的功能說明和使用指南
 
 ### Fixed
+
 - 修復餘額不能變為負數的保護機制
 - 確保所有交易操作的 ACID 特性
 
 ## [0.1.0] - 2025-10-18
 
 ### Changed
+
 - 將專案技術棧更新為 Python 與 PostgreSQL
 - 調整 README 與開發流程文件以支援 Python 工具鏈
 - 更新 `.gitignore` 以忽略 Python 相關暫存檔案與虛擬環境

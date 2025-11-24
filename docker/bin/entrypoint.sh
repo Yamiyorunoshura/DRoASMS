@@ -119,12 +119,13 @@ time.sleep(ms/1000)
 PY
 done
 
-# 簡化的遷移策略：統一使用 alembic upgrade head
-json_log "INFO" "bot.migrate.start" "running alembic upgrade head" ""
-if ! alembic upgrade head; then
-  json_log "ERROR" "bot.migrate.error" "alembic upgrade head failed" "\"target\":\"head\""
+# 簡化的遷移策略：使用 ALEMBIC_UPGRADE_TARGET 或預設的 head
+: "${ALEMBIC_UPGRADE_TARGET:=head}"
+json_log "INFO" "bot.migrate.start" "running alembic upgrade" "\"target\":\"${ALEMBIC_UPGRADE_TARGET}\""
+if ! alembic upgrade "${ALEMBIC_UPGRADE_TARGET}"; then
+  json_log "ERROR" "bot.migrate.error" "alembic upgrade failed" "\"target\":\"${ALEMBIC_UPGRADE_TARGET}\""
   exit 70
 fi
-json_log "INFO" "bot.migrate.done" "alembic upgrade head finished" "\"applied\":\"head\""
+json_log "INFO" "bot.migrate.done" "alembic upgrade finished" "\"applied\":\"${ALEMBIC_UPGRADE_TARGET}\""
 
 exec python -m src.bot.main

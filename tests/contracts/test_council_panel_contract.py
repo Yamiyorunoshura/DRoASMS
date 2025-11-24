@@ -3,29 +3,29 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Sequence, cast
 from uuid import uuid4
 
 import pytest
 
 from src.bot.services.council_service import CouncilService
-from src.bot.services.transfer_service import TransferResult
+from src.bot.services.transfer_service import TransferResult, TransferService
 from tests.unit.test_council_service import (
-    _FakeConnection,
-    _FakeGateway,
-    _FakePool,
+    FakeConnection,
+    FakeGateway,
+    FakePool,
 )
 
 
-class _FakeGatewayWithList(_FakeGateway):
-    async def list_active_proposals(self, conn: Any) -> Any:
+class FakeGatewayWithList(FakeGateway):
+    async def list_active_proposals(self, connection: Any) -> Sequence[Any]:
         return [p for p in self._proposals.values() if p.status == "進行中"]
 
     async def export_interval(
-        self, conn: Any, *, guild_id: int, start: datetime, end: datetime
+        self, connection: Any, *, guild_id: int, start: datetime, end: datetime
     ) -> list[dict[str, object]]:
         """模擬匯出功能：回傳指定時間範圍內的提案記錄。"""
-        results = []
+        results: list[dict[str, object]] = []
         for p in self._proposals.values():
             if p.guild_id == guild_id and start <= p.created_at <= end:
                 results.append(
@@ -42,7 +42,7 @@ class _FakeGatewayWithList(_FakeGateway):
         return results
 
 
-class _FakeTransferService:
+class FakeTransferService:
     def __init__(self) -> None:
         self.transfers: list[dict[str, Any]] = []
 
@@ -86,12 +86,12 @@ class _FakeTransferService:
 @pytest.mark.asyncio
 async def test_council_panel_create_proposal_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     """契約測試：面板建案流程。"""
-    gw = _FakeGatewayWithList()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    gw = FakeGatewayWithList()
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw)
+    svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # 建案
@@ -117,12 +117,12 @@ async def test_council_panel_list_active_proposals_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """契約測試：面板列出進行中提案。"""
-    gw = _FakeGatewayWithList()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    gw = FakeGatewayWithList()
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw)
+    svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # 建立多個提案
@@ -156,12 +156,12 @@ async def test_council_panel_list_active_proposals_contract(
 @pytest.mark.asyncio
 async def test_council_panel_vote_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     """契約測試：面板投票流程。"""
-    gw = _FakeGatewayWithList()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    gw = FakeGatewayWithList()
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw)
+    svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # 建案
@@ -183,7 +183,7 @@ async def test_council_panel_vote_contract(monkeypatch: pytest.MonkeyPatch) -> N
     assert status == "進行中"  # 尚未達到門檻
 
     # 再投一票
-    totals2, status2 = await svc.vote(proposal_id=p.proposal_id, voter_id=11, choice="reject")
+    totals2, _ = await svc.vote(proposal_id=p.proposal_id, voter_id=11, choice="reject")
     assert totals2.approve == 1
     assert totals2.reject == 1
 
@@ -192,13 +192,13 @@ async def test_council_panel_vote_contract(monkeypatch: pytest.MonkeyPatch) -> N
 @pytest.mark.asyncio
 async def test_council_panel_execute_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     """契約測試：面板執行提案（通過後自動執行）。"""
-    gw = _FakeGatewayWithList()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    gw = FakeGatewayWithList()
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
-    fake_transfer = _FakeTransferService()
-    svc = CouncilService(gateway=gw, transfer_service=fake_transfer)
+    fake_transfer = FakeTransferService()
+    svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, fake_transfer))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # 建案（僅需 2 票即可通過）
@@ -231,12 +231,12 @@ async def test_council_panel_execute_contract(monkeypatch: pytest.MonkeyPatch) -
 @pytest.mark.asyncio
 async def test_council_panel_export_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     """契約測試：面板匯出功能。"""
-    gw = _FakeGatewayWithList()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    gw = FakeGatewayWithList()
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw)
+    svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # 建立提案
@@ -272,12 +272,12 @@ async def test_council_panel_cancel_proposal_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """契約測試：面板撤案流程（有條件限制）。"""
-    gw = _FakeGatewayWithList()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    gw = FakeGatewayWithList()
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw)
+    svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # 建案後撤案（未有投票前可行）
@@ -314,12 +314,12 @@ async def test_council_panel_error_handling_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """契約測試：面板錯誤處理（權限不足、參數錯誤）。"""
-    gw = _FakeGatewayWithList()
-    conn = _FakeConnection(gw)
-    pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+    gw = FakeGatewayWithList()
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
 
-    svc = CouncilService(gateway=gw)
+    svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # 測試金額必須為正整數

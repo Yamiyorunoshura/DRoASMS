@@ -53,9 +53,8 @@ def _mask_sensitive_values(
                 nested[nested_key] = mask_value(nested_key, nested_value)
             return nested
         if isinstance(value, list):
-            typed_list = cast(list[Any], value)  # type: ignore[redundant-cast]
             masked_list: list[Any] = []
-            for item in typed_list:
+            for item in value:  # pyright: ignore[reportUnknownVariableType]
                 masked_list.append(mask_value(key, item))
             return masked_list
         if key.lower() in _SENSITIVE_KEYS:

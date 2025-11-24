@@ -15,12 +15,12 @@ from src.config.db_settings import PoolConfig
 LOGGER = structlog.get_logger(__name__)
 
 if TYPE_CHECKING:
-    from asyncpg.connection import Connection as _AsyncpgConnection
+    from asyncpg import Connection as _AsyncpgConnection
 else:
     _AsyncpgConnection = asyncpg.Connection
 
 
-class _PatchedConnection(_AsyncpgConnection):  # type: ignore[misc]  # asyncpg stubs expose Any
+class _PatchedConnection(_AsyncpgConnection):  # type: ignore[misc]
     """Work around asyncpg restriction: prepared statements cannot contain multiple
     commands separated by semicolons. Some tests issue a single execute() call with
     multiple `SELECT ...; SELECT ...;` statements and one parameter list.

@@ -74,35 +74,31 @@ class DepartmentRegistry:
             if not isinstance(raw_loaded, list):
                 raise ValueError("Departments JSON must be a list")
 
-            raw: list[Any] = cast(list[Any], raw_loaded)  # type: ignore[redundant-cast]
+            raw: list[dict[str, Any]] = cast(list[dict[str, Any]], raw_loaded)
             for obj in raw:
-                if not isinstance(obj, dict):
-                    raise ValueError("Each department must be a dict")
-                item = cast(dict[str, Any], obj)
-                if "id" not in item or "name" not in item or "code" not in item:
+                if "id" not in obj or "name" not in obj or "code" not in obj:
                     raise ValueError("Department must have id, name, and code")
-                if not isinstance(item["code"], int) or item["code"] < 0:
+                if not isinstance(obj["code"], int) or obj["code"] < 0:
                     raise ValueError("Department code must be a non-negative integer")
                 # 類型收斂：subordinates 僅接受字串陣列
-                subs_raw = item.get("subordinates")
+                subs_raw = obj.get("subordinates")
                 subordinates: list[str] | None = None
                 if isinstance(subs_raw, list):
-                    subs_list: list[Any] = cast(list[Any], subs_raw)  # type: ignore[redundant-cast]
                     filtered: list[str] = []
-                    for s in subs_list:
+                    for s in subs_raw:  # pyright: ignore[reportUnknownVariableType]
                         if isinstance(s, str) and s:
                             filtered.append(s)
                     if filtered:
                         subordinates = filtered
 
                 dept = Department(
-                    id=str(item["id"]),
-                    name=str(item["name"]),
-                    code=int(item["code"]),
-                    emoji=str(item["emoji"]) if "emoji" in item else None,
-                    level=str(item.get("level", "department")),
-                    description=str(item["description"]) if "description" in item else None,
-                    parent=str(item["parent"]) if "parent" in item else None,
+                    id=str(obj["id"]),
+                    name=str(obj["name"]),
+                    code=int(obj["code"]),
+                    emoji=str(obj["emoji"]) if "emoji" in obj else None,
+                    level=str(obj.get("level", "department")),
+                    description=str(obj["description"]) if "description" in obj else None,
+                    parent=str(obj["parent"]) if "parent" in obj else None,
                     subordinates=subordinates,
                 )
                 self._departments[dept.id] = dept
