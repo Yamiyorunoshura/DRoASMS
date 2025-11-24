@@ -36,13 +36,8 @@ if (( ${#missing[@]} > 0 )); then
   exit 64
 fi
 
-# 基本 Schema 檢查（最小化）：若 DATABASE_URL 非空，需為以 postgresql:// 開頭
-<<<<<<< Updated upstream
-if [[ -n "${DATABASE_URL:-}" ]] && [[ -n "${DATABASE_URL# }" ]]; then
-=======
 # 移除所有空白後檢查是否還有內容
 if [[ -n "${DATABASE_URL// }" ]]; then
->>>>>>> Stashed changes
   if [[ "${DATABASE_URL}" != postgresql://* ]]; then
     json_log "ERROR" "bot.config.invalid" "invalid DATABASE_URL; must start with postgresql://" "\"key\":\"DATABASE_URL\""
     exit 78
