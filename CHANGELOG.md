@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Improved test coverage for slash commands with comprehensive test fixtures and extended test suites
+- Added contract tests for Supreme Assembly command interactions
+- Enhanced test infrastructure with Discord mocks and permission fixtures
+- Added coverage checking script for automated test coverage validation
+
+### Added
+
+- Comprehensive test fixtures for command base, Discord mocks, and result helpers
+- Extended test coverage for council, economy, help, and state council commands
+- Integration tests for cross-command interactions
+- Schema contracts for Docker environment configuration and log events
+
+[Compare changes](https://github.com/Yamiyorunoshura/DRoASMS/compare/v2.0.0...v2.0.1)
+
 ## [2.0.0] - 2025-11-24
 
 ### Added

@@ -5,12 +5,16 @@ from __future__ import annotations
 import secrets
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from discord import Interaction
+from discord import Interaction, app_commands
 
-from src.bot.commands.currency_config import build_currency_config_command
+from src.bot.commands.currency_config import (
+    build_currency_config_command,
+    get_help_data,
+    register,
+)
 from src.bot.services.currency_config_service import (
     CurrencyConfigResult,
     CurrencyConfigService,
@@ -238,3 +242,77 @@ class TestCurrencyConfigCommand:
         assert interaction.response.sent is True
         assert interaction.response.kwargs is not None
         assert "錯誤" in interaction.response.kwargs.get("content", "")
+
+
+@pytest.mark.unit
+class TestCurrencyConfigHelpData:
+    """Test cases for get_help_data function."""
+
+    def test_get_help_data_returns_valid_structure(self) -> None:
+        """Test that get_help_data returns valid help data structure."""
+        help_data = get_help_data()
+
+        assert "currency_config" in help_data
+        data = help_data["currency_config"]
+        assert data["name"] == "currency_config"
+        assert "description" in data
+        assert data["category"] == "economy"
+        assert "parameters" in data
+        assert len(data["parameters"]) == 2
+        assert "permissions" in data
+        assert "administrator" in data["permissions"]
+        assert "examples" in data
+        assert len(data["examples"]) >= 3
+        assert "tags" in data
+
+
+@pytest.mark.unit
+class TestCurrencyConfigRegister:
+    """Test cases for register function."""
+
+    def test_register_with_container(self) -> None:
+        """Test register with dependency container."""
+        mock_container = MagicMock()
+        mock_service = MagicMock(spec=CurrencyConfigService)
+        mock_container.resolve.return_value = mock_service
+
+        mock_client = MagicMock()
+        mock_client.http = MagicMock()
+        mock_client._connection = MagicMock()
+        mock_client._connection._command_tree = None
+
+        tree = app_commands.CommandTree(mock_client)
+
+        register(tree, container=mock_container)
+
+        # Verify container.resolve was called
+        mock_container.resolve.assert_called_once_with(CurrencyConfigService)
+
+        # Verify command was added
+        commands = tree.get_commands()
+        command_names = [cmd.name for cmd in commands]
+        assert "currency_config" in command_names
+
+    def test_register_without_container_fallback(self) -> None:
+        """Test register without container uses fallback pool."""
+        mock_client = MagicMock()
+        mock_client.http = MagicMock()
+        mock_client._connection = MagicMock()
+        mock_client._connection._command_tree = None
+
+        tree = app_commands.CommandTree(mock_client)
+
+        # Mock the pool module - it's imported inside the register function
+        with patch("src.db.pool.get_pool") as mock_get_pool:
+            mock_pool = MagicMock()
+            mock_get_pool.return_value = mock_pool
+
+            register(tree, container=None)
+
+            # Verify get_pool was called
+            mock_get_pool.assert_called_once()
+
+        # Verify command was added
+        commands = tree.get_commands()
+        command_names = [cmd.name for cmd in commands]
+        assert "currency_config" in command_names

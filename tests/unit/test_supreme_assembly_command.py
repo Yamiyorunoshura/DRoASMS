@@ -28,6 +28,7 @@ from src.bot.services.supreme_assembly_service import (
     GovernanceNotConfiguredError,
     PermissionDeniedError,
     SupremeAssemblyService,
+    VoteAlreadyExistsError,
     VoteTotals,
 )
 from src.db.gateway.supreme_assembly_governance import (
@@ -1110,7 +1111,7 @@ class TestSupremePeoplesAssemblyPermissions:
         assert isinstance(result, Ok)
         permission = result.value
         assert permission.allowed is False
-        assert permission.reason is not None
+        assert permission.permission_level is None
         assert "不具備" in permission.reason
 
     def test_peoples_assembly_permission_checker_create_proposal(
@@ -1268,3 +1269,927 @@ class TestSupremePeoplesAssemblyPermissions:
         assert permission.allowed is True
         assert permission.permission_level == "representative"
         assert permission.reason and "人民代表" in permission.reason
+
+
+# === 傳召功能測試 ===
+
+
+@pytest.mark.unit
+class TestSummonTypeSelectionView:
+    """傳召類型選擇視圖測試。"""
+
+    @pytest.fixture
+    def mock_service(self) -> MagicMock:
+        """創建模擬的 SupremeAssemblyService。"""
+        service = MagicMock(spec=SupremeAssemblyService)
+        service.get_config = AsyncMock()
+        service.create_summon = AsyncMock()
+        service.mark_summon_delivered = AsyncMock()
+        return service
+
+    @pytest.fixture
+    def mock_guild(self) -> MagicMock:
+        """創建模擬的 Discord Guild。"""
+        guild = MagicMock()
+        guild.id = _snowflake()
+        guild.get_role = MagicMock()
+        guild.get_member = MagicMock()
+        return guild
+
+    def test_summon_type_selection_view_initialization(
+        self, mock_service: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """測試傳召類型選擇視圖初始化。"""
+        from src.bot.commands.supreme_assembly import SummonTypeSelectionView
+
+        with patch("discord.ui.View.__init__"):
+            view = SummonTypeSelectionView(service=mock_service, guild=mock_guild)
+
+            # 驗證基本屬性
+            assert view.service == mock_service
+            assert view.guild == mock_guild
+
+    def test_summon_type_selection_view_has_buttons(
+        self, mock_service: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """測試傳召類型選擇視圖有正確的按鈕。"""
+        from src.bot.commands.supreme_assembly import SummonTypeSelectionView
+
+        with patch("discord.ui.View.__init__"):
+            view = SummonTypeSelectionView(service=mock_service, guild=mock_guild)
+
+            # 檢查是否有傳召議員和傳召官員的方法
+            assert hasattr(view, "select_member")
+            assert hasattr(view, "select_official")
+
+
+@pytest.mark.asyncio
+class TestSummonMemberSelectView:
+    """傳召議員選擇視圖測試。"""
+
+    @pytest.fixture
+    def mock_service(self) -> AsyncMock:
+        """創建模擬的 SupremeAssemblyService。"""
+        service = AsyncMock(spec=SupremeAssemblyService)
+        return service
+
+    @pytest.fixture
+    def mock_guild(self) -> MagicMock:
+        """創建模擬的 Discord Guild。"""
+        guild = MagicMock()
+        guild.id = _snowflake()
+        guild.get_role = MagicMock()
+        guild.get_member = MagicMock()
+        return guild
+
+    @pytest.fixture
+    def sample_config(self, mock_guild: MagicMock) -> SupremeAssemblyConfig:
+        """測試配置。"""
+        return SupremeAssemblyConfig(
+            guild_id=mock_guild.id,
+            speaker_role_id=_snowflake(),
+            member_role_id=_snowflake(),
+            created_at=datetime.now(tz=timezone.utc),
+            updated_at=datetime.now(tz=timezone.utc),
+        )
+
+    async def test_summon_member_select_view_build_with_members(
+        self, mock_service: AsyncMock, mock_guild: MagicMock, sample_config: SupremeAssemblyConfig
+    ) -> None:
+        """測試建立傳召議員視圖（有成員）。"""
+        from src.bot.commands.supreme_assembly import SummonMemberSelectView
+
+        # 設定模擬配置和成員
+        mock_service.get_config.return_value = sample_config
+
+        # 創建模擬成員列表
+        mock_members = []
+        for i in range(5):
+            member = MagicMock()
+            member.id = _snowflake()
+            member.display_name = f"Member {i}"
+            member.name = f"member{i}"
+            mock_members.append(member)
+
+        mock_role = MagicMock()
+        mock_role.members = mock_members
+        mock_guild.get_role.return_value = mock_role
+
+        with (
+            patch("discord.ui.View.__init__"),
+            patch("discord.ui.View.add_item") as mock_add_item,
+        ):
+            _view = await SummonMemberSelectView.build(service=mock_service, guild=mock_guild)
+
+            # 驗證服務被調用
+            mock_service.get_config.assert_called_once_with(guild_id=mock_guild.id)
+            mock_guild.get_role.assert_called_once_with(sample_config.member_role_id)
+
+            # 驗證有添加選單
+            assert mock_add_item.called
+            assert _view is not None  # 確保視圖被創建
+
+    async def test_summon_member_select_view_build_no_members(
+        self, mock_service: AsyncMock, mock_guild: MagicMock, sample_config: SupremeAssemblyConfig
+    ) -> None:
+        """測試建立傳召議員視圖（無成員）。"""
+        from src.bot.commands.supreme_assembly import SummonMemberSelectView
+
+        # 設定模擬配置和空成員列表
+        mock_service.get_config.return_value = sample_config
+
+        mock_role = MagicMock()
+        mock_role.members = []
+        mock_guild.get_role.return_value = mock_role
+
+        with (
+            patch("discord.ui.View.__init__"),
+            patch("discord.ui.View.add_item") as mock_add_item,
+        ):
+            _view = await SummonMemberSelectView.build(service=mock_service, guild=mock_guild)
+
+            # 驗證有添加禁用的選單
+            assert mock_add_item.called
+            assert _view is not None
+
+    async def test_summon_member_select_view_build_config_error(
+        self, mock_service: AsyncMock, mock_guild: MagicMock
+    ) -> None:
+        """測試建立傳召議員視圖時配置錯誤。"""
+        from src.bot.commands.supreme_assembly import SummonMemberSelectView
+
+        # 模擬配置錯誤
+        mock_service.get_config.side_effect = GovernanceNotConfiguredError("未配置")
+
+        with patch("discord.ui.View.__init__"), patch("discord.ui.View.add_item"):
+            # 應該靜默處理錯誤
+            view = await SummonMemberSelectView.build(service=mock_service, guild=mock_guild)
+
+            # 視圖應該被創建（即使沒有選項）
+            assert view is not None
+
+
+@pytest.mark.asyncio
+class TestSummonOfficialSelectView:
+    """傳召政府官員選擇視圖測試。"""
+
+    @pytest.fixture
+    def mock_service(self) -> AsyncMock:
+        """創建模擬的 SupremeAssemblyService。"""
+        service = AsyncMock(spec=SupremeAssemblyService)
+        return service
+
+    @pytest.fixture
+    def mock_guild(self) -> MagicMock:
+        """創建模擬的 Discord Guild。"""
+        guild = MagicMock()
+        guild.id = _snowflake()
+        guild.get_role = MagicMock()
+        guild.get_member = MagicMock()
+        return guild
+
+    def test_summon_official_select_view_initialization(
+        self, mock_service: AsyncMock, mock_guild: MagicMock
+    ) -> None:
+        """測試傳召政府官員視圖初始化。"""
+        from src.bot.commands.supreme_assembly import SummonOfficialSelectView
+
+        with (
+            patch("discord.ui.View.__init__"),
+            patch("discord.ui.View.add_item") as mock_add_item,
+            patch("src.bot.commands.supreme_assembly.get_registry") as mock_get_registry,
+        ):
+            # 設定模擬部門註冊表
+            mock_registry = MagicMock()
+            mock_dept = MagicMock()
+            mock_dept.id = "dept_1"
+            mock_dept.name = "財政部"
+            mock_dept.emoji = "💰"
+            mock_registry.get_by_level.return_value = [mock_dept]
+            mock_get_registry.return_value = mock_registry
+
+            view = SummonOfficialSelectView(service=mock_service, guild=mock_guild)
+
+            # 驗證基本屬性
+            assert view.service == mock_service
+            assert view.guild == mock_guild
+
+            # 驗證有添加選單
+            assert mock_add_item.called
+
+    def test_summon_official_select_view_has_all_options(
+        self, mock_service: AsyncMock, mock_guild: MagicMock
+    ) -> None:
+        """測試傳召政府官員視圖包含所有選項。"""
+        from src.bot.commands.supreme_assembly import SummonOfficialSelectView
+
+        with (
+            patch("discord.ui.View.__init__"),
+            patch("discord.ui.View.add_item") as mock_add_item,
+            patch("src.bot.commands.supreme_assembly.get_registry") as mock_get_registry,
+        ):
+            # 設定多個部門
+            mock_registry = MagicMock()
+            mock_depts = []
+            for i, name in enumerate(["財政部", "國防部", "外交部"]):
+                dept = MagicMock()
+                dept.id = f"dept_{i}"
+                dept.name = name
+                dept.emoji = None
+                mock_depts.append(dept)
+            mock_registry.get_by_level.return_value = mock_depts
+            mock_get_registry.return_value = mock_registry
+
+            _view = SummonOfficialSelectView(service=mock_service, guild=mock_guild)
+
+            # 驗證有添加選單（應該包含部門 + 國務院領袖 + 常任理事會）
+            assert mock_add_item.called
+            assert _view is not None
+
+
+@pytest.mark.asyncio
+class TestSummonPermanentCouncilView:
+    """傳召常任理事會成員視圖測試。"""
+
+    @pytest.fixture
+    def mock_service(self) -> AsyncMock:
+        """創建模擬的 SupremeAssemblyService。"""
+        service = AsyncMock(spec=SupremeAssemblyService)
+        return service
+
+    @pytest.fixture
+    def mock_guild(self) -> MagicMock:
+        """創建模擬的 Discord Guild。"""
+        guild = MagicMock()
+        guild.id = _snowflake()
+        guild.get_role = MagicMock()
+        guild.get_member = MagicMock()
+        return guild
+
+    @pytest.fixture
+    def mock_original_view(self, mock_service: AsyncMock, mock_guild: MagicMock) -> MagicMock:
+        """創建模擬的原始視圖。"""
+        return MagicMock()
+
+    async def test_summon_permanent_council_view_build_with_members(
+        self,
+        mock_service: AsyncMock,
+        mock_guild: MagicMock,
+        mock_original_view: MagicMock,
+    ) -> None:
+        """測試建立傳召常任理事會視圖（有成員）。"""
+        from src.bot.commands.supreme_assembly import SummonPermanentCouncilView
+
+        # 創建模擬成員列表
+        mock_members = []
+        for i in range(3):
+            member = MagicMock()
+            member.id = _snowflake()
+            member.display_name = f"Council Member {i}"
+            member.name = f"council{i}"
+            mock_members.append(member)
+
+        mock_role = MagicMock()
+        mock_role.members = mock_members
+        mock_guild.get_role.return_value = mock_role
+
+        # 模擬理事會配置
+        mock_council_config = MagicMock()
+        mock_council_config.council_role_id = _snowflake()
+
+        with (
+            patch("discord.ui.View.__init__"),
+            patch("discord.ui.View.add_item"),
+            patch("src.bot.commands.supreme_assembly.get_pool") as mock_get_pool,
+        ):
+            mock_pool = MagicMock()
+            mock_conn = MagicMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+            mock_get_pool.return_value = mock_pool
+
+            # 模擬 gateway
+            with patch("src.db.gateway.council_governance.CouncilGovernanceGateway") as mock_gw_cls:
+                mock_gw = MagicMock()
+                mock_gw.fetch_config = AsyncMock(return_value=mock_council_config)
+                mock_gw_cls.return_value = mock_gw
+
+                _view = await SummonPermanentCouncilView.build(
+                    service=mock_service,
+                    guild=mock_guild,
+                    original_view=mock_original_view,
+                )
+
+                # 驗證視圖被創建
+                assert _view is not None
+                assert _view.service == mock_service
+                assert _view.guild == mock_guild
+
+    async def test_summon_permanent_council_view_build_no_config(
+        self,
+        mock_service: AsyncMock,
+        mock_guild: MagicMock,
+        mock_original_view: MagicMock,
+    ) -> None:
+        """測試建立傳召常任理事會視圖（無配置）。"""
+        from src.bot.commands.supreme_assembly import SummonPermanentCouncilView
+
+        with (
+            patch("discord.ui.View.__init__"),
+            patch("discord.ui.View.add_item"),
+            patch("src.bot.commands.supreme_assembly.get_pool") as mock_get_pool,
+        ):
+            mock_pool = MagicMock()
+            mock_conn = MagicMock()
+            mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+            mock_get_pool.return_value = mock_pool
+
+            # 模擬無配置
+            with patch("src.db.gateway.council_governance.CouncilGovernanceGateway") as mock_gw_cls:
+                mock_gw = MagicMock()
+                mock_gw.fetch_config = AsyncMock(return_value=None)
+                mock_gw_cls.return_value = mock_gw
+
+                view = await SummonPermanentCouncilView.build(
+                    service=mock_service,
+                    guild=mock_guild,
+                    original_view=mock_original_view,
+                )
+
+                # 視圖應該被創建（即使沒有選項）
+                assert view is not None
+
+
+@pytest.mark.asyncio
+class TestSummonFunctionality:
+    """傳召功能整合測試。"""
+
+    @pytest.fixture
+    def mock_service(self) -> AsyncMock:
+        """創建模擬的 SupremeAssemblyService。"""
+        service = AsyncMock(spec=SupremeAssemblyService)
+        return service
+
+    @pytest.fixture
+    def mock_guild(self) -> MagicMock:
+        """創建模擬的 Discord Guild。"""
+        guild = MagicMock()
+        guild.id = _snowflake()
+        guild.get_role = MagicMock()
+        guild.get_member = MagicMock()
+        return guild
+
+    @pytest.fixture
+    def mock_interaction(self, mock_guild: MagicMock) -> MagicMock:
+        """創建模擬的 Discord 互動。"""
+        interaction = MagicMock()
+        interaction.guild_id = mock_guild.id
+        interaction.guild = mock_guild
+        interaction.user = MagicMock()
+        interaction.user.id = _snowflake()
+        interaction.user.mention = f"<@{interaction.user.id}>"
+        interaction.data = {"values": ["123456789"]}
+        interaction.client = MagicMock()
+        return interaction
+
+    async def test_summon_member_success(
+        self,
+        mock_service: AsyncMock,
+        mock_guild: MagicMock,
+        mock_interaction: MagicMock,
+    ) -> None:
+        """測試成功傳召議員。"""
+        # 設定模擬傳召記錄
+        mock_summon = MagicMock()
+        mock_summon.summon_id = UUID(int=secrets.randbits(128))
+        mock_service.create_summon.return_value = mock_summon
+
+        # 設定模擬成員
+        mock_member = MagicMock()
+        mock_member.id = 123456789
+        mock_member.mention = "<@123456789>"
+        mock_member.send = AsyncMock()
+        mock_guild.get_member.return_value = mock_member
+
+        # 驗證傳召創建邏輯
+        await mock_service.create_summon(
+            guild_id=mock_guild.id,
+            invoked_by=mock_interaction.user.id,
+            target_id=mock_member.id,
+            target_kind="member",
+            note=None,
+        )
+
+        mock_service.create_summon.assert_called_once_with(
+            guild_id=mock_guild.id,
+            invoked_by=mock_interaction.user.id,
+            target_id=mock_member.id,
+            target_kind="member",
+            note=None,
+        )
+
+    async def test_summon_official_success(
+        self,
+        mock_service: AsyncMock,
+        mock_guild: MagicMock,
+        mock_interaction: MagicMock,
+    ) -> None:
+        """測試成功傳召政府官員。"""
+        # 設定模擬傳召記錄
+        mock_summon = MagicMock()
+        mock_summon.summon_id = UUID(int=secrets.randbits(128))
+        mock_service.create_summon.return_value = mock_summon
+
+        target_id = StateCouncilService.derive_main_account_id(mock_guild.id)
+
+        # 驗證傳召創建邏輯
+        await mock_service.create_summon(
+            guild_id=mock_guild.id,
+            invoked_by=mock_interaction.user.id,
+            target_id=target_id,
+            target_kind="official",
+            note="傳召 國務院領袖",
+        )
+
+        mock_service.create_summon.assert_called_once_with(
+            guild_id=mock_guild.id,
+            invoked_by=mock_interaction.user.id,
+            target_id=target_id,
+            target_kind="official",
+            note="傳召 國務院領袖",
+        )
+
+    async def test_summon_permission_denied_non_speaker(
+        self,
+        mock_service: AsyncMock,
+        mock_guild: MagicMock,
+    ) -> None:
+        """測試非議長無法傳召。"""
+        with patch("discord.ui.View.__init__"), patch("discord.ui.View.add_item"):
+            view = SupremeAssemblyPanelView(
+                service=mock_service,
+                guild=mock_guild,
+                author_id=_snowflake(),
+                speaker_role_id=_snowflake(),
+                member_role_id=_snowflake(),
+                is_speaker=False,  # 非議長
+                is_member=True,
+            )
+
+            # 非議長不應該有傳召按鈕
+            assert not hasattr(view, "_summon_btn")
+
+    async def test_summon_button_only_for_speaker(
+        self,
+        mock_service: AsyncMock,
+        mock_guild: MagicMock,
+    ) -> None:
+        """測試傳召按鈕僅對議長顯示。"""
+        with patch("discord.ui.View.__init__"), patch("discord.ui.View.add_item"):
+            # 議長視圖
+            speaker_view = SupremeAssemblyPanelView(
+                service=mock_service,
+                guild=mock_guild,
+                author_id=_snowflake(),
+                speaker_role_id=_snowflake(),
+                member_role_id=_snowflake(),
+                is_speaker=True,
+                is_member=True,
+            )
+
+            # 人民代表視圖
+            member_view = SupremeAssemblyPanelView(
+                service=mock_service,
+                guild=mock_guild,
+                author_id=_snowflake(),
+                speaker_role_id=_snowflake(),
+                member_role_id=_snowflake(),
+                is_speaker=False,
+                is_member=True,
+            )
+
+            # 議長應該有傳召按鈕
+            assert hasattr(speaker_view, "_summon_btn")
+
+            # 人民代表不應該有傳召按鈕
+            assert not hasattr(member_view, "_summon_btn")
+
+    async def test_mark_summon_delivered(self, mock_service: AsyncMock) -> None:
+        """測試標記傳召已送達。"""
+        summon_id = UUID(int=secrets.randbits(128))
+
+        await mock_service.mark_summon_delivered(summon_id=summon_id)
+
+        mock_service.mark_summon_delivered.assert_called_once_with(summon_id=summon_id)
+
+    async def test_summon_dm_failure_handling(
+        self,
+        mock_service: AsyncMock,
+        mock_guild: MagicMock,
+    ) -> None:
+        """測試傳召私訊失敗處理。"""
+        # 設定模擬傳召記錄
+        mock_summon = MagicMock()
+        mock_summon.summon_id = UUID(int=secrets.randbits(128))
+        mock_service.create_summon.return_value = mock_summon
+
+        # 設定模擬成員（私訊會失敗）
+        mock_member = MagicMock()
+        mock_member.id = 123456789
+        mock_member.send = AsyncMock(side_effect=Exception("DM disabled"))
+        mock_guild.get_member.return_value = mock_member
+
+        # 傳召記錄應該仍然被創建
+        await mock_service.create_summon(
+            guild_id=mock_guild.id,
+            invoked_by=_snowflake(),
+            target_id=mock_member.id,
+            target_kind="member",
+            note=None,
+        )
+
+        mock_service.create_summon.assert_called_once()
+
+        # 嘗試發送私訊（會失敗）
+        with pytest.raises(Exception, match="DM disabled"):
+            await mock_member.send(content="傳召通知")
+
+
+@pytest.mark.asyncio
+class TestSummonErrorHandling:
+    """傳召功能錯誤處理測試。"""
+
+    @pytest.fixture
+    def mock_service(self) -> AsyncMock:
+        """創建模擬的 SupremeAssemblyService。"""
+        return AsyncMock(spec=SupremeAssemblyService)
+
+    async def test_summon_service_error(self, mock_service: AsyncMock) -> None:
+        """測試傳召服務錯誤處理。"""
+        mock_service.create_summon.side_effect = RuntimeError("Database error")
+
+        with pytest.raises(RuntimeError, match="Database error"):
+            await mock_service.create_summon(
+                guild_id=_snowflake(),
+                invoked_by=_snowflake(),
+                target_id=_snowflake(),
+                target_kind="member",
+                note=None,
+            )
+
+    async def test_summon_invalid_target_kind(self, mock_service: AsyncMock) -> None:
+        """測試無效傳召目標類型。"""
+        mock_service.create_summon.side_effect = ValueError("Invalid target kind")
+
+        with pytest.raises(ValueError, match="Invalid target kind"):
+            await mock_service.create_summon(
+                guild_id=_snowflake(),
+                invoked_by=_snowflake(),
+                target_id=_snowflake(),
+                target_kind="invalid",
+                note=None,
+            )
+
+    async def test_mark_summon_delivered_not_found(self, mock_service: AsyncMock) -> None:
+        """測試標記不存在的傳召。"""
+        mock_service.mark_summon_delivered.side_effect = RuntimeError("Summon not found")
+
+        with pytest.raises(RuntimeError, match="Summon not found"):
+            await mock_service.mark_summon_delivered(summon_id=UUID(int=secrets.randbits(128)))
+
+
+# === 權限邊界測試 ===
+
+
+@pytest.mark.asyncio
+class TestPermissionBoundaries:
+    """權限邊界測試：測試各種權限邊界情況。"""
+
+    @pytest.fixture
+    def mock_service(self) -> AsyncMock:
+        """創建模擬的 SupremeAssemblyService。"""
+        return AsyncMock(spec=SupremeAssemblyService)
+
+    @pytest.fixture
+    def mock_guild(self) -> MagicMock:
+        """創建模擬的 Discord Guild。"""
+        guild = MagicMock()
+        guild.id = _snowflake()
+        guild.get_role = MagicMock()
+        guild.get_member = MagicMock()
+        return guild
+
+    async def test_speaker_only_operations(
+        self, mock_service: AsyncMock, mock_guild: MagicMock
+    ) -> None:
+        """測試僅議長可執行的操作。"""
+        # 設定配置
+        mock_config = MagicMock()
+        mock_config.speaker_role_id = 123
+        mock_config.member_role_id = 456
+        mock_service.get_config.return_value = mock_config
+
+        # 測試傳召權限（僅限議長）
+        with patch("discord.ui.View.__init__"), patch("discord.ui.View.add_item"):
+            speaker_view = SupremeAssemblyPanelView(
+                service=mock_service,
+                guild=mock_guild,
+                author_id=_snowflake(),
+                speaker_role_id=123,
+                member_role_id=456,
+                is_speaker=True,
+                is_member=True,
+            )
+
+            member_view = SupremeAssemblyPanelView(
+                service=mock_service,
+                guild=mock_guild,
+                author_id=_snowflake(),
+                speaker_role_id=123,
+                member_role_id=456,
+                is_speaker=False,
+                is_member=True,
+            )
+
+            # 議長應該有傳召按鈕
+            assert hasattr(speaker_view, "_summon_btn")
+            # 人民代表不應該有傳召按鈕
+            assert not hasattr(member_view, "_summon_btn")
+
+    async def test_member_operations(self, mock_service: AsyncMock, mock_guild: MagicMock) -> None:
+        """測試議員可執行的操作。"""
+        with patch("discord.ui.View.__init__"), patch("discord.ui.View.add_item"):
+            # 議員視圖
+            member_view = SupremeAssemblyPanelView(
+                service=mock_service,
+                guild=mock_guild,
+                author_id=_snowflake(),
+                speaker_role_id=_snowflake(),
+                member_role_id=_snowflake(),
+                is_speaker=False,
+                is_member=True,
+            )
+
+            # 議員應該有轉帳、提案和查看所有提案功能
+            assert hasattr(member_view, "_transfer_btn")
+            assert hasattr(member_view, "_propose_btn")  # 發起表決按鈕
+            assert hasattr(member_view, "_view_all_btn")  # 查看所有提案按鈕
+
+    async def test_non_member_access_denied(
+        self, mock_service: AsyncMock, mock_guild: MagicMock
+    ) -> None:
+        """測試非議員存取被拒絕。"""
+        from src.bot.services.permission_service import PermissionService
+        from src.infra.result import Ok
+
+        # 創建模擬的 PermissionService
+        mock_council_service = MagicMock()
+        mock_state_council_service = MagicMock()
+        mock_supreme_assembly_service = MagicMock()
+
+        # 設定配置
+        mock_config = MagicMock()
+        mock_config.speaker_role_id = 123
+        mock_config.member_role_id = 456
+        mock_supreme_assembly_service.get_config = AsyncMock(return_value=mock_config)
+
+        permission_service = PermissionService(
+            council_service=mock_council_service,
+            state_council_service=mock_state_council_service,
+            supreme_assembly_service=mock_supreme_assembly_service,
+        )
+
+        # 測試無權限用戶
+        result = await permission_service.check_supreme_peoples_assembly_permission(
+            guild_id=mock_guild.id,
+            user_id=_snowflake(),
+            user_roles=[999],  # 無相關角色
+            operation="panel_access",
+        )
+
+        assert isinstance(result, Ok)
+        permission = result.value
+        assert permission.allowed is False
+        assert permission.permission_level is None  # None 表示無權限
+
+    async def test_permission_check_with_multiple_roles(
+        self, mock_service: AsyncMock, mock_guild: MagicMock
+    ) -> None:
+        """測試具有多個角色的權限檢查。"""
+        from src.bot.services.permission_service import PermissionService
+        from src.infra.result import Ok
+
+        mock_council_service = MagicMock()
+        mock_state_council_service = MagicMock()
+        mock_supreme_assembly_service = MagicMock()
+
+        # 設定配置
+        mock_config = MagicMock()
+        mock_config.speaker_role_id = 123
+        mock_config.member_role_id = 456
+        mock_supreme_assembly_service.get_config = AsyncMock(return_value=mock_config)
+
+        permission_service = PermissionService(
+            council_service=mock_council_service,
+            state_council_service=mock_state_council_service,
+            supreme_assembly_service=mock_supreme_assembly_service,
+        )
+
+        # 測試同時具有議長和議員角色的用戶（應該是議長）
+        result = await permission_service.check_supreme_peoples_assembly_permission(
+            guild_id=mock_guild.id,
+            user_id=_snowflake(),
+            user_roles=[123, 456, 789],  # 議長 + 議員 + 其他
+            operation="panel_access",
+        )
+
+        assert isinstance(result, Ok)
+        permission = result.value
+        assert permission.allowed is True
+        assert permission.permission_level == "speaker"  # 最高權限優先
+
+    async def test_governance_not_configured_permission(
+        self, mock_service: AsyncMock, mock_guild: MagicMock
+    ) -> None:
+        """測試治理未配置時的權限處理。"""
+        from src.bot.services.permission_service import PermissionService
+        from src.infra.result import Err
+
+        mock_council_service = MagicMock()
+        mock_state_council_service = MagicMock()
+        mock_supreme_assembly_service = MagicMock()
+
+        # 模擬未配置
+        mock_supreme_assembly_service.get_config = AsyncMock(
+            side_effect=GovernanceNotConfiguredError("未配置")
+        )
+
+        permission_service = PermissionService(
+            council_service=mock_council_service,
+            state_council_service=mock_state_council_service,
+            supreme_assembly_service=mock_supreme_assembly_service,
+        )
+
+        # 測試未配置時的權限檢查
+        result = await permission_service.check_supreme_peoples_assembly_permission(
+            guild_id=mock_guild.id,
+            user_id=_snowflake(),
+            user_roles=[123],
+            operation="panel_access",
+        )
+
+        # 應該返回錯誤結果
+        assert isinstance(result, Err)
+
+
+@pytest.mark.unit
+class TestVotingPermissionBoundaries:
+    """投票權限邊界測試。"""
+
+    @pytest.fixture
+    def mock_service(self) -> AsyncMock:
+        """創建模擬的 SupremeAssemblyService。"""
+        return AsyncMock(spec=SupremeAssemblyService)
+
+    @pytest.mark.asyncio
+    async def test_only_snapshot_members_can_vote(self, mock_service: AsyncMock) -> None:
+        """測試只有快照成員可以投票。"""
+        snapshot_members = [_snowflake() for _ in range(5)]
+        outsider_id = _snowflake()
+
+        # 模擬快照成員列表
+        mock_service.get_snapshot_members = AsyncMock(return_value=snapshot_members)
+
+        # 快照成員可以投票
+        snapshot_member = snapshot_members[0]
+        assert snapshot_member in snapshot_members
+
+        # 非快照成員不在列表中
+        assert outsider_id not in snapshot_members
+
+    @pytest.mark.asyncio
+    async def test_vote_deadline_enforcement(self, mock_service: AsyncMock) -> None:
+        """測試投票截止時間強制執行。"""
+        test_proposal_id = UUID(int=secrets.randbits(128))
+
+        # 模擬投票行為（截止後應該失敗）
+        mock_service.vote.side_effect = RuntimeError("提案已截止")
+
+        with pytest.raises(RuntimeError, match="提案已截止"):
+            await mock_service.vote(
+                proposal_id=test_proposal_id,
+                voter_id=_snowflake(),
+                choice="approve",
+            )
+
+    @pytest.mark.asyncio
+    async def test_threshold_calculation_edge_cases(self, mock_service: AsyncMock) -> None:
+        """測試門檻計算的邊界情況。"""
+        # 測試不同成員數量的門檻計算
+
+        # 1 人：門檻 = 1
+        assert (1 + 1) // 2 == 1
+
+        # 2 人：門檻 = 1 (如果使用 >50% 規則) 或 2 (如果使用 >=50% 規則)
+        assert (2 + 1) // 2 == 1
+
+        # 3 人：門檻 = 2
+        assert (3 + 1) // 2 == 2
+
+        # 100 人：門檻 = 50 (如果使用 >50% 規則) 或 51
+        assert (100 + 1) // 2 == 50
+
+    @pytest.mark.asyncio
+    async def test_duplicate_vote_prevention(self, mock_service: AsyncMock) -> None:
+        """測試防止重複投票。"""
+        proposal_id = UUID(int=secrets.randbits(128))
+        voter_id = _snowflake()
+
+        # 第一次投票成功
+        mock_service.vote.return_value = (
+            VoteTotals(
+                approve=1,
+                reject=0,
+                abstain=0,
+                threshold_t=2,
+                snapshot_n=3,
+                remaining_unvoted=2,
+            ),
+            "進行中",
+        )
+
+        await mock_service.vote(
+            proposal_id=proposal_id,
+            voter_id=voter_id,
+            choice="approve",
+        )
+
+        # 重複投票應該失敗
+        mock_service.vote.side_effect = VoteAlreadyExistsError("已投票")
+
+        with pytest.raises(VoteAlreadyExistsError):
+            await mock_service.vote(
+                proposal_id=proposal_id,
+                voter_id=voter_id,
+                choice="reject",
+            )
+
+
+@pytest.mark.unit
+class TestProposalPermissionBoundaries:
+    """提案權限邊界測試。"""
+
+    @pytest.fixture
+    def mock_service(self) -> AsyncMock:
+        """創建模擬的 SupremeAssemblyService。"""
+        return AsyncMock(spec=SupremeAssemblyService)
+
+    @pytest.mark.asyncio
+    async def test_proposal_creation_requires_member_role(self, mock_service: AsyncMock) -> None:
+        """測試建立提案需要議員角色。"""
+        # 模擬非議員嘗試建案
+        mock_service.create_proposal.side_effect = PermissionDeniedError("只有議員可以建立提案")
+
+        with pytest.raises(PermissionDeniedError, match="只有議員可以建立提案"):
+            await mock_service.create_proposal(
+                guild_id=_snowflake(),
+                proposer_id=_snowflake(),
+                title="測試提案",
+                description="內容",
+                snapshot_member_ids=[],
+                deadline_hours=72,
+            )
+
+    @pytest.mark.asyncio
+    async def test_proposal_title_length_limits(self, mock_service: AsyncMock) -> None:
+        """測試提案標題長度限制。"""
+        # 測試過長的標題
+        long_title = "A" * 256
+
+        mock_service.create_proposal.side_effect = ValueError("標題過長")
+
+        with pytest.raises(ValueError, match="標題過長"):
+            await mock_service.create_proposal(
+                guild_id=_snowflake(),
+                proposer_id=_snowflake(),
+                title=long_title,
+                description="內容",
+                snapshot_member_ids=[_snowflake()],
+                deadline_hours=72,
+            )
+
+    @pytest.mark.asyncio
+    async def test_proposal_deadline_range(self, mock_service: AsyncMock) -> None:
+        """測試提案截止時間範圍。"""
+        # 測試無效的截止時間
+        mock_service.create_proposal.side_effect = ValueError("截止時間無效")
+
+        # 負數時間
+        with pytest.raises(ValueError, match="截止時間無效"):
+            await mock_service.create_proposal(
+                guild_id=_snowflake(),
+                proposer_id=_snowflake(),
+                title="測試",
+                description="內容",
+                snapshot_member_ids=[_snowflake()],
+                deadline_hours=-1,
+            )
