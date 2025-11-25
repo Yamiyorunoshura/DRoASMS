@@ -43,6 +43,11 @@ class TransferResult:
     throttled_until: datetime | None = None
     metadata: dict[str, Any] | None = None
 
+    def __post_init__(self) -> None:
+        # Defensive copy of metadata to prevent external mutation
+        if self.metadata is not None:
+            object.__setattr__(self, "metadata", dict(self.metadata))
+
 
 class _TransferRecordLike(Protocol):
     transaction_id: UUID

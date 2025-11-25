@@ -15,6 +15,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -39,6 +40,13 @@ COUNCIL_AVAILABLE = True
 @pytest.mark.skipif(not COUNCIL_AVAILABLE, reason="Council service not available")
 class TestCouncilServicePerformanceBenchmarks:
     """Performance benchmarks for council service operations."""
+
+    @pytest.fixture(autouse=True)
+    def mock_pool(self) -> Any:
+        """Mock get_pool() to avoid database dependency in benchmarks."""
+        mock_pool = MagicMock()
+        with patch("src.bot.services.council_service_result.get_pool", return_value=mock_pool):
+            yield mock_pool
 
     @pytest.fixture
     def sample_data(self) -> dict[str, Any]:

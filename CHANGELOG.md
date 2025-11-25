@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.1] - 2025-11-25
+
+### Fixed
+
+- **Error mapping correction**: `VotingNotAllowedError` now raises `PermissionDeniedError` instead of `ValueError` in council service
+- **Data integrity**: Added defensive copy of metadata in `TransferResult` to prevent external mutation
+- **Test stability**: Added `mock_pool` fixture in council service benchmarks to avoid database dependency
+
+[Compare changes](https://github.com/Yamiyorunoshura/DRoASMS/compare/v2.1.0...v2.1.1)
+
 ## [2.1.0] - 2025-11-25
 
 ### Added

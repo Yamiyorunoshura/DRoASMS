@@ -87,7 +87,7 @@ class CouncilService:
             elif isinstance(error, InvalidProposalStatusError):
                 raise ValueError(str(error))
             elif isinstance(error, VotingNotAllowedError):
-                raise ValueError(str(error))
+                raise PermissionDeniedError(str(error))
             elif isinstance(error, ProposalLimitExceededError):
                 raise ValueError(str(error))
             elif isinstance(error, ExecutionFailedError):
