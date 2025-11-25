@@ -209,7 +209,8 @@ class EmbedPaginator:
             return
 
         # 安全地取得 values 數據
-        values = cast(Sequence[str] | None, getattr(interaction.data, "values", None))
+        data = cast(dict[str, Any] | None, interaction.data)
+        values = cast(Sequence[str] | None, data.get("values") if data else None)
         if not values or len(values) == 0:
             return
 

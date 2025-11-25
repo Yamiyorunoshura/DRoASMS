@@ -8,6 +8,14 @@
     "description": "國家最高決策機構"
   },
   {
+    "id": "supreme_assembly",
+    "name": "最高人民會議",
+    "code": 200,
+    "emoji": "🏛️",
+    "level": "legislative",
+    "description": "國家最高立法機構"
+  },
+  {
     "id": "state_council",
     "name": "國務院",
     "code": 100,

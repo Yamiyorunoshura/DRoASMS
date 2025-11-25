@@ -5,7 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.0.0] - 2025-11-25
+
+### Added
+
+- **擴展個人面板政府部門轉帳範圍**：
+  - 新增常任理事會作為轉帳目標（帳戶 ID: `9_000_000_000_000_000 + guild_id`）
+  - 新增最高人民會議作為轉帳目標（帳戶 ID: `9_200_000_000_000_000 + guild_id`）
+  - 新增國務院主帳戶作為轉帳目標（帳戶 ID: `9_100_000_000_000_000 + guild_id`）
+  - 保留現有國務院下屬部門轉帳功能
+- **更新 departments.json**：
+  - 新增 `supreme_assembly`（最高人民會議）項目，level 為 `legislative`
+
+### Changed
+
+- **個人面板轉帳選擇器重構**：
+  - 將部門選擇器升級為政府機構選擇器，支援按層級分組顯示
+  - 選項分組：最高決策機構 > 立法機構 > 行政機構 > 各部門
+
+### Removed
+
+- **BREAKING**: 移除 `/balance` 指令（功能已整合至 `/personal_panel` 首頁分頁）
+- **BREAKING**: 移除 `/history` 指令（功能已整合至 `/personal_panel` 財產分頁）
+
+[Compare changes](https://github.com/Yamiyorunoshura/DRoASMS/compare/v2.2.1...v3.0.0)
 
 ## [2.2.1] - 2025-11-25
 

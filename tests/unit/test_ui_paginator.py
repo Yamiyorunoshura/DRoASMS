@@ -285,6 +285,27 @@ class TestEmbedPaginator:
         }
         assert info == expected
 
+    @pytest.mark.asyncio
+    async def test_on_jump_page_handles_dict_values(self) -> None:
+        """確保 component interaction 的字典資料可正確讀取。"""
+        paginator = EmbedPaginator(
+            items=["a", "b", "c"],
+            page_size=1,
+            embed_factory=lambda x, p, t: discord.Embed(title="Test"),
+        )
+
+        mock_interaction = AsyncMock()
+        mock_interaction.user.id = 555
+        mock_interaction.data = {"values": ["2"]}
+
+        update_mock = AsyncMock()
+        paginator._update_page = update_mock  # type: ignore[assignment]
+
+        await paginator._on_jump_page(mock_interaction)
+
+        assert paginator.current_page == 1  # 選擇第 2 頁（0-based = 1）
+        update_mock.assert_awaited_once_with(mock_interaction)
+
 
 class TestProposalPaginator:
     """測試 ProposalPaginator 類別。"""

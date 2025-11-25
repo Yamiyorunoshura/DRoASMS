@@ -269,7 +269,6 @@ class TestCommandRegistration:
         """測試所有命令都有幫助資料。"""
         from src.bot.commands import (
             adjust,
-            balance,
             council,
             currency_config,
             state_council,
@@ -280,7 +279,6 @@ class TestCommandRegistration:
         # 驗證主要命令模組都有 get_help_data 函數
         modules_with_help = [
             adjust,
-            balance,
             council,
             currency_config,
             state_council,
@@ -297,7 +295,6 @@ class TestCommandRegistration:
         """測試所有命令都有註冊函數。"""
         from src.bot.commands import (
             adjust,
-            balance,
             council,
             currency_config,
             state_council,
@@ -308,7 +305,6 @@ class TestCommandRegistration:
         # 驗證主要命令模組都有 register 函數
         modules = [
             adjust,
-            balance,
             council,
             currency_config,
             state_council,
