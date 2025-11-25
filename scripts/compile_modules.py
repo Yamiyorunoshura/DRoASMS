@@ -18,16 +18,21 @@ import time
 from dataclasses import dataclass, replace
 from importlib.machinery import EXTENSION_SUFFIXES
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, cast
 
-try:  # Python 3.11+
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - fallback for <3.11
-    import tomli as tomllib  # type: ignore[no-redef]
-
-from Cython.Build import cythonize
 from setuptools import Distribution, Extension
 from setuptools.command.build_ext import build_ext
+
+try:  # Python 3.11+
+    import tomllib as _tomllib_mod
+except ModuleNotFoundError:  # pragma: no cover - fallback for <3.11
+    import tomli as _tomllib_mod  # noqa: F401
+
+from Cython.Build import cythonize as _cythonize_raw  # type: ignore[import-untyped]
+
+# Cast to Any to suppress Pyright "partially unknown" errors from untyped stubs
+_tomllib: Any = _tomllib_mod
+_cythonize: Callable[..., list[Any]] = cast(Any, _cythonize_raw)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATE_FILE = PROJECT_ROOT / "build" / "cython" / "state.json"
@@ -64,7 +69,7 @@ class CompilerConfig:
 
 def _load_pyproject(pyproject: Path) -> dict[str, Any]:
     with pyproject.open("rb") as fh:
-        return tomllib.load(fh)
+        return cast(dict[str, Any], _tomllib.load(fh))
 
 
 def load_config(pyproject: Path) -> tuple[CompilerConfig, list[Target]]:
@@ -233,7 +238,7 @@ def build_single_target(
             extra_compile_args=config.extra_compile_args,
         )
     ]
-    cythonized = cythonize(
+    cythonized: list[Extension] = _cythonize(
         extensions,
         annotate=config.annotate,
         nthreads=config.parallel or 0,
@@ -287,7 +292,7 @@ def compile_targets(
 
         start = time.perf_counter()
         try:
-            result, artifact = build_single_target(target, config)
+            result, _artifact = build_single_target(target, config)
             duration = time.perf_counter() - start
             compiled += 1
             record = {

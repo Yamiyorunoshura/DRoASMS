@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.1] - 2025-11-25
+
+### Fixed
+
+- **Type annotations**: Improved Pyright compatibility in `compile_modules.py`
+  - Added explicit casts for `tomllib` and `cythonize` imports to suppress "partially unknown" warnings
+  - Renamed unused variable `artifact` to `_artifact` for lint compliance
+
+[Compare changes](https://github.com/Yamiyorunoshura/DRoASMS/compare/v2.2.0...v2.2.1)
+
 ## [2.2.0] - 2025-11-25
 
 ### Added
