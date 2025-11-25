@@ -51,6 +51,18 @@ class InvalidTransferError(StateCouncilError):
     """Raised when a transfer operation is invalid."""
 
 
+class BusinessLicenseNotFoundError(StateCouncilError):
+    """Raised when a business license is not found."""
+
+
+class DuplicateLicenseError(StateCouncilError):
+    """Raised when attempting to issue a duplicate active license."""
+
+
+class InvalidLicenseStatusError(StateCouncilError):
+    """Raised when an operation cannot be performed due to license status."""
+
+
 __all__ = [
     "StateCouncilError",
     "StateCouncilNotConfiguredError",
@@ -62,4 +74,7 @@ __all__ = [
     "IdentityNotFoundError",
     "AccountNotFoundError",
     "InvalidTransferError",
+    "BusinessLicenseNotFoundError",
+    "DuplicateLicenseError",
+    "InvalidLicenseStatusError",
 ]

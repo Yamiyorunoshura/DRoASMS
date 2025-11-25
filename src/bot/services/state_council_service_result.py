@@ -13,9 +13,12 @@ from src.bot.services.adjustment_service import AdjustmentService
 from src.bot.services.department_registry import DepartmentRegistry
 from src.bot.services.state_council_errors import (
     AccountNotFoundError,
+    BusinessLicenseNotFoundError,
     DepartmentNotFoundError,
+    DuplicateLicenseError,
     IdentityNotFoundError,
     InsufficientFundsError,
+    InvalidLicenseStatusError,
     InvalidTransferError,
     MonthlyIssuanceLimitExceededError,
     StateCouncilError,
@@ -25,11 +28,14 @@ from src.bot.services.state_council_errors import (
 )
 from src.bot.services.transfer_service import TransferService
 from src.cython_ext.state_council_models import (
+    BusinessLicense,
+    BusinessLicenseListResult,
     DepartmentStats,
     StateCouncilSummary,
     SuspectProfile,
     SuspectReleaseResult,
 )
+from src.db.gateway.business_license import BusinessLicenseGateway
 from src.db.gateway.economy_queries import EconomyQueryGateway
 from src.db.gateway.state_council_governance import (
     CurrencyIssuance,
@@ -47,6 +53,7 @@ from src.db.pool import get_pool
 from src.infra.result import (
     DatabaseError,
     Err,
+    Error,
     Ok,
     Result,
     async_returns_result,
@@ -127,6 +134,7 @@ class StateCouncilServiceResult:
         transfer_service: TransferService | None = None,
         adjustment_service: AdjustmentService | None = None,
         department_registry: DepartmentRegistry | None = None,
+        business_license_gateway: BusinessLicenseGateway | None = None,
     ) -> None:
         # 注意：不要在建構子中即刻觸發資料庫事件圈（event loop）相依物件建立，
         # 以便單元測試能在無 event loop 的情況下建構 service。
@@ -140,6 +148,8 @@ class StateCouncilServiceResult:
         self._economy = EconomyQueryGateway()
         # 政府註冊表
         self._department_registry = department_registry or DepartmentRegistry()
+        # 商業許可 Gateway
+        self._license_gateway = business_license_gateway or BusinessLicenseGateway()
 
     def _get_auto_release_jobs(self, guild_id: int) -> dict[int, Any]:
         """Fetch in-memory auto-release metadata without importing at module load."""
@@ -1148,6 +1158,308 @@ class StateCouncilServiceResult:
                 c, guild_id=guild_id, department_id=department_id
             )
 
+            has_permission = bool(set(user_roles) & {r.role_id for r in department_roles})
+            return Ok(has_permission)
+
+    # --- Business License Management ---
+    @async_returns_result(
+        StateCouncilError,
+        exception_map={
+            DuplicateLicenseError: DuplicateLicenseError,
+            StateCouncilValidationError: StateCouncilValidationError,
+            Exception: DatabaseError,
+        },
+    )
+    async def issue_business_license(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        license_type: str,
+        issued_by: int,
+        expires_at: datetime,
+    ) -> Result[BusinessLicense, Error]:
+        """發放商業許可給指定用戶。
+
+        Args:
+            guild_id: Discord 伺服器 ID
+            user_id: 目標用戶 ID
+            license_type: 許可類型
+            issued_by: 核發人員 ID
+            expires_at: 到期時間
+
+        Returns:
+            Result[BusinessLicense, StateCouncilError]: 成功返回許可記錄
+        """
+        # Validation
+        if not license_type or not license_type.strip():
+            return Err(
+                StateCouncilValidationError(
+                    "License type cannot be empty.",
+                    context={"license_type": license_type},
+                )
+            )
+        if expires_at <= datetime.now(timezone.utc):
+            return Err(
+                StateCouncilValidationError(
+                    "Expiration date must be in the future.",
+                    context={"expires_at": str(expires_at)},
+                )
+            )
+
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
+            result = await self._license_gateway.issue_license(
+                c,
+                guild_id=guild_id,
+                user_id=user_id,
+                license_type=license_type,
+                issued_by=issued_by,
+                expires_at=expires_at,
+            )
+            if isinstance(result, Err):
+                err = result.unwrap_err()
+                # Check for duplicate license error
+                if "already has an active license" in str(err):
+                    return Err(
+                        DuplicateLicenseError(
+                            f"User already has an active {license_type} license.",
+                            context={
+                                "guild_id": guild_id,
+                                "user_id": user_id,
+                                "license_type": license_type,
+                            },
+                        )
+                    )
+                return Err(StateCouncilError(str(err)))
+            return result.value
+
+    @async_returns_result(
+        StateCouncilError,
+        exception_map={
+            BusinessLicenseNotFoundError: BusinessLicenseNotFoundError,
+            InvalidLicenseStatusError: InvalidLicenseStatusError,
+            Exception: DatabaseError,
+        },
+    )
+    async def revoke_business_license(
+        self,
+        *,
+        license_id: str,
+        revoked_by: int,
+        revoke_reason: str,
+    ) -> Result[BusinessLicense, Error]:
+        """撤銷商業許可。
+
+        Args:
+            license_id: 許可 ID (UUID 字串)
+            revoked_by: 撤銷人員 ID
+            revoke_reason: 撤銷原因
+
+        Returns:
+            Result[BusinessLicense, StateCouncilError]: 成功返回更新後的許可記錄
+        """
+        from uuid import UUID
+
+        # Validation
+        if not revoke_reason or not revoke_reason.strip():
+            return Err(
+                StateCouncilValidationError(
+                    "Revoke reason cannot be empty.",
+                    context={"revoke_reason": revoke_reason},
+                )
+            )
+
+        try:
+            uuid_id = UUID(license_id)
+        except (ValueError, TypeError):
+            return Err(
+                StateCouncilValidationError(
+                    "Invalid license ID format.",
+                    context={"license_id": license_id},
+                )
+            )
+
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
+            result = await self._license_gateway.revoke_license(
+                c,
+                license_id=uuid_id,
+                revoked_by=revoked_by,
+                revoke_reason=revoke_reason,
+            )
+            if isinstance(result, Err):
+                err = result.unwrap_err()
+                err_msg = str(err)
+                if "not found" in err_msg.lower():
+                    return Err(
+                        BusinessLicenseNotFoundError(
+                            f"License {license_id} not found.",
+                            context={"license_id": license_id},
+                        )
+                    )
+                if "cannot revoke" in err_msg.lower():
+                    return Err(
+                        InvalidLicenseStatusError(
+                            "Cannot revoke license with non-active status.",
+                            context={"license_id": license_id},
+                        )
+                    )
+                return Err(StateCouncilError(err_msg))
+            return result.value
+
+    @async_returns_result(
+        StateCouncilError,
+        exception_map={
+            Exception: DatabaseError,
+        },
+    )
+    async def list_business_licenses(
+        self,
+        *,
+        guild_id: int,
+        status: str | None = None,
+        license_type: str | None = None,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> Result[BusinessLicenseListResult, Error]:
+        """列出商業許可（支援篩選與分頁）。
+
+        Args:
+            guild_id: Discord 伺服器 ID
+            status: 篩選狀態（active/expired/revoked）
+            license_type: 篩選許可類型
+            page: 頁碼（從 1 開始）
+            page_size: 每頁筆數
+
+        Returns:
+            Result[BusinessLicenseListResult, StateCouncilError]: 許可列表與分頁資訊
+        """
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
+            result = await self._license_gateway.list_licenses(
+                c,
+                guild_id=guild_id,
+                status=status,
+                license_type=license_type,
+                page=page,
+                page_size=page_size,
+            )
+            if isinstance(result, Err):
+                return Err(StateCouncilError(str(result.unwrap_err())))
+            return result.value
+
+    @async_returns_result(
+        StateCouncilError,
+        exception_map={
+            Exception: DatabaseError,
+        },
+    )
+    async def get_user_business_licenses(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+    ) -> Result[Sequence[BusinessLicense], Error]:
+        """取得特定用戶的所有商業許可。
+
+        Args:
+            guild_id: Discord 伺服器 ID
+            user_id: 用戶 ID
+
+        Returns:
+            Result[Sequence[BusinessLicense], StateCouncilError]: 用戶的許可列表
+        """
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
+            result = await self._license_gateway.get_user_licenses(
+                c,
+                guild_id=guild_id,
+                user_id=user_id,
+            )
+            if isinstance(result, Err):
+                return Err(StateCouncilError(str(result.unwrap_err())))
+            return result.value
+
+    @async_returns_result(
+        StateCouncilError,
+        exception_map={
+            Exception: DatabaseError,
+        },
+    )
+    async def check_user_has_license(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        license_type: str,
+    ) -> Result[bool, Error]:
+        """檢查用戶是否擁有特定類型的有效許可。
+
+        Args:
+            guild_id: Discord 伺服器 ID
+            user_id: 用戶 ID
+            license_type: 許可類型
+
+        Returns:
+            Result[bool, StateCouncilError]: True 表示擁有有效許可
+        """
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
+            result = await self._license_gateway.check_active_license(
+                c,
+                guild_id=guild_id,
+                user_id=user_id,
+                license_type=license_type,
+            )
+            if isinstance(result, Err):
+                return Err(StateCouncilError(str(result.unwrap_err())))
+            return result.value
+
+    @async_returns_result(
+        StateCouncilError,
+        exception_map={
+            StateCouncilNotConfiguredError: StateCouncilNotConfiguredError,
+            StateCouncilPermissionDeniedError: StateCouncilPermissionDeniedError,
+            Exception: StateCouncilError,
+        },
+    )
+    async def check_interior_affairs_permission(
+        self, *, guild_id: int, user_id: int, user_roles: Sequence[int]
+    ) -> Result[bool, StateCouncilError]:
+        """檢查用戶是否具備內政部權限（內政部領導人或國務院領袖）。
+
+        Args:
+            guild_id: Discord 伺服器 ID
+            user_id: 用戶 ID
+            user_roles: 用戶的身分組列表
+
+        Returns:
+            Result[bool, StateCouncilError]: True 表示具備權限
+        """
+        # First check if user is state council leader
+        leader_result = await self.check_leader_permission(
+            guild_id=guild_id, user_id=user_id, user_roles=user_roles
+        )
+        if leader_result.is_ok() and leader_result.unwrap():
+            return Ok(True)
+
+        # Check department permission for interior affairs
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
+
+            # Get department roles for interior affairs
+            department_roles = await self._gateway.fetch_department_roles(
+                c, guild_id=guild_id, department_id="interior_affairs"
+            )
+
+            # Check if user has any of the department roles
             has_permission = bool(set(user_roles) & {r.role_id for r in department_roles})
             return Ok(has_permission)
 

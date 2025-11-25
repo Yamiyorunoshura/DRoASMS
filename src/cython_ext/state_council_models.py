@@ -20,6 +20,8 @@ __all__ = [
     "SuspectProfile",
     "Suspect",
     "SuspectReleaseResult",
+    "BusinessLicense",
+    "BusinessLicenseListResult",
 ]
 
 
@@ -257,3 +259,32 @@ class SuspectReleaseResult:
     detention_duration_hours: int | None = None
     reason: str | None = None
     error: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class BusinessLicense:
+    """商業許可資料模型。"""
+
+    license_id: UUID
+    guild_id: int
+    user_id: int
+    license_type: str
+    issued_by: int
+    issued_at: datetime
+    expires_at: datetime
+    status: str  # active, expired, revoked
+    created_at: datetime
+    updated_at: datetime
+    revoked_by: int | None = None
+    revoked_at: datetime | None = None
+    revoke_reason: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class BusinessLicenseListResult:
+    """商業許可列表結果（含分頁資訊）。"""
+
+    licenses: Sequence[BusinessLicense]
+    total_count: int
+    page: int
+    page_size: int

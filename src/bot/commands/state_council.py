@@ -1095,6 +1095,25 @@ class StateCouncilPanelView(discord.ui.View):
             settings_btn.callback = self._welfare_settings_callback
             self.add_item(settings_btn)
 
+            # Business License Management
+            license_issue_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label="發放許可",
+                style=discord.ButtonStyle.primary,
+                custom_id="license_issue",
+                row=2,
+            )
+            license_issue_btn.callback = self._license_issue_callback
+            self.add_item(license_issue_btn)
+
+            license_list_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label="查看許可",
+                style=discord.ButtonStyle.secondary,
+                custom_id="license_list",
+                row=2,
+            )
+            license_list_btn.callback = self._license_list_callback
+            self.add_item(license_list_btn)
+
         elif department == "財政部":
             # Tax collection
             tax_btn: discord.ui.Button[Any] = discord.ui.Button(
@@ -1188,6 +1207,8 @@ class StateCouncilPanelView(discord.ui.View):
             bullets = [
                 "• 發放福利：輸入對象、金額與理由；遵守每月/間隔限制。",
                 "• 福利設定：可配置金額與發放間隔（小時）。",
+                "• 發放許可：向指定用戶發放商業許可，設定許可類型與有效天數。",
+                "• 查看許可：查看所有商業許可列表，支援分頁瀏覽。",
                 "• 部門轉帳：來源自目前頁面，輸入目標/金額/理由。",
                 "• 轉帳給使用者：來源自目前頁面，向指定使用者撥款（含本人）。",
                 "• 稽核：所有發放會被記錄，並可於『匯出資料』內查詢。",
@@ -1430,6 +1451,68 @@ class StateCouncilPanelView(discord.ui.View):
 
         modal = WelfareSettingsModal(self.service, self.guild_id, self.author_id, self.user_roles)
         await send_modal_compat(interaction, modal)
+
+    async def _license_issue_callback(self, interaction: discord.Interaction) -> None:
+        """發放商業許可的回調函數。"""
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+
+        # 檢查內政部權限
+        perm_result = await self.service.check_interior_affairs_permission(
+            guild_id=self.guild_id,
+            user_id=self.author_id,
+            user_roles=self.user_roles,
+        )
+        if perm_result.is_err() or not perm_result.unwrap():
+            await send_message_compat(
+                interaction, content="權限不足：不具備內政部權限", ephemeral=True
+            )
+            return
+
+        modal = BusinessLicenseIssueModal(
+            self.service, self.guild_id, self.author_id, self.user_roles
+        )
+        await send_modal_compat(interaction, modal)
+
+    async def _license_list_callback(self, interaction: discord.Interaction) -> None:
+        """查看商業許可列表的回調函數。"""
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+
+        # 檢查內政部權限
+        perm_result = await self.service.check_interior_affairs_permission(
+            guild_id=self.guild_id,
+            user_id=self.author_id,
+            user_roles=self.user_roles,
+        )
+        if perm_result.is_err() or not perm_result.unwrap():
+            await send_message_compat(
+                interaction, content="權限不足：不具備內政部權限", ephemeral=True
+            )
+            return
+
+        # 取得許可列表並顯示
+        result = await self.service.list_business_licenses(guild_id=self.guild_id, page=1)
+        if result.is_err():
+            await send_message_compat(
+                interaction, content=f"無法取得許可列表：{result.unwrap_err()}", ephemeral=True
+            )
+            return
+
+        license_list = result.unwrap()
+        view = BusinessLicenseListView(
+            service=self.service,
+            guild_id=self.guild_id,
+            author_id=self.author_id,
+            user_roles=self.user_roles,
+            licenses=license_list.licenses,
+            total_count=license_list.total_count,
+            current_page=1,
+        )
+        embed = view.build_embed()
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
 
     async def _tax_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
@@ -4816,6 +4899,255 @@ class JusticeReleaseModal(discord.ui.Modal, title="釋放嫌犯"):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         reason = str(self.reason_input.value).strip() or None
         await self.panel.handle_release(interaction, reason)
+
+
+# --- Business License Management ---
+
+
+class BusinessLicenseIssueModal(discord.ui.Modal, title="發放商業許可"):
+    """發放商業許可的 Modal。"""
+
+    def __init__(
+        self,
+        service: StateCouncilService,
+        guild_id: int,
+        author_id: int,
+        user_roles: list[int],
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.guild_id = guild_id
+        self.author_id = author_id
+        self.user_roles = user_roles
+
+        self.user_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="目標用戶",
+            placeholder="輸入 @使用者 或使用者ID",
+            required=True,
+            style=discord.TextStyle.short,
+        )
+        self.license_type_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="許可類型",
+            placeholder="例如：一般商業許可、特殊經營許可",
+            required=True,
+            style=discord.TextStyle.short,
+        )
+        self.expires_days_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="有效天數",
+            placeholder="輸入有效天數（數字，例如 365）",
+            required=True,
+            style=discord.TextStyle.short,
+        )
+        self.add_item(self.user_input)
+        self.add_item(self.license_type_input)
+        self.add_item(self.expires_days_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        try:
+            user_input = str(self.user_input.value)
+            license_type = str(self.license_type_input.value).strip()
+            expires_days = int(str(self.expires_days_input.value))
+
+            # Parse user ID
+            if user_input.startswith("<@") and user_input.endswith(">"):
+                target_user_id = int(user_input[2:-1].replace("!", ""))
+            else:
+                target_user_id = int(user_input)
+
+            if expires_days <= 0:
+                await send_message_compat(
+                    interaction, content="❌ 有效天數必須大於 0", ephemeral=True
+                )
+                return
+
+            expires_at = datetime.now(timezone.utc) + timedelta(days=expires_days)
+
+            # Issue license (call service method)
+            result = await self.service.issue_business_license(
+                guild_id=self.guild_id,
+                user_id=target_user_id,
+                license_type=license_type,
+                issued_by=self.author_id,
+                expires_at=expires_at,
+            )
+
+            if result.is_err():
+                await send_message_compat(
+                    interaction,
+                    content=f"❌ 發放許可失敗：{result.unwrap_err()}",
+                    ephemeral=True,
+                )
+                return
+
+            license_data = result.unwrap()
+            await send_message_compat(
+                interaction,
+                content=(
+                    f"✅ 商業許可發放成功！\n"
+                    f"許可 ID：`{license_data.license_id}`\n"
+                    f"目標用戶：<@{target_user_id}>\n"
+                    f"許可類型：{license_type}\n"
+                    f"有效期至：{expires_at.strftime('%Y-%m-%d')}"
+                ),
+                ephemeral=True,
+            )
+
+        except ValueError:
+            await send_message_compat(
+                interaction, content="❌ 輸入格式錯誤，請檢查用戶ID和天數", ephemeral=True
+            )
+        except Exception as e:
+            LOGGER.exception("Business license issue failed", error=str(e))
+            await send_message_compat(
+                interaction,
+                content=ErrorMessageTemplates.system_error("許可發放失敗"),
+                ephemeral=True,
+            )
+
+
+class BusinessLicenseListView(discord.ui.View):
+    """商業許可列表的 View，支援分頁和撤銷功能。"""
+
+    def __init__(
+        self,
+        service: StateCouncilService,
+        guild_id: int,
+        author_id: int,
+        user_roles: list[int],
+        licenses: Any,
+        total_count: int,
+        current_page: int = 1,
+        page_size: int = 10,
+    ) -> None:
+        super().__init__(timeout=300)
+        self.service = service
+        self.guild_id = guild_id
+        self.author_id = author_id
+        self.user_roles = user_roles
+        self.licenses = licenses
+        self.total_count = total_count
+        self.current_page = current_page
+        self.page_size = page_size
+        self.selected_license_id: str | None = None
+
+        self._build_buttons()
+
+    def _build_buttons(self) -> None:
+        """建立分頁按鈕和撤銷按鈕。"""
+        # Previous page button
+        prev_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="上一頁",
+            style=discord.ButtonStyle.secondary,
+            disabled=self.current_page <= 1,
+            row=0,
+        )
+        prev_btn.callback = self._prev_page_callback
+        self.add_item(prev_btn)
+
+        # Page indicator
+        total_pages = max(1, (self.total_count + self.page_size - 1) // self.page_size)
+        page_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label=f"{self.current_page}/{total_pages}",
+            style=discord.ButtonStyle.secondary,
+            disabled=True,
+            row=0,
+        )
+        self.add_item(page_btn)
+
+        # Next page button
+        next_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="下一頁",
+            style=discord.ButtonStyle.secondary,
+            disabled=self.current_page * self.page_size >= self.total_count,
+            row=0,
+        )
+        next_btn.callback = self._next_page_callback
+        self.add_item(next_btn)
+
+        # Refresh button
+        refresh_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="🔄 重整",
+            style=discord.ButtonStyle.primary,
+            row=0,
+        )
+        refresh_btn.callback = self._refresh_callback
+        self.add_item(refresh_btn)
+
+    def build_embed(self) -> discord.Embed:
+        """建立許可列表的 Embed。"""
+        embed = discord.Embed(
+            title="📋 商業許可列表",
+            color=0x3498DB,
+        )
+
+        if not self.licenses:
+            embed.description = "目前沒有商業許可記錄。"
+            return embed
+
+        lines: list[str] = []
+        for lic in self.licenses:
+            status_emoji = {"active": "✅", "expired": "⏰", "revoked": "❌"}.get(lic.status, "❓")
+            lines.append(
+                f"{status_emoji} **<@{lic.user_id}>**\n"
+                f"　類型：{lic.license_type}\n"
+                f"　核發：{lic.issued_at.strftime('%Y-%m-%d')}\n"
+                f"　到期：{lic.expires_at.strftime('%Y-%m-%d')}\n"
+                f"　ID：`{lic.license_id}`"
+            )
+
+        embed.description = "\n\n".join(lines)
+        embed.set_footer(text=f"共 {self.total_count} 筆記錄")
+        return embed
+
+    async def _prev_page_callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+
+        self.current_page -= 1
+        await self._refresh_list(interaction)
+
+    async def _next_page_callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+
+        self.current_page += 1
+        await self._refresh_list(interaction)
+
+    async def _refresh_callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+
+        await self._refresh_list(interaction)
+
+    async def _refresh_list(self, interaction: discord.Interaction) -> None:
+        result = await self.service.list_business_licenses(
+            guild_id=self.guild_id,
+            page=self.current_page,
+            page_size=self.page_size,
+        )
+        if result.is_err():
+            await send_message_compat(
+                interaction,
+                content=f"❌ 無法取得許可列表：{result.unwrap_err()}",
+                ephemeral=True,
+            )
+            return
+
+        license_list = result.unwrap()
+        self.licenses = license_list.licenses
+        self.total_count = license_list.total_count
+
+        # Rebuild the view
+        self.clear_items()
+        self._build_buttons()
+
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
 
 
 # --- Background Scheduler Integration ---

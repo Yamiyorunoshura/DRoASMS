@@ -18,11 +18,14 @@ from src.bot.services.transfer_service import (
     TransferService,
 )
 from src.cython_ext.state_council_models import (
+    BusinessLicense,
+    BusinessLicenseListResult,
     DepartmentStats,
     StateCouncilSummary,
     SuspectProfile,
     SuspectReleaseResult,
 )
+from src.db.gateway.business_license import BusinessLicenseGateway
 from src.db.gateway.economy_queries import EconomyQueryGateway
 from src.db.gateway.state_council_governance import (
     CurrencyIssuance,
@@ -37,6 +40,7 @@ from src.db.gateway.state_council_governance import (
     WelfareDisbursement,
 )
 from src.db.pool import get_pool
+from src.infra.result import Err, Ok, Result
 from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
@@ -129,6 +133,7 @@ class StateCouncilService:
         transfer_service: TransferService | None = None,
         adjustment_service: AdjustmentService | None = None,
         department_registry: DepartmentRegistry | None = None,
+        business_license_gateway: BusinessLicenseGateway | None = None,
     ) -> None:
         # 注意：不要在建構子中即刻觸發資料庫事件圈（event loop）相依物件建立，
         # 以便單元測試能在無 event loop 的情況下建構 service。
@@ -142,6 +147,8 @@ class StateCouncilService:
         self._economy = EconomyQueryGateway()
         # 政府註冊表
         self._department_registry = department_registry or DepartmentRegistry()
+        # 商業許可 Gateway
+        self._license_gateway = business_license_gateway or BusinessLicenseGateway()
 
     def _get_auto_release_jobs(self, guild_id: int) -> dict[int, Any]:
         """Fetch in-memory auto-release metadata without importing at module load."""
@@ -2673,6 +2680,126 @@ class StateCouncilService:
             }
             for dept in self._department_registry.list_all()
         ]
+
+    # --- Business License Management ---
+    async def issue_business_license(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        license_type: str,
+        issued_by: int,
+        expires_at: datetime,
+    ) -> Result[BusinessLicense, str]:
+        """發放商業許可給指定用戶。
+
+        Args:
+            guild_id: Discord 伺服器 ID
+            user_id: 目標用戶 ID
+            license_type: 許可類型
+            issued_by: 核發人員 ID
+            expires_at: 到期時間
+
+        Returns:
+            Result[BusinessLicense, str]: 成功返回許可記錄
+        """
+        try:
+            # Validation
+            if not license_type or not license_type.strip():
+                return Err("License type cannot be empty.")
+            if expires_at <= datetime.now(timezone.utc):
+                return Err("Expiration date must be in the future.")
+
+            pool: PoolProtocol = cast(PoolProtocol, get_pool())
+            cm = await self._pool_acquire_cm(pool)
+            async with cm as conn:
+                result = await self._license_gateway.issue_license(
+                    conn,
+                    guild_id=guild_id,
+                    user_id=user_id,
+                    license_type=license_type,
+                    issued_by=issued_by,
+                    expires_at=expires_at,
+                )
+                if isinstance(result, Err):
+                    err_msg = str(result.unwrap_err())
+                    if "already has an active license" in err_msg:
+                        return Err(f"User already has an active {license_type} license.")
+                    return Err(err_msg)
+                return Ok(result.value)  # type: ignore[arg-type]
+        except Exception as exc:
+            return Err(str(exc))
+
+    async def check_interior_affairs_permission(
+        self, *, guild_id: int, user_id: int, user_roles: Sequence[int]
+    ) -> Result[bool, str]:
+        """檢查用戶是否具備內政部權限（內政部領導人或國務院領袖）。
+
+        Args:
+            guild_id: Discord 伺服器 ID
+            user_id: 用戶 ID
+            user_roles: 用戶的身分組列表
+
+        Returns:
+            Result[bool, str]: True 表示具備權限
+        """
+        try:
+            # First check if user is state council leader
+            is_leader = await self.check_leader_permission(
+                guild_id=guild_id, user_id=user_id, user_roles=user_roles
+            )
+            if is_leader:
+                return Ok(True)
+
+            # Check department permission for interior affairs (內政部)
+            has_dept_perm = await self.check_department_permission(
+                guild_id=guild_id,
+                user_id=user_id,
+                department="內政部",
+                user_roles=user_roles,
+            )
+            return Ok(has_dept_perm)
+        except Exception as exc:
+            return Err(str(exc))
+
+    async def list_business_licenses(
+        self,
+        *,
+        guild_id: int,
+        status: str | None = None,
+        license_type: str | None = None,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> Result[BusinessLicenseListResult, str]:
+        """列出商業許可（支援篩選與分頁）。
+
+        Args:
+            guild_id: Discord 伺服器 ID
+            status: 篩選狀態（active/expired/revoked）
+            license_type: 篩選許可類型
+            page: 頁碼（從 1 開始）
+            page_size: 每頁筆數
+
+        Returns:
+            Result[BusinessLicenseListResult, str]: 許可列表與分頁資訊
+        """
+        try:
+            pool: PoolProtocol = cast(PoolProtocol, get_pool())
+            cm = await self._pool_acquire_cm(pool)
+            async with cm as conn:
+                result = await self._license_gateway.list_licenses(
+                    conn,
+                    guild_id=guild_id,
+                    status=status,
+                    license_type=license_type,
+                    page=page,
+                    page_size=page_size,
+                )
+                if isinstance(result, Err):
+                    return Err(str(result.unwrap_err()))
+                return Ok(result.value)  # type: ignore[arg-type]
+        except Exception as exc:
+            return Err(str(exc))
 
 
 __all__ = [

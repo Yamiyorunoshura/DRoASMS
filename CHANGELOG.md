@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2025-11-25
+
+### Added
+
+- **Interior Business Licensing System**: Complete business license management for State Council Interior Department
+  - New database migrations: `046_add_business_licenses.py` and `047_business_license_functions.py`
+  - New SQL functions: `fn_business_licenses.sql` for license application, approval, revocation, and queries
+  - New `BusinessLicenseGateway` class with full CRUD operations returning `Result<T,E>`
+  - Extended `StateCouncilService` with business license management methods
+  - Added permission checks for Interior Department leadership and State Council leaders
+- **UI Panel Updates**: Interior Department tab with business license management features
+  - License application modal (target user, license type, validity period)
+  - Authorized users paginated list view
+  - License revocation functionality
+- **Test Coverage**: Comprehensive tests for business licensing
+  - SQL function unit tests (`test_fn_business_license.sql`)
+  - Gateway layer tests
+  - Service layer tests
+  - Panel contract tests
+
+### Changed
+
+- Updated `state_council.py` commands with business license management subcommands
+- Extended `state_council_errors.py` with business license error types
+- Extended `state_council_service_result.py` with business license result types
+- Updated `state_council_models.py` with business license data models
+- Updated specs: `state-council-governance` and `state-council-panel`
+
+[Compare changes](https://github.com/Yamiyorunoshura/DRoASMS/compare/v2.0.1...v2.1.0)
+
 ## [2.0.1] - 2025-11-25
 
 ### Fixed
