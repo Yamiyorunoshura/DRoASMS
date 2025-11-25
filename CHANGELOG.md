@@ -7,11 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-<<<<<<< HEAD
-=======
 ## [2.0.1] - 2025-11-25
 
->>>>>>> 4fad6a5 (chore(release): v2.0.0)
 ### Fixed
 
 - Improved test coverage for slash commands with comprehensive test fixtures and extended test suites
