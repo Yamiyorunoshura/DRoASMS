@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2025-11-25
+
+### Added
+
+- **Administrative Management Panel**: New dedicated panel for State Council department configuration
+  - New `AdministrativeManagementView` class with ephemeral embed message
+  - Displays current department leader role configuration status for all 5 departments
+  - Department selector dropdown for choosing configuration target
+  - Role selector dropdown for setting department leader role
+  - Real-time refresh via `department_config_updated` event subscription
+  - Permission-gated: Only State Council leaders can access
+- **Unit Test Coverage**: Comprehensive test suite `test_administrative_management_panel.py`
+  - Tests for view initialization and component validation
+  - Tests for department selection and role configuration
+  - Tests for real-time event handling and permission boundaries
+
+### Changed
+
+- **State Council Panel Refactor**: Removed inline department leader configuration UI from overview page
+  - Removed `config_target_department` attribute from `StateCouncilPanelView`
+  - Removed department selector and role selector from `_add_overview_actions`
+  - Added "行政管理" button triggering the new dedicated panel
+- **State Council Events**: Extended `StateCouncilEvent` with `department_config_updated` event kind
+
+[Compare changes](https://github.com/Yamiyorunoshura/DRoASMS/compare/v2.1.1...v2.2.0)
+
 ## [2.1.1] - 2025-11-25
 
 ### Fixed

@@ -40,6 +40,8 @@ from src.db.gateway.state_council_governance import (
     WelfareDisbursement,
 )
 from src.db.pool import get_pool
+from src.infra.events.state_council_events import StateCouncilEvent
+from src.infra.events.state_council_events import publish as publish_state_council_event
 from src.infra.result import Err, Ok, Result
 from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
@@ -1300,9 +1302,29 @@ class StateCouncilService:
         pool: PoolProtocol = cast(PoolProtocol, get_pool())
         cm = await self._pool_acquire_cm(pool)
         async with cm as conn:
-            return await self._gateway.upsert_department_config(
+            result = await self._gateway.upsert_department_config(
                 conn, guild_id=guild_id, department=department, **kwargs
             )
+
+        # 發布部門配置變更事件
+        try:
+            await publish_state_council_event(
+                StateCouncilEvent(
+                    guild_id=guild_id,
+                    kind="department_config_updated",
+                    departments=(department,),
+                    cause="department_config_update",
+                )
+            )
+        except Exception as exc:
+            LOGGER.warning(
+                "state_council.update_department_config.publish_event_failed",
+                guild_id=guild_id,
+                department=department,
+                error=str(exc),
+            )
+
+        return result
 
     # 契約相容：提供 set_department_config 別名（不做權限檢查），
     # 參數名稱以合約測試為準，做對應轉換到 gateway 的 upsert_department_config。

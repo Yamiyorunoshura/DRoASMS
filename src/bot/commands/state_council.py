@@ -693,8 +693,6 @@ class StateCouncilPanelView(discord.ui.View):
         self.current_page = "總覽"
         self.departments = ["內政部", "財政部", "國土安全部", "中央銀行", "法務部"]
         self._last_allowed_departments: list[str] = []
-        # 供總覽頁設定部門領導用之選擇狀態
-        self.config_target_department: str | None = None
 
     async def bind_message(self, message: discord.Message) -> None:
         """綁定訊息並訂閱經濟事件，以便面板即時刷新。"""
@@ -957,97 +955,15 @@ class StateCouncilPanelView(discord.ui.View):
             export_btn.callback = self._export_callback
             self.add_item(export_btn)
 
-            # 領導人專屬：設定各部門領導身分組
-            # 以「選擇要設定的部門」+「RoleSelect 指定身分組」實作
-            class _DeptSelect(discord.ui.Select[Any]):
-                pass
-
-            dept_options = [
-                discord.SelectOption(label=dept, value=dept) for dept in self.departments
-            ]
-            dept_select = _DeptSelect(
-                placeholder="選擇要設定領導的部門…",
-                options=dept_options,
-                min_values=1,
-                max_values=1,
-                row=2,
+            # 行政管理按鈕 - 開啟專用面板設定各部門領導身分組
+            admin_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label="行政管理",
+                style=discord.ButtonStyle.primary,
+                custom_id="admin_panel",
+                row=1,
             )
-
-            async def _on_dept_select(interaction: discord.Interaction) -> None:
-                if interaction.user.id != self.author_id:
-                    await send_message_compat(
-                        interaction, content="僅限面板開啟者操作。", ephemeral=True
-                    )
-                    return
-                self.config_target_department = (
-                    dept_select.values[0] if dept_select.values else None
-                )
-                # 僅更新元件（避免洗掉已選值）
-                await edit_message_compat(interaction, view=self)
-
-            dept_select.callback = _on_dept_select
-            self.add_item(dept_select)
-
-            # 角色挑選（僅在選擇了部門之後使用 callback 保存）
-            # 使用 discord.ui.RoleSelect 讓操作者直接從伺服器身分組中挑選
-            class _RolePicker(discord.ui.RoleSelect[Any]):
-                pass
-
-            role_picker = _RolePicker(
-                placeholder="挑選該部門的領導人身分組…",
-                min_values=0,
-                max_values=1,
-                row=3,
-            )
-
-            async def _on_role_pick(interaction: discord.Interaction) -> None:
-                if interaction.user.id != self.author_id:
-                    await send_message_compat(
-                        interaction, content="僅限面板開啟者操作。", ephemeral=True
-                    )
-                    return
-                if not self.config_target_department:
-                    await send_message_compat(
-                        interaction, content="請先選擇要設定的部門。", ephemeral=True
-                    )
-                    return
-                role: discord.Role | None = role_picker.values[0] if role_picker.values else None
-                role_id = getattr(role, "id", None)
-                try:
-                    await self.service.update_department_config(
-                        guild_id=self.guild_id,
-                        department=self.config_target_department,
-                        user_id=self.author_id,
-                        user_roles=self.user_roles,
-                        role_id=role_id,
-                    )
-                except PermissionDeniedError:
-                    await send_message_compat(
-                        interaction,
-                        content="沒有權限設定部門領導。",
-                        ephemeral=True,
-                    )
-                    return
-                except Exception as exc:
-                    LOGGER.exception("state_council.panel.set_leader_role.error", error=str(exc))
-                    await send_message_compat(
-                        interaction,
-                        content="設定失敗，請稍後再試。",
-                        ephemeral=True,
-                    )
-                    return
-
-                await send_message_compat(
-                    interaction,
-                    content=(
-                        f"已更新 {self.config_target_department} 領導人身分組為"
-                        f" {role.mention if role else '未設定'}。"
-                    ),
-                    ephemeral=True,
-                )
-
-            role_picker.callback = _on_role_pick
-            self.add_item(role_picker)
+            admin_btn.callback = self._admin_panel_callback
+            self.add_item(admin_btn)
 
     async def _add_department_actions(self) -> None:
         department = self.current_page
@@ -1426,6 +1342,39 @@ class StateCouncilPanelView(discord.ui.View):
         except Exception:
             pass
 
+    async def _admin_panel_callback(self, interaction: discord.Interaction) -> None:
+        """開啟行政管理面板。"""
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+
+        if not self.is_leader:
+            await send_message_compat(
+                interaction, content="僅限國務院領袖可使用行政管理功能。", ephemeral=True
+            )
+            return
+
+        # 創建並發送行政管理面板
+        view = AdministrativeManagementView(
+            service=self.service,
+            guild=self.guild,
+            guild_id=self.guild_id,
+            author_id=self.author_id,
+            user_roles=self.user_roles,
+        )
+        embed = await view.build_embed()
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        try:
+            message = await interaction.original_response()
+            await view.bind_message(message)
+        except Exception as exc:
+            LOGGER.warning(
+                "state_council.admin_panel.bind_failed",
+                guild_id=self.guild_id,
+                user_id=self.author_id,
+                error=str(exc),
+            )
+
     async def _export_callback(self, interaction: discord.Interaction) -> None:
         if interaction.user.id != self.author_id:
             await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
@@ -1716,6 +1665,259 @@ class StateCouncilPanelView(discord.ui.View):
 
         modal = CurrencySettingsModal(self.service, self.guild_id, self.author_id, self.user_roles)
         await send_modal_compat(interaction, modal)
+
+
+# --- Administrative Management Panel ---
+
+
+class AdministrativeManagementView(discord.ui.View):
+    """行政管理面板，用於設定各部門領導人身分組。"""
+
+    DEPARTMENTS = ["內政部", "財政部", "國土安全部", "中央銀行", "法務部"]
+
+    def __init__(
+        self,
+        *,
+        service: StateCouncilService,
+        guild: discord.Guild,
+        guild_id: int,
+        author_id: int,
+        user_roles: Sequence[int],
+    ) -> None:
+        super().__init__(timeout=300)  # 5 分鐘超時
+        self.service = service
+        self.guild = guild
+        self.guild_id = guild_id
+        self.author_id = author_id
+        self.user_roles = list(user_roles)
+        self.message: discord.Message | None = None
+        self._unsubscribe: Callable[[], Awaitable[None]] | None = None
+        self._update_lock = asyncio.Lock()
+        # 當前選擇的部門
+        self.selected_department: str | None = None
+        # 初始化 UI 元件
+        self._setup_components()
+
+    def _setup_components(self) -> None:
+        """設定 UI 元件。"""
+        self.clear_items()
+
+        # 部門選擇下拉選單
+        dept_options = [discord.SelectOption(label=dept, value=dept) for dept in self.DEPARTMENTS]
+        self._dept_select: discord.ui.Select[Any] = discord.ui.Select(
+            placeholder="選擇要設定的部門…",
+            options=dept_options,
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+        self._dept_select.callback = self._on_department_select
+        self.add_item(self._dept_select)
+
+        # 領導人身分組選擇下拉選單
+        self._role_select: discord.ui.RoleSelect[Any] = discord.ui.RoleSelect(
+            placeholder="選擇該部門的領導人身分組…",
+            min_values=0,
+            max_values=1,
+            row=1,
+        )
+        self._role_select.callback = self._on_role_select
+        self.add_item(self._role_select)
+
+    async def _on_department_select(self, interaction: discord.Interaction) -> None:
+        """處理部門選擇。"""
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+
+        self.selected_department = self._dept_select.values[0] if self._dept_select.values else None
+        # 僅更新元件狀態（避免洗掉已選值）
+        await edit_message_compat(interaction, view=self)
+
+    async def _on_role_select(self, interaction: discord.Interaction) -> None:
+        """處理領導人身分組選擇並儲存設定。"""
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+
+        if not self.selected_department:
+            await send_message_compat(interaction, content="請先選擇要設定的部門。", ephemeral=True)
+            return
+
+        role: discord.Role | None = (
+            self._role_select.values[0] if self._role_select.values else None
+        )
+        role_id = getattr(role, "id", None)
+
+        try:
+            await self.service.update_department_config(
+                guild_id=self.guild_id,
+                department=self.selected_department,
+                user_id=self.author_id,
+                user_roles=self.user_roles,
+                role_id=role_id,
+            )
+        except PermissionDeniedError:
+            await send_message_compat(
+                interaction,
+                content="沒有權限設定部門領導。",
+                ephemeral=True,
+            )
+            return
+        except Exception as exc:
+            LOGGER.exception("state_council.admin_panel.set_leader_role.error", error=str(exc))
+            await send_message_compat(
+                interaction,
+                content="設定失敗，請稍後再試。",
+                ephemeral=True,
+            )
+            return
+
+        # 顯示成功訊息並刷新面板
+        role_display = role.mention if role else "未設定"
+        await send_message_compat(
+            interaction,
+            content=f"已更新 {self.selected_department} 領導人身分組為 {role_display}。",
+            ephemeral=True,
+        )
+
+        # 刷新嵌入訊息
+        await self._refresh_embed()
+
+    async def build_embed(self) -> discord.Embed:
+        """構建顯示所有部門領導人狀態的嵌入訊息。"""
+        embed = discord.Embed(
+            title="🏛️ 行政管理",
+            description="管理各部門領導人身分組設定",
+            color=discord.Color.blue(),
+        )
+
+        # 獲取所有部門配置
+        try:
+            configs = await self.service.fetch_department_configs(guild_id=self.guild_id)
+            # 建立部門到配置的映射
+            config_map: dict[str, Any] = {cfg.department: cfg for cfg in configs}
+        except Exception as exc:
+            LOGGER.warning(
+                "state_council.admin_panel.fetch_configs.error",
+                guild_id=self.guild_id,
+                error=str(exc),
+            )
+            config_map = {}
+
+        # 顯示各部門領導人狀態
+        status_lines: list[str] = []
+        for dept in self.DEPARTMENTS:
+            cfg = config_map.get(dept)
+            if cfg and cfg.role_id:
+                # 嘗試獲取身分組名稱
+                role = self.guild.get_role(cfg.role_id)
+                if role:
+                    status_lines.append(f"**{dept}**：{role.mention}")
+                else:
+                    status_lines.append(f"**{dept}**：<@&{cfg.role_id}>（身分組已刪除）")
+            else:
+                status_lines.append(f"**{dept}**：未設定")
+
+        embed.add_field(
+            name="📋 部門領導人設定狀態",
+            value="\n".join(status_lines),
+            inline=False,
+        )
+
+        embed.set_footer(text="選擇部門後，再選擇對應的領導人身分組")
+        return embed
+
+    async def _refresh_embed(self) -> None:
+        """刷新嵌入訊息內容。"""
+        if self.message is None:
+            return
+
+        async with self._update_lock:
+            try:
+                embed = await self.build_embed()
+                await self.message.edit(embed=embed, view=self)
+            except Exception as exc:
+                LOGGER.warning(
+                    "state_council.admin_panel.refresh.error",
+                    guild_id=self.guild_id,
+                    error=str(exc),
+                )
+
+    async def bind_message(self, message: discord.Message) -> None:
+        """綁定訊息並訂閱 State Council 事件，以便面板即時刷新。"""
+        if self.message is not None:
+            return
+        self.message = message
+
+        try:
+            self._unsubscribe = await subscribe_state_council_events(
+                self.guild_id, self._handle_event
+            )
+            LOGGER.info(
+                "state_council.admin_panel.subscribe",
+                guild_id=self.guild_id,
+                message_id=getattr(message, "id", None),
+            )
+        except Exception as exc:
+            self._unsubscribe = None
+            LOGGER.warning(
+                "state_council.admin_panel.subscribe_failed",
+                guild_id=self.guild_id,
+                error=str(exc),
+            )
+
+    async def _handle_event(self, event: StateCouncilEvent) -> None:
+        """處理 State Council 事件。"""
+        if event.guild_id != self.guild_id:
+            return
+        if self.message is None:
+            return
+        # 當收到部門配置變更事件時刷新面板
+        if event.kind == "department_config_updated":
+            await self._refresh_embed()
+
+    async def _cleanup_subscription(self) -> None:
+        """清理事件訂閱。"""
+        if self._unsubscribe is None:
+            self.message = None
+            return
+
+        unsubscribe = self._unsubscribe
+        self._unsubscribe = None
+        try:
+            await unsubscribe()
+            LOGGER.info(
+                "state_council.admin_panel.unsubscribe",
+                guild_id=self.guild_id,
+                message_id=getattr(self.message, "id", None),
+            )
+        except Exception as exc:
+            LOGGER.warning(
+                "state_council.admin_panel.unsubscribe_failed",
+                guild_id=self.guild_id,
+                error=str(exc),
+            )
+        finally:
+            self.message = None
+
+    async def on_timeout(self) -> None:
+        """處理超時。"""
+        await self._cleanup_subscription()
+        await super().on_timeout()
+
+    def stop(self) -> None:
+        """停止 View 並清理資源。"""
+        if self._unsubscribe is not None:
+            try:
+                asyncio.create_task(self._cleanup_subscription())
+            except RuntimeError:
+                # 測試環境沒有 running loop 時嘗試同步清理
+                try:
+                    asyncio.run(self._cleanup_subscription())
+                except Exception:
+                    pass
+        super().stop()
 
 
 # --- Modal Implementations ---

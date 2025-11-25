@@ -8,8 +8,8 @@ import structlog
 
 LOGGER = structlog.get_logger(__name__)
 
-# 事件種類：目前聚焦於「因經濟事件導致部門餘額可能變動」
-StateCouncilEventKind = Literal["department_balance_changed"]
+# 事件種類：部門餘額變動、部門配置變更
+StateCouncilEventKind = Literal["department_balance_changed", "department_config_updated"]
 
 
 @dataclass(frozen=True, slots=True)
