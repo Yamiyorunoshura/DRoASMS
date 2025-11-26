@@ -5399,7 +5399,9 @@ class ApplicationManagementView(discord.ui.View):
                 custom_id=f"approve_{app_type}_{app.id}",
                 row=1 + i,
             )
-            approve_btn.callback = self._make_approve_callback(app_type, app.id)
+            approve_btn.callback = self._make_approve_callback(
+                app_type, app.id
+            )  # pyright: ignore[reportAttributeAccessIssue]
             self.add_item(approve_btn)
 
             # 拒絕按鈕
@@ -5409,7 +5411,9 @@ class ApplicationManagementView(discord.ui.View):
                 custom_id=f"reject_{app_type}_{app.id}",
                 row=1 + i,
             )
-            reject_btn.callback = self._make_reject_callback(app_type, app.id)
+            reject_btn.callback = self._make_reject_callback(
+                app_type, app.id
+            )  # pyright: ignore[reportAttributeAccessIssue]
             self.add_item(reject_btn)
 
     def build_embed(self) -> discord.Embed:

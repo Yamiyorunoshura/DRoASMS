@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.2] - 2025-11-26
+
+### Added
+
+- **Pyright Pre-commit Hook**：
+  - 在 `.pre-commit-config.yaml` 新增 pyright 型別檢查 hook
+  - 使用 `uv run pyright` 執行檢查，確保與專案環境一致
+  - 檢查範圍與 mypy 一致（`src/` 目錄，排除 migrations）
+  - 所有程式碼提交前必須同時通過 mypy 和 pyright 型別檢查
+
+[Compare changes](https://github.com/Yamiyorunoshura/DRoASMS/compare/v3.1.1...v3.1.2)
+
 ## [3.1.1] - 2025-11-26
 
 ### Fixed

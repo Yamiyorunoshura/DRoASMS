@@ -29,3 +29,14 @@ repos:
         args: ["--config-file=pyproject.toml"]
         files: ^src/
         exclude: ^src/db/migrations/versions/
+
+  - repo: local
+    hooks:
+      - id: pyright
+        name: pyright
+        entry: uv run pyright
+        language: system
+        types: [python]
+        files: ^src/
+        exclude: ^src/db/migrations/
+        pass_filenames: false
