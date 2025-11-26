@@ -415,7 +415,10 @@ class TestStateCouncilService:
 
             # Mock economy service to return the expected balance
             econ = AsyncMock()
-            econ.fetch_balance.return_value = MagicMock(balance=sample_account.balance)
+            # Use spec to avoid MagicMock having is_err attribute (which confuses Result detection)
+            balance_record = MagicMock(spec=["balance"])
+            balance_record.balance = sample_account.balance
+            econ.fetch_balance_snapshot.return_value = balance_record
             service._economy = econ
 
             balance = await service.get_department_balance(
@@ -440,7 +443,7 @@ class TestStateCouncilService:
 
             # Mock economy service to raise exception (fallback to governance record, which doesn't exist)
             econ = AsyncMock()
-            econ.fetch_balance.side_effect = Exception("Account not found")
+            econ.fetch_balance_snapshot.side_effect = Exception("Account not found")
             service._economy = econ
 
             balance = await service.get_department_balance(
@@ -567,7 +570,9 @@ class TestStateCouncilService:
 
             # 模擬經濟帳本餘額只有 100（不足 1000）
             econ = AsyncMock()
-            econ.fetch_balance.return_value = MagicMock(balance=100)
+            balance_record = MagicMock(spec=["balance"])
+            balance_record.balance = 100
+            econ.fetch_balance_snapshot.return_value = balance_record
             service._economy = econ
 
             # 注入可觀察的 adjustment 物件
@@ -760,7 +765,9 @@ class TestStateCouncilService:
             cast(AsyncMock, service._transfer.transfer_currency).return_value = tx_result
 
             econ = AsyncMock()
-            econ.fetch_balance.return_value = MagicMock(balance=5000)
+            balance_record = MagicMock(spec=["balance"])
+            balance_record.balance = 5000
+            econ.fetch_balance_snapshot.return_value = balance_record
             service._economy = econ
 
             with patch.object(service, "check_department_permission", return_value=True):
@@ -803,9 +810,9 @@ class TestStateCouncilService:
             gw.fetch_government_accounts.return_value = [dept_account]
 
             # 模擬 DB 層不足錯誤 → 服務層應轉換為 InsufficientFundsError
-            cast(AsyncMock, service._transfer.transfer_currency).side_effect = (
-                InsufficientBalanceError("Transfer denied: insufficient funds")
-            )
+            cast(
+                AsyncMock, service._transfer.transfer_currency
+            ).side_effect = InsufficientBalanceError("Transfer denied: insufficient funds")
 
             with patch.object(service, "check_department_permission", return_value=True):
                 with pytest.raises(InsufficientFundsError):
@@ -845,7 +852,9 @@ class TestStateCouncilService:
 
             # 經濟帳本只有 200，不足 1000
             econ = AsyncMock()
-            econ.fetch_balance.return_value = MagicMock(balance=200)
+            balance_record = MagicMock(spec=["balance"])
+            balance_record.balance = 200
+            econ.fetch_balance_snapshot.return_value = balance_record
             service._economy = econ
 
             # 注入調整器以觀察被呼叫
@@ -1225,12 +1234,19 @@ class TestStateCouncilService:
 
             # Mock 經濟系統查詢（為缺失的帳戶返回餘額）
             econ = AsyncMock()
-            econ.fetch_balance.side_effect = [
-                MagicMock(balance=1000),  # 內政部（已存在，檢查餘額同步）
-                MagicMock(balance=2500),  # 財政部（缺失，建立時使用）
-                MagicMock(balance=3000),  # 國土安全部（已存在，檢查餘額同步）
-                MagicMock(balance=4500),  # 中央銀行（缺失，建立時使用）
-                MagicMock(balance=5000),  # 法務部（已存在，檢查餘額同步）
+
+            # Use spec to avoid MagicMock having is_err attribute
+            def make_balance_record(bal: int) -> MagicMock:
+                rec = MagicMock(spec=["balance"])
+                rec.balance = bal
+                return rec
+
+            econ.fetch_balance_snapshot.side_effect = [
+                make_balance_record(1000),  # 內政部（已存在，檢查餘額同步）
+                make_balance_record(2500),  # 財政部（缺失，建立時使用）
+                make_balance_record(3000),  # 國土安全部（已存在，檢查餘額同步）
+                make_balance_record(4500),  # 中央銀行（缺失，建立時使用）
+                make_balance_record(5000),  # 法務部（已存在，檢查餘額同步）
             ]
             service._economy = econ
 
@@ -1310,7 +1326,9 @@ class TestStateCouncilService:
 
             # Mock 經濟系統查詢返回更高的餘額
             econ = AsyncMock()
-            econ.fetch_balance.return_value = MagicMock(balance=1500)  # 經濟系統餘額
+            balance_record = MagicMock(spec=["balance"])
+            balance_record.balance = 1500  # 經濟系統餘額
+            econ.fetch_balance_snapshot.return_value = balance_record
             service._economy = econ
 
             await service.ensure_government_accounts(guild_id=guild_id, admin_id=admin_id)
@@ -1365,7 +1383,7 @@ class TestStateCouncilService:
 
             # Mock 經濟系統查詢失敗
             econ = AsyncMock()
-            econ.fetch_balance.side_effect = Exception("Database error")
+            econ.fetch_balance_snapshot.side_effect = Exception("Database error")
             service._economy = econ
 
             # Mock upsert_government_account 回傳值

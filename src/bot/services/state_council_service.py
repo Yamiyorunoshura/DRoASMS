@@ -152,6 +152,35 @@ class StateCouncilService:
         # 商業許可 Gateway
         self._license_gateway = business_license_gateway or BusinessLicenseGateway()
 
+    async def _get_economy_balance_snapshot(
+        self, conn: Any, *, guild_id: int, member_id: int
+    ) -> int | None:
+        """以唯讀方式取得經濟系統餘額，避免 fn_get_balance 造成鎖等待。
+
+        - 優先使用 economy.fetch_balance_snapshot（Result 介面），回傳 int；
+        - 發生任何錯誤時回退為 0，確保治理流程不中斷。
+        """
+
+        try:
+            result = await self._economy.fetch_balance_snapshot(
+                conn, guild_id=guild_id, member_id=member_id
+            )
+        except Exception:
+            return None
+
+        try:
+            # Result 模式
+            if hasattr(result, "is_err") and callable(getattr(result, "is_err", None)):
+                if result.is_err():
+                    return 0
+                record = result.unwrap()
+            else:
+                record = result
+            bal = getattr(record, "balance", None)
+            return int(bal) if isinstance(bal, (int, float)) else None
+        except Exception:
+            return None
+
     def _get_auto_release_jobs(self, guild_id: int) -> dict[int, Any]:
         """Fetch in-memory auto-release metadata without importing at module load."""
 
@@ -381,12 +410,10 @@ class StateCouncilService:
 
             accounts = await self._safe_fetch_accounts(conn_for_gateway, guild_id=guild_id)
             for acc in accounts:
-                try:
-                    snap = await self._economy.fetch_balance(
-                        conn, guild_id=guild_id, member_id=acc.account_id
-                    )
-                    econ = int(getattr(snap, "balance", 0))
-                except Exception:
+                econ = await self._get_economy_balance_snapshot(
+                    conn, guild_id=guild_id, member_id=acc.account_id
+                )
+                if econ is None:
                     econ = 0
                 gov = int(acc.balance)
 
@@ -429,14 +456,10 @@ class StateCouncilService:
         adjust_reason: str,
     ) -> tuple[int, int | None]:
         """確保治理層與經濟帳本於執行前對齊，回傳 (經濟餘額, 治理餘額)。"""
-        try:
-            snap = await self._economy.fetch_balance(
-                conn,
-                guild_id=guild_id,
-                member_id=account_id,
-            )
-            econ_balance = int(getattr(snap, "balance", 0))
-        except Exception:
+        econ_balance = await self._get_economy_balance_snapshot(
+            conn, guild_id=guild_id, member_id=account_id
+        )
+        if econ_balance is None:
             econ_balance = 0
 
         gov_balance: int | None = None
@@ -471,18 +494,13 @@ class StateCouncilService:
                     pass
                 econ_balance = int(gov_balance)
             else:
-                try:
-                    snap = await self._economy.fetch_balance(
-                        conn,
-                        guild_id=guild_id,
-                        member_id=account_id,
-                    )
-                    econ_balance = int(getattr(snap, "balance", 0))
-                except Exception:
+                econ_balance = await self._get_economy_balance_snapshot(
+                    conn, guild_id=guild_id, member_id=account_id
+                )
+                if econ_balance is None:
+                    econ_balance = int(gov_balance) if gov_balance is not None else 0
+                if int(econ_balance) < int(required_amount):
                     econ_balance = int(gov_balance)
-                else:
-                    if int(econ_balance) < int(required_amount):
-                        econ_balance = int(gov_balance)
 
         return econ_balance, gov_balance
 
@@ -800,13 +818,10 @@ class StateCouncilService:
                     # 若帳戶不存在，建立新帳戶
                     if not account_exists:
                         # 查詢經濟系統餘額
-                        try:
-                            snap = await self._economy.fetch_balance(
-                                conn, guild_id=guild_id, member_id=account_id
-                            )
-                            econ_balance = int(getattr(snap, "balance", 0))
-                        except Exception:
-                            # 若經濟系統查詢失敗，使用 0 作為初始餘額
+                        econ_balance = await self._get_economy_balance_snapshot(
+                            conn, guild_id=guild_id, member_id=account_id
+                        )
+                        if econ_balance is None:
                             econ_balance = 0
 
                         # 建立帳戶
@@ -836,12 +851,10 @@ class StateCouncilService:
                                 break
 
                         if existing_account is not None:
-                            try:
-                                snap = await self._economy.fetch_balance(
-                                    conn, guild_id=guild_id, member_id=account_id
-                                )
-                                econ_balance = int(getattr(snap, "balance", 0))
-                            except Exception:
+                            econ_balance = await self._get_economy_balance_snapshot(
+                                conn, guild_id=guild_id, member_id=account_id
+                            )
+                            if econ_balance is None:
                                 # 查詢失敗時跳過同步
                                 continue
 
@@ -1368,20 +1381,13 @@ class StateCouncilService:
                 if account is not None
                 else self.derive_department_account_id(guild_id, department)
             )
-            try:
-                snap = await self._economy.fetch_balance(
-                    conn,
-                    guild_id=guild_id,
-                    member_id=account_id,
-                )
-                bal = getattr(snap, "balance", None)
-                if not isinstance(bal, int):
-                    # 測試替身/非預期型別，觸發回退路徑
-                    raise TypeError("balance is not int")
+            bal = await self._get_economy_balance_snapshot(
+                conn, guild_id=guild_id, member_id=account_id
+            )
+            if bal is not None:
                 return bal
-            except Exception:
-                # 後援：若經濟查詢失敗，回退 governance 記錄或 0
-                return account.balance if account is not None else 0
+            # 後援：若經濟查詢失敗，回退 governance 記錄或 0
+            return account.balance if account is not None else 0
 
     async def get_all_accounts(self, *, guild_id: int) -> Sequence[GovernmentAccount]:
         """Get all government accounts for a guild."""
@@ -1543,17 +1549,35 @@ class StateCouncilService:
                 except Exception:
                     names = set()
 
+                # 將不受控輸入標準化，避免觸發 DB check constraint
+                allowed_welfare_types = {
+                    "定期福利",
+                    "特殊福利",
+                    "monthly",
+                    "one-time",
+                    "emergency",
+                    "bonus",
+                }
+                raw_type = disbursement_type or (reason or "定期福利")
+                normalized_type = str(raw_type).strip()
+                reference_val = period or None
+                if normalized_type not in allowed_welfare_types:
+                    # 保留原始輸入於 reference 以利追蹤，並改用安全預設值
+                    if reference_val is None and raw_type is not None:
+                        reference_val = str(raw_type)
+                    normalized_type = "特殊福利"
+
                 kwargs: dict[str, Any] = {
                     "guild_id": guild_id,
                     "recipient_id": recipient_id,
                     "amount": amount,
                 }
                 if {"disbursement_type", "reference_id"}.issubset(names):
-                    kwargs["disbursement_type"] = disbursement_type or (reason or "定期福利")
-                    kwargs["reference_id"] = period or None
+                    kwargs["disbursement_type"] = normalized_type
+                    kwargs["reference_id"] = reference_val
                 else:
                     # 舊版或測試替身：使用 period/reason/disbursed_by 命名
-                    kwargs["period"] = period or ""
+                    kwargs["period"] = reference_val or ""
                     kwargs["reason"] = reason or disbursement_type or ""
                     kwargs["disbursed_by"] = user_id
 
@@ -2248,12 +2272,10 @@ class StateCouncilService:
                     admin_id=int(user_id),
                     adjust_reason="部門間轉帳前對齊治理餘額",
                 )
-                try:
-                    to_snap = await self._economy.fetch_balance(
-                        conn, guild_id=guild_id, member_id=to_account.account_id
-                    )
-                    to_current = int(getattr(to_snap, "balance", 0))
-                except Exception:
+                to_current = await self._get_economy_balance_snapshot(
+                    conn, guild_id=guild_id, member_id=to_account.account_id
+                )
+                if to_current is None:
                     to_current = int(getattr(to_account, "balance", 0))
 
                 # 若來源不足，依單元測試預期在此直接拒絕
@@ -2479,15 +2501,15 @@ class StateCouncilService:
                 try:
                     if isinstance(conn, AsyncMock):
                         raise RuntimeError("mock connection cannot provide live economy balance")
-                    snap = await self._economy.fetch_balance(
+                    bal = await self._get_economy_balance_snapshot(
                         conn, guild_id=guild_id, member_id=acc.account_id
                     )
-                    bal = getattr(snap, "balance", None)
-                    if not isinstance(bal, int):
-                        raise TypeError("balance is not int")
-                    dept_balances[acc.department] = bal
+                    if bal is not None:
+                        dept_balances[acc.department] = int(bal)
+                        continue
                 except Exception:
-                    dept_balances[acc.department] = acc.balance
+                    pass
+                dept_balances[acc.department] = acc.balance
             total_balance = sum(dept_balances.values())
 
             # Get recent transfers

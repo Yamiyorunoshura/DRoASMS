@@ -177,6 +177,19 @@ class TestMessageCompatFunctions:
         interaction.response.send_message.assert_called_once_with("Test message", ephemeral=True)
 
     @pytest.mark.asyncio
+    async def testsend_message_compat_falls_back_to_followup(self) -> None:
+        """當 response 已使用後應改用 followup.send"""
+        interaction = MagicMock()
+        interaction.response.send_message = AsyncMock()
+        interaction.response.is_done = MagicMock(return_value=True)
+        interaction.followup.send = AsyncMock()
+
+        await send_message_compat(interaction, content="Followup", ephemeral=True)
+
+        interaction.response.send_message.assert_not_called()
+        interaction.followup.send.assert_called_once_with(content="Followup", ephemeral=True)
+
+    @pytest.mark.asyncio
     async def testsend_message_compat_with_edit_message(self) -> None:
         """測試使用 response_edit_message"""
         interaction = MagicMock()
@@ -212,6 +225,21 @@ class TestMessageCompatFunctions:
         await edit_message_compat(interaction, embed=embed)
 
         interaction.response.edit_message.assert_called_once_with(embed=embed)
+
+    @pytest.mark.asyncio
+    async def testedit_message_compat_uses_message_edit_when_done(self) -> None:
+        """response 已完成時改用 interaction.message.edit"""
+        interaction = MagicMock()
+        interaction.response.edit_message = AsyncMock()
+        interaction.response.is_done = MagicMock(return_value=True)
+        interaction.message = MagicMock()
+        interaction.message.edit = AsyncMock()
+
+        embed = MagicMock()
+        await edit_message_compat(interaction, embed=embed)
+
+        interaction.response.edit_message.assert_not_called()
+        interaction.message.edit.assert_called_once_with(embed=embed)
 
     @pytest.mark.asyncio
     async def testedit_message_compat_with_stub(self) -> None:

@@ -22,6 +22,10 @@ __all__ = [
     "SuspectReleaseResult",
     "BusinessLicense",
     "BusinessLicenseListResult",
+    "WelfareApplication",
+    "WelfareApplicationListResult",
+    "LicenseApplication",
+    "LicenseApplicationListResult",
 ]
 
 
@@ -285,6 +289,58 @@ class BusinessLicenseListResult:
     """商業許可列表結果（含分頁資訊）。"""
 
     licenses: Sequence[BusinessLicense]
+    total_count: int
+    page: int
+    page_size: int
+
+
+@dataclass(slots=True, frozen=True)
+class WelfareApplication:
+    """福利申請資料模型。"""
+
+    id: int
+    guild_id: int
+    applicant_id: int
+    amount: int
+    reason: str
+    status: str  # pending, approved, rejected
+    created_at: datetime
+    reviewer_id: int | None = None
+    reviewed_at: datetime | None = None
+    rejection_reason: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class WelfareApplicationListResult:
+    """福利申請列表結果（含分頁資訊）。"""
+
+    applications: Sequence[WelfareApplication]
+    total_count: int
+    page: int
+    page_size: int
+
+
+@dataclass(slots=True, frozen=True)
+class LicenseApplication:
+    """商業許可申請資料模型。"""
+
+    id: int
+    guild_id: int
+    applicant_id: int
+    license_type: str
+    reason: str
+    status: str  # pending, approved, rejected
+    created_at: datetime
+    reviewer_id: int | None = None
+    reviewed_at: datetime | None = None
+    rejection_reason: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class LicenseApplicationListResult:
+    """商業許可申請列表結果（含分頁資訊）。"""
+
+    applications: Sequence[LicenseApplication]
     total_count: int
     page: int
     page_size: int

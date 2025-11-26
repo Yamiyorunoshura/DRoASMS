@@ -25,6 +25,7 @@ from src.bot.services.department_registry import get_registry
 from src.bot.services.permission_service import PermissionResult, PermissionService
 from src.bot.services.state_council_service import StateCouncilService
 from src.bot.services.supreme_assembly_service import SupremeAssemblyService
+from src.bot.ui.base import PersistentPanelView
 from src.bot.ui.council_paginator import CouncilProposalPaginator
 from src.bot.utils.error_templates import ErrorMessageTemplates
 from src.db.gateway.council_governance import CouncilConfig, Proposal
@@ -845,8 +846,10 @@ __all__ = ["get_help_data", "register"]
 # --- Panel UI ---
 
 
-class CouncilPanelView(discord.ui.View):
+class CouncilPanelView(PersistentPanelView):
     """理事會面板容器（ephemeral）。"""
+
+    panel_type = "council"
 
     def __init__(
         self,
@@ -856,12 +859,10 @@ class CouncilPanelView(discord.ui.View):
         author_id: int,
         council_role_id: int,
     ) -> None:
-        super().__init__(timeout=600)
+        super().__init__(author_id=author_id, timeout=600.0)
         self.service = service
         self.guild = guild
-        self.author_id = author_id
         self.council_role_id = council_role_id
-        self._message: discord.Message | None = None
         self._unsubscribe: Callable[[], Awaitable[None]] | None = None
         self._update_lock = asyncio.Lock()
         self._paginator: CouncilProposalPaginator | None = None
@@ -910,7 +911,7 @@ class CouncilPanelView(discord.ui.View):
         """綁定訊息並訂閱治理事件，以便即時更新。"""
         if self._message is not None:
             return
-        self._message = message
+        await super().bind_message(message)
         try:
             self._unsubscribe = await subscribe_council_events(
                 self.guild.id,

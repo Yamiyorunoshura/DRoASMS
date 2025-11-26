@@ -13,6 +13,32 @@ __all__ = [
 ]
 
 
+def _response_already_done(interaction: Any) -> bool:
+    """Best-effort check whether the interaction response was already used."""
+
+    response = getattr(interaction, "response", None)
+    if response is None:
+        return False
+
+    is_done_attr = getattr(response, "is_done", None)
+    if callable(is_done_attr):
+        try:
+            result = is_done_attr()
+        except TypeError:
+            # Some stubs expose ``is_done`` as property-like attribute.
+            pass
+        else:
+            if isinstance(result, bool):
+                return result
+    elif isinstance(is_done_attr, bool):  # pragma: no cover - defensive path
+        return is_done_attr
+
+    responded_flag = getattr(response, "_responded", None)
+    if isinstance(responded_flag, bool):
+        return responded_flag
+    return False
+
+
 def _supports_kwarg(func: Any, kwarg: str) -> bool:
     """Best-effort check whether callable accepts the given keyword argument."""
 
@@ -41,35 +67,30 @@ async def send_message_compat(
 ) -> None:
     """Send message compat for real discord.Interaction and test stubs."""
 
+    response_done = _response_already_done(interaction)
     send_msg = getattr(getattr(interaction, "response", None), "send_message", None)
-    is_test_mock = hasattr(send_msg, "_mock_name") or str(type(send_msg).__name__).endswith("Mock")
-
-    if send_msg and asyncio.iscoroutinefunction(send_msg) and not is_test_mock:
-        kwargs: dict[str, Any] = {}
+    if send_msg is not None and not response_done:
+        kwargs_msg: dict[str, Any] = {}
+        args_msg: tuple[Any, ...] = ()
         if content is not None:
-            kwargs["content"] = content
+            if embed is None and view is None:
+                args_msg = (content,)
+            else:
+                kwargs_msg["content"] = content
         if embed is not None:
-            kwargs["embed"] = embed
+            kwargs_msg["embed"] = embed
         if view is not None:
-            kwargs["view"] = view
-        kwargs["ephemeral"] = bool(ephemeral)
-        await interaction.response.send_message(**kwargs)
+            kwargs_msg["view"] = view
+        kwargs_msg["ephemeral"] = bool(ephemeral)
+        result = send_msg(*args_msg, **kwargs_msg)
+        if inspect.isawaitable(result):
+            await result
         return
-    if callable(send_msg):
-        kwargs_nonasync: dict[str, Any] = {}
-        if embed is not None:
-            kwargs_nonasync["embed"] = embed
-        if view is not None:
-            kwargs_nonasync["view"] = view
-        kwargs_nonasync["ephemeral"] = bool(ephemeral)
-        if content is not None and not (embed or view):
-            send_msg(content, **kwargs_nonasync)
-        else:
-            if content is not None:
-                kwargs_nonasync["content"] = content
-            send_msg(**kwargs_nonasync)
-        return
-    if (embed is not None or view is not None) and hasattr(interaction, "response_edit_message"):
+    if (
+        not response_done
+        and (embed is not None or view is not None)
+        and hasattr(interaction, "response_edit_message")
+    ):
         kwargs2: dict[str, Any] = {}
         if embed is not None:
             kwargs2["embed"] = embed
@@ -78,10 +99,31 @@ async def send_message_compat(
         response_edit = interaction.response_edit_message
         if _supports_kwarg(response_edit, "ephemeral"):
             kwargs2["ephemeral"] = bool(ephemeral)
-        await response_edit(**kwargs2)
+        result = response_edit(**kwargs2)
+        if inspect.isawaitable(result):
+            await result
         return
-    if hasattr(interaction, "response_send_message"):
-        await interaction.response_send_message(content or "", ephemeral=bool(ephemeral))
+    if not response_done and hasattr(interaction, "response_send_message"):
+        result = interaction.response_send_message(content or "", ephemeral=bool(ephemeral))
+        if inspect.isawaitable(result):
+            await result
+        return
+
+    followup = getattr(interaction, "followup", None)
+    followup_send = getattr(followup, "send", None)
+    if followup_send is not None:
+        kwargs_followup: dict[str, Any] = {}
+        if content is not None:
+            kwargs_followup["content"] = content
+        if embed is not None:
+            kwargs_followup["embed"] = embed
+        if view is not None:
+            kwargs_followup["view"] = view
+        kwargs_followup["ephemeral"] = bool(ephemeral)
+        result = followup_send(**kwargs_followup)
+        if inspect.isawaitable(result):
+            await result
+        return
 
 
 async def edit_message_compat(
@@ -92,30 +134,54 @@ async def edit_message_compat(
 ) -> None:
     """Edit a message regardless of Interaction/test doubles."""
 
+    response_done = _response_already_done(interaction)
     edit_msg = getattr(getattr(interaction, "response", None), "edit_message", None)
-    if edit_msg and asyncio.iscoroutinefunction(edit_msg):
+    if edit_msg is not None and not response_done:
         kwargs_async: dict[str, Any] = {}
         if embed is not None:
             kwargs_async["embed"] = embed
         if view is not None:
             kwargs_async["view"] = view
-        await interaction.response.edit_message(**kwargs_async)
+        result = edit_msg(**kwargs_async)
+        if inspect.isawaitable(result):
+            await result
         return
-    if callable(edit_msg):
-        kwargs_nonasync: dict[str, Any] = {}
-        if embed is not None:
-            kwargs_nonasync["embed"] = embed
-        if view is not None:
-            kwargs_nonasync["view"] = view
-        edit_msg(**kwargs_nonasync)
-        return
-    if hasattr(interaction, "response_edit_message"):
+    if not response_done and hasattr(interaction, "response_edit_message"):
         kwargs2: dict[str, Any] = {}
         if embed is not None:
             kwargs2["embed"] = embed
         if view is not None:
             kwargs2["view"] = view
-        await interaction.response_edit_message(**kwargs2)
+        result = interaction.response_edit_message(**kwargs2)
+        if inspect.isawaitable(result):
+            await result
+        return
+
+    message = getattr(interaction, "message", None)
+    message_edit = getattr(message, "edit", None)
+    if callable(message_edit):
+        kwargs_message: dict[str, Any] = {}
+        if embed is not None:
+            kwargs_message["embed"] = embed
+        if view is not None:
+            kwargs_message["view"] = view
+        result = message_edit(**kwargs_message)
+        if inspect.isawaitable(result):
+            await result
+        return
+
+    followup = getattr(interaction, "followup", None)
+    followup_edit = getattr(followup, "edit_message", None)
+    if callable(followup_edit) and hasattr(interaction, "message"):
+        kwargs_followup_edit: dict[str, Any] = {}
+        if embed is not None:
+            kwargs_followup_edit["embed"] = embed
+        if view is not None:
+            kwargs_followup_edit["view"] = view
+        result = followup_edit(interaction.message.id, **kwargs_followup_edit)
+        if inspect.isawaitable(result):
+            await result
+        return
 
 
 async def send_modal_compat(interaction: Any, modal: Any) -> None:

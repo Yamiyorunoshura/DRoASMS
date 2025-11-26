@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2025-11-26
+
+### Added
+
+- **統一持久化面板基礎架構**：
+  - 新增 `PersistentPanelView` 基類，提供所有面板的持久化回應機制
+  - 新增 `PersistentButton` 和 `PersistentSelect` 持久化互動元件
+  - 新增 `generate_custom_id()` 統一 custom_id 生成機制
+  - 預設 10 分鐘面板超時，統一超時提示訊息
+  - 支援機器人重啟後仍能正常處理互動
+- **政府申請服務**：
+  - 新增 `ApplicationService` 處理福利和營業執照申請工作流程
+  - 新增 `WelfareApplicationGateway` 和 `LicenseApplicationGateway`
+  - 新增資料庫遷移 `048_add_government_applications.py`
+  - 完整的單元測試和整合測試覆蓋
+
+### Changed
+
+- **面板持久化升級**：
+  - 更新 Council、State Council、Personal、Supreme Assembly 面板繼承 `PersistentPanelView`
+  - 所有互動元件在超時前可被重複回應
+  - 統一註冊 persistent view 到 bot 啟動流程
+- **UI 元件模組結構**：
+  - 更新 `src/bot/ui/__init__.py` 導出持久化元件
+
+### Removed
+
+- **OpenSpec 清理**：
+  - 移除已歸檔的 openspec 變更和規格檔案，精簡專案結構
+  - 移除 `GEMINI.md` 和冗餘的 `openspec/AGENTS.md`
+
+[Compare changes](https://github.com/Yamiyorunoshura/DRoASMS/compare/v3.0.0...v3.1.0)
+
 ## [3.0.0] - 2025-11-25
 
 ### Added

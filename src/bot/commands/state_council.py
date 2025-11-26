@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import math
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Iterable, Literal, Protocol, Sequence, cast
+from typing import Any, Awaitable, Callable, Coroutine, Iterable, Literal, Protocol, Sequence, cast
 
 import discord
 import structlog
@@ -33,6 +33,7 @@ from src.bot.services.state_council_service import (
 )
 from src.bot.services.state_council_service_result import StateCouncilServiceResult
 from src.bot.services.supreme_assembly_service import SupremeAssemblyService
+from src.bot.ui.base import PersistentPanelView
 from src.bot.utils.error_templates import ErrorMessageTemplates
 from src.infra.di.container import DependencyContainer
 from src.infra.events.state_council_events import (
@@ -658,7 +659,11 @@ def build_state_council_group(
 # --- State Council Panel UI ---
 
 
-class StateCouncilPanelView(discord.ui.View):
+class StateCouncilPanelView(PersistentPanelView):
+    """國務院面板容器。"""
+
+    panel_type = "state_council"
+
     def __init__(
         self,
         *,
@@ -672,12 +677,12 @@ class StateCouncilPanelView(discord.ui.View):
         user_roles: list[int],
         permission_service: PermissionService | None = None,
     ) -> None:
-        super().__init__(timeout=None)
+        # 國務院面板為持久化模式（timeout=None）
+        super().__init__(author_id=author_id, persistent=True)
         self.service = service
         self.currency_service = currency_service
         self.guild = guild
         self.guild_id = guild_id
-        self.author_id = author_id
         self.leader_id = leader_id
         self.leader_role_id = leader_role_id
         self.user_roles = user_roles
@@ -1029,6 +1034,16 @@ class StateCouncilPanelView(discord.ui.View):
             )
             license_list_btn.callback = self._license_list_callback
             self.add_item(license_list_btn)
+
+            # Application Management
+            app_mgmt_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label="📋 申請管理",
+                style=discord.ButtonStyle.primary,
+                custom_id="application_management",
+                row=3,
+            )
+            app_mgmt_btn.callback = self._application_management_callback
+            self.add_item(app_mgmt_btn)
 
         elif department == "財政部":
             # Tax collection
@@ -1460,6 +1475,35 @@ class StateCouncilPanelView(discord.ui.View):
             total_count=license_list.total_count,
             current_page=1,
         )
+        embed = view.build_embed()
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+
+    async def _application_management_callback(self, interaction: discord.Interaction) -> None:
+        """申請管理的回調函數。"""
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+
+        # 檢查內政部權限
+        perm_result = await self.service.check_interior_affairs_permission(
+            guild_id=self.guild_id,
+            user_id=self.author_id,
+            user_roles=self.user_roles,
+        )
+        if perm_result.is_err() or not perm_result.unwrap():
+            await send_message_compat(
+                interaction, content="權限不足：不具備內政部權限", ephemeral=True
+            )
+            return
+
+        # 建立申請管理視圖
+        view = ApplicationManagementView(
+            service=self.service,
+            guild_id=self.guild_id,
+            author_id=self.author_id,
+            user_roles=self.user_roles,
+        )
+        await view.load_applications()
         embed = view.build_embed()
         await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
 
@@ -3796,7 +3840,11 @@ class ExportDataModal(discord.ui.Modal, title="匯出資料"):
 # --- Homeland Security Suspects Panel ---
 
 
-class HomelandSecuritySuspectsPanelView(discord.ui.View):
+class HomelandSecuritySuspectsPanelView(PersistentPanelView):
+    """國土安全部嫌疑人管理面板。"""
+
+    panel_type = "homeland_security"
+
     def __init__(
         self,
         *,
@@ -3807,11 +3855,10 @@ class HomelandSecuritySuspectsPanelView(discord.ui.View):
         user_roles: Sequence[int],
         page_size: int = 10,
     ) -> None:
-        super().__init__(timeout=600)
+        super().__init__(author_id=author_id, timeout=600.0)
         self.service = service
         self.guild = guild
         self.guild_id = guild_id
-        self.author_id = author_id
         self.user_roles = list(user_roles)
         self.page_size = max(5, page_size)
         self.current_page = 0
@@ -5207,6 +5254,379 @@ class BusinessLicenseIssueModal(discord.ui.Modal, title="發放商業許可"):
                 content=ErrorMessageTemplates.system_error("許可發放失敗"),
                 ephemeral=True,
             )
+
+
+class ApplicationManagementView(discord.ui.View):
+    """申請管理視圖，顯示待審批申請列表並支援審批/拒絕操作。"""
+
+    def __init__(
+        self,
+        service: StateCouncilService,
+        guild_id: int,
+        author_id: int,
+        user_roles: list[int],
+        page_size: int = 5,
+    ) -> None:
+        super().__init__(timeout=300)
+        self.service = service
+        self.guild_id = guild_id
+        self.author_id = author_id
+        self.user_roles = user_roles
+        self.page_size = page_size
+        self.current_page = 1
+        self.filter_type: str | None = None  # 'welfare' or 'license' or None (all)
+
+        # 申請資料
+        self._welfare_apps: list[Any] = []
+        self._license_apps: list[Any] = []
+        self._total_count = 0
+
+        # 匯入 ApplicationService
+        from src.bot.services.application_service import ApplicationService
+
+        self._app_service = ApplicationService()
+
+    async def load_applications(self) -> None:
+        """載入待審批申請列表。"""
+        try:
+            # 載入福利申請
+            welfare_result = await self._app_service.list_welfare_applications(
+                guild_id=self.guild_id,
+                status="pending",
+                page=1,
+                page_size=100,
+            )
+            if not welfare_result.is_err():
+                result_data = welfare_result.unwrap()
+                self._welfare_apps = list(result_data.applications)
+        except Exception as exc:
+            LOGGER.warning("application_management.load_welfare.error", error=str(exc))
+
+        try:
+            # 載入商業許可申請
+            license_result = await self._app_service.list_license_applications(
+                guild_id=self.guild_id,
+                status="pending",
+                page=1,
+                page_size=100,
+            )
+            if not license_result.is_err():
+                result_data = license_result.unwrap()
+                self._license_apps = list(result_data.applications)
+        except Exception as exc:
+            LOGGER.warning("application_management.load_license.error", error=str(exc))
+
+        self._total_count = len(self._welfare_apps) + len(self._license_apps)
+        self._build_buttons()
+
+    def _get_filtered_apps(self) -> list[tuple[str, Any]]:
+        """取得篩選後的申請列表。"""
+        apps: list[tuple[str, Any]] = []
+        if self.filter_type is None or self.filter_type == "welfare":
+            apps.extend([("welfare", a) for a in self._welfare_apps])
+        if self.filter_type is None or self.filter_type == "license":
+            apps.extend([("license", a) for a in self._license_apps])
+        # 按時間排序
+        apps.sort(key=lambda x: x[1].created_at, reverse=True)
+        return apps
+
+    def _build_buttons(self) -> None:
+        """建立控制按鈕。"""
+        self.clear_items()
+
+        # 篩選按鈕
+        all_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="全部",
+            style=discord.ButtonStyle.primary
+            if self.filter_type is None
+            else discord.ButtonStyle.secondary,
+            row=0,
+        )
+        all_btn.callback = self._filter_all_callback
+        self.add_item(all_btn)
+
+        welfare_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="💰 福利申請",
+            style=discord.ButtonStyle.primary
+            if self.filter_type == "welfare"
+            else discord.ButtonStyle.secondary,
+            row=0,
+        )
+        welfare_btn.callback = self._filter_welfare_callback
+        self.add_item(welfare_btn)
+
+        license_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="📜 許可申請",
+            style=discord.ButtonStyle.primary
+            if self.filter_type == "license"
+            else discord.ButtonStyle.secondary,
+            row=0,
+        )
+        license_btn.callback = self._filter_license_callback
+        self.add_item(license_btn)
+
+        refresh_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="🔄 重整",
+            style=discord.ButtonStyle.secondary,
+            row=0,
+        )
+        refresh_btn.callback = self._refresh_callback
+        self.add_item(refresh_btn)
+
+        # 申請操作按鈕
+        apps = self._get_filtered_apps()
+        start = (self.current_page - 1) * self.page_size
+        end = start + self.page_size
+        page_apps = apps[start:end]
+
+        for i, (app_type, app) in enumerate(page_apps):
+            # 批准按鈕
+            approve_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label=f"✅ #{app.id}",
+                style=discord.ButtonStyle.success,
+                custom_id=f"approve_{app_type}_{app.id}",
+                row=1 + i,
+            )
+            approve_btn.callback = self._make_approve_callback(app_type, app.id)  # type: ignore[method-assign]
+            self.add_item(approve_btn)
+
+            # 拒絕按鈕
+            reject_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label=f"❌ #{app.id}",
+                style=discord.ButtonStyle.danger,
+                custom_id=f"reject_{app_type}_{app.id}",
+                row=1 + i,
+            )
+            reject_btn.callback = self._make_reject_callback(app_type, app.id)  # type: ignore[method-assign]
+            self.add_item(reject_btn)
+
+    def build_embed(self) -> discord.Embed:
+        """建立申請列表的 Embed。"""
+        embed = discord.Embed(
+            title="📋 申請管理",
+            color=0x9B59B6,
+        )
+
+        apps = self._get_filtered_apps()
+        total_pages = max(1, (len(apps) + self.page_size - 1) // self.page_size)
+        start = (self.current_page - 1) * self.page_size
+        end = start + self.page_size
+        page_apps = apps[start:end]
+
+        if not page_apps:
+            embed.description = "目前沒有待審批的申請。"
+            embed.set_footer(
+                text=f"福利申請: {len(self._welfare_apps)} | 許可申請: {len(self._license_apps)}"
+            )
+            return embed
+
+        lines: list[str] = []
+        for app_type, app in page_apps:
+            if app_type == "welfare":
+                icon = "💰"
+                detail = f"金額: {app.amount:,}"
+            else:
+                icon = "📜"
+                detail = f"類型: {app.license_type}"
+
+            timestamp = app.created_at.strftime("%m-%d %H:%M")
+            lines.append(
+                f"{icon} **#{app.id}** - <@{app.applicant_id}>\n"
+                f"　{detail}\n"
+                f"　原因: {app.reason[:50]}{'...' if len(app.reason) > 50 else ''}\n"
+                f"　時間: {timestamp}"
+            )
+
+        embed.description = "\n\n".join(lines)
+        embed.set_footer(
+            text=f"第 {self.current_page}/{total_pages} 頁 | 福利: {len(self._welfare_apps)} | 許可: {len(self._license_apps)}"
+        )
+        return embed
+
+    def _make_approve_callback(
+        self, app_type: str, app_id: int
+    ) -> Callable[[discord.Interaction], Coroutine[Any, Any, None]]:
+        async def callback(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+
+            if app_type == "welfare":
+                async def _welfare_transfer_callback(**kwargs: Any) -> bool:
+                    application = kwargs.get("application")
+                    if application is None:
+                        # 後備：以 kwargs 重新組合資料
+                        applicant_id = int(kwargs.get("applicant_id"))
+                        amount = int(kwargs.get("amount"))
+                        reason = str(kwargs.get("reason") or "福利發放")
+                        guild_id = int(kwargs.get("guild_id", self.guild_id))
+                    else:
+                        applicant_id = int(application.applicant_id)
+                        amount = int(application.amount)
+                        reason = str(getattr(application, "reason", "福利發放") or "福利發放")
+                        guild_id = int(getattr(application, "guild_id", self.guild_id))
+
+                    await self.service.disburse_welfare(
+                        guild_id=guild_id,
+                        department="內政部",
+                        user_id=self.author_id,
+                        user_roles=self.user_roles,
+                        recipient_id=applicant_id,
+                        amount=amount,
+                        reason=reason,
+                    )
+                    return True
+
+                result = await self._app_service.approve_welfare_application(
+                    application_id=app_id,
+                    reviewer_id=self.author_id,
+                    transfer_callback=_welfare_transfer_callback,
+                )
+            else:
+                result = await self._app_service.approve_license_application(
+                    application_id=app_id,
+                    reviewer_id=self.author_id,
+                )
+
+            if result.is_err():
+                await send_message_compat(
+                    interaction, content=f"❌ 審批失敗: {result.unwrap_err()}", ephemeral=True
+                )
+                return
+
+            await self.load_applications()
+            embed = self.build_embed()
+            await edit_message_compat(interaction, embed=embed, view=self)
+            await send_message_compat(
+                interaction, content=f"✅ 申請 #{app_id} 已批准", ephemeral=True
+            )
+
+        return callback
+
+    def _make_reject_callback(
+        self, app_type: str, app_id: int
+    ) -> Callable[[discord.Interaction], Coroutine[Any, Any, None]]:
+        async def callback(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+
+            modal = ApplicationRejectModal(
+                app_type=app_type,
+                app_id=app_id,
+                app_service=self._app_service,
+                reviewer_id=self.author_id,
+                on_complete=self._on_reject_complete,
+            )
+            await send_modal_compat(interaction, modal)
+
+        return callback
+
+    async def _on_reject_complete(self, interaction: discord.Interaction) -> None:
+        """拒絕完成後的回調。"""
+        await self.load_applications()
+        embed = self.build_embed()
+        await edit_message_compat(interaction, embed=embed, view=self)
+
+    async def _filter_all_callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+        self.filter_type = None
+        self.current_page = 1
+        self._build_buttons()
+        embed = self.build_embed()
+        await edit_message_compat(interaction, embed=embed, view=self)
+
+    async def _filter_welfare_callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+        self.filter_type = "welfare"
+        self.current_page = 1
+        self._build_buttons()
+        embed = self.build_embed()
+        await edit_message_compat(interaction, embed=embed, view=self)
+
+    async def _filter_license_callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+        self.filter_type = "license"
+        self.current_page = 1
+        self._build_buttons()
+        embed = self.build_embed()
+        await edit_message_compat(interaction, embed=embed, view=self)
+
+    async def _refresh_callback(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+        await self.load_applications()
+        embed = self.build_embed()
+        await edit_message_compat(interaction, embed=embed, view=self)
+
+
+class ApplicationRejectModal(discord.ui.Modal, title="拒絕申請"):
+    """拒絕申請的原因輸入 Modal。"""
+
+    reason_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+        label="拒絕原因",
+        placeholder="請輸入拒絕此申請的原因",
+        required=True,
+        min_length=1,
+        max_length=500,
+        style=discord.TextStyle.paragraph,
+    )
+
+    def __init__(
+        self,
+        app_type: str,
+        app_id: int,
+        app_service: Any,
+        reviewer_id: int,
+        on_complete: Callable[[discord.Interaction], Coroutine[Any, Any, None]],
+    ) -> None:
+        super().__init__()
+        self.app_type = app_type
+        self.app_id = app_id
+        self._app_service = app_service
+        self.reviewer_id = reviewer_id
+        self._on_complete = on_complete
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        reason = self.reason_input.value.strip()
+        if not reason:
+            await send_message_compat(interaction, content="❌ 請填寫拒絕原因。", ephemeral=True)
+            return
+
+        if self.app_type == "welfare":
+            result = await self._app_service.reject_welfare_application(
+                application_id=self.app_id,
+                reviewer_id=self.reviewer_id,
+                rejection_reason=reason,
+            )
+        else:
+            result = await self._app_service.reject_license_application(
+                application_id=self.app_id,
+                reviewer_id=self.reviewer_id,
+                rejection_reason=reason,
+            )
+
+        if result.is_err():
+            await send_message_compat(
+                interaction, content=f"❌ 拒絕失敗: {result.unwrap_err()}", ephemeral=True
+            )
+            return
+
+        await send_message_compat(
+            interaction, content=f"✅ 申請 #{self.app_id} 已拒絕", ephemeral=True
+        )
+        await self._on_complete(interaction)
 
 
 class BusinessLicenseListView(discord.ui.View):

@@ -26,6 +26,7 @@ from src.bot.services.supreme_assembly_service import (
 )
 from src.bot.services.supreme_assembly_service_result import SupremeAssemblyServiceResult
 from src.bot.services.transfer_service import TransferService, TransferValidationError
+from src.bot.ui.base import PersistentPanelView
 from src.bot.utils.error_templates import ErrorMessageTemplates
 from src.db.pool import get_pool
 from src.infra.di.container import DependencyContainer
@@ -455,8 +456,10 @@ __all__ = ["build_supreme_assembly_group", "get_help_data", "register"]
 # --- Panel UI ---
 
 
-class SupremeAssemblyPanelView(discord.ui.View):
+class SupremeAssemblyPanelView(PersistentPanelView):
     """最高人民會議面板容器（ephemeral）。"""
+
+    panel_type = "supreme_assembly"
 
     def __init__(
         self,
@@ -469,15 +472,13 @@ class SupremeAssemblyPanelView(discord.ui.View):
         is_speaker: bool,
         is_member: bool,
     ) -> None:
-        super().__init__(timeout=600)
+        super().__init__(author_id=author_id, timeout=600.0)
         self.service = service
         self.guild = guild
-        self.author_id = author_id
         self.speaker_role_id = speaker_role_id
         self.member_role_id = member_role_id
         self.is_speaker = is_speaker
         self.is_member = is_member
-        self._message: discord.Message | None = None
         self._unsubscribe: Callable[[], Awaitable[None]] | None = None
         self._update_lock = asyncio.Lock()
         self._paginator: Any | None = None  # 分頁器屬性
@@ -534,7 +535,7 @@ class SupremeAssemblyPanelView(discord.ui.View):
         """綁定訊息並訂閱治理事件，以便即時更新。"""
         if self._message is not None:
             return
-        self._message = message
+        await super().bind_message(message)
         try:
             self._unsubscribe = await subscribe_supreme_assembly_events(
                 self.guild.id,
@@ -560,12 +561,18 @@ class SupremeAssemblyPanelView(discord.ui.View):
         try:
             balance_service = BalanceService(get_pool())
             account_id = SupremeAssemblyService.derive_account_id(self.guild.id)
-            snap = await balance_service.get_balance_snapshot(
+            snap_result = await balance_service.get_balance_snapshot(
                 guild_id=self.guild.id,
                 requester_id=self.author_id,
                 target_member_id=account_id,
                 can_view_others=True,
             )
+            if hasattr(snap_result, "is_err") and callable(getattr(snap_result, "is_err", None)):
+                if snap_result.is_err():
+                    raise snap_result.unwrap_err()
+                snap = snap_result.unwrap()
+            else:
+                snap = snap_result  # Legacy BalanceSnapshot
             balance_str = f"{snap.balance:,}"  # type: ignore[union-attr]
         except Exception as exc:  # pragma: no cover - best effort
             LOGGER.warning(

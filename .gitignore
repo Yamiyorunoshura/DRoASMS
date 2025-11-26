@@ -42,17 +42,8 @@ pgdata/
 # Node (in case of mixed repos)
 node_modules/
 
-# .codex
-.codex/
-
 # git spec kit
 .specify/
-
-# claude code
-.claude/
-
-# cursor
-.cursor/
 
 # hypothesis
 .hypothesis/
@@ -63,16 +54,3 @@ backup/
 
 # cov
 htmlcov_council/
-
-# serena
-.serena/
-
-# opencode
-.opencode/
-opencode.json
-
-# gemini
-.gemini/
-
-# kilo code
-.kilocode/

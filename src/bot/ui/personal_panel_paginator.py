@@ -13,13 +13,19 @@ from src.bot.interaction_compat import (
     send_message_compat,
     send_modal_compat,
 )
+from src.bot.services.application_service import ApplicationService
 from src.bot.services.currency_config_service import CurrencyConfigResult
 from src.bot.services.department_registry import Department, get_registry
 from src.bot.services.state_council_service import (
     StateCouncilNotConfiguredError,
     StateCouncilService,
 )
+from src.bot.ui.base import PersistentPanelView
 from src.bot.ui.paginator import EmbedPaginator
+from src.cython_ext.state_council_models import (
+    LicenseApplication,
+    WelfareApplication,
+)
 
 if TYPE_CHECKING:
     from src.bot.services.balance_service import BalanceSnapshot, HistoryEntry
@@ -27,12 +33,14 @@ if TYPE_CHECKING:
 LOGGER = structlog.get_logger(__name__)
 
 
-class PersonalPanelView(discord.ui.View):
+class PersonalPanelView(PersistentPanelView):
     """
     個人面板主檢視。
 
-    提供三個分頁：首頁、財產、轉帳。
+    提供四個分頁：首頁、財產、轉帳、政府服務。
     """
+
+    panel_type = "personal"
 
     def __init__(
         self,
@@ -68,8 +76,7 @@ class PersonalPanelView(discord.ui.View):
             state_council_service: 國務院服務，用於解析政府帳戶（可選）
             timeout: 超時時間（秒）
         """
-        super().__init__(timeout=timeout)
-        self.author_id = author_id
+        super().__init__(author_id=author_id, timeout=timeout)
         self.guild_id = guild_id
         self.balance_snapshot = balance_snapshot
         self.history_entries = history_entries
@@ -77,8 +84,9 @@ class PersonalPanelView(discord.ui.View):
         self.transfer_callback = transfer_callback
         self.refresh_callback = refresh_callback
         self.state_council_service = state_council_service
+        self.application_service = ApplicationService()
 
-        # 當前分頁：home, property, transfer
+        # 當前分頁：home, property, transfer, government
         self.current_tab = "home"
 
         # 交易歷史分頁器
@@ -88,6 +96,12 @@ class PersonalPanelView(discord.ui.View):
         # 暫存轉帳資訊
         self._pending_transfer_target_id: int | None = None
         self._pending_transfer_target_name: str | None = None
+
+        # 政府服務分頁狀態
+        self._welfare_applications: list[WelfareApplication] = []
+        self._license_applications: list[LicenseApplication] = []
+        self._gov_page = 0
+        self._gov_page_size = 5
 
         # 初始化視圖
         self._update_view_items()
@@ -269,12 +283,26 @@ class PersonalPanelView(discord.ui.View):
         transfer_btn.callback = self._on_transfer_tab
         self.add_item(transfer_btn)
 
-        # 刷新按鈕
+        # 政府服務按鈕
+        gov_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="🏛️ 政府服務",
+            style=(
+                discord.ButtonStyle.primary
+                if self.current_tab == "government"
+                else discord.ButtonStyle.secondary
+            ),
+            custom_id="personal_panel_government",
+            row=0,
+        )
+        gov_btn.callback = self._on_government_tab
+        self.add_item(gov_btn)
+
+        # 刷新按鈕 - 移到 row=1 因為 row=0 已滿
         refresh_btn: discord.ui.Button[Any] = discord.ui.Button(
-            label="🔄",
+            label="🔄 刷新",
             style=discord.ButtonStyle.secondary,
             custom_id="personal_panel_refresh",
-            row=0,
+            row=1,
         )
         refresh_btn.callback = self._on_refresh
         self.add_item(refresh_btn)
@@ -284,6 +312,8 @@ class PersonalPanelView(discord.ui.View):
             self._add_property_controls()
         elif self.current_tab == "transfer":
             self._add_transfer_controls()
+        elif self.current_tab == "government":
+            self._add_government_controls()
 
     def _add_property_controls(self) -> None:
         """添加財產分頁的分頁控制按鈕。"""
@@ -728,6 +758,387 @@ class PersonalPanelView(discord.ui.View):
             self._pending_transfer_target_id = None
             self._pending_transfer_target_name = None
 
+    # ========== 政府服務分頁方法 ==========
+
+    def create_government_embed(self) -> discord.Embed:
+        """創建政府服務分頁嵌入訊息。"""
+        embed = discord.Embed(
+            title="🏛️ 政府服務",
+            color=0x9B59B6,
+            description="透過此頁面向政府申請福利或商業許可。",
+        )
+        embed.add_field(
+            name="📋 可申請服務",
+            value=(
+                "• **💰 申請福利** - 向內政部申請福利金\n"
+                "• **📜 申請商業許可** - 申請商業經營許可證"
+            ),
+            inline=False,
+        )
+
+        # 顯示申請歷史摘要
+        all_applications = self._get_combined_applications()
+        if all_applications:
+            pending = sum(1 for a in all_applications if a[1] == "pending")
+            approved = sum(1 for a in all_applications if a[1] == "approved")
+            rejected = sum(1 for a in all_applications if a[1] == "rejected")
+            embed.add_field(
+                name="📊 我的申請狀態",
+                value=f"⏳ 待審批: {pending} | ✅ 已批准: {approved} | ❌ 已拒絕: {rejected}",
+                inline=False,
+            )
+        else:
+            embed.add_field(
+                name="📊 我的申請狀態",
+                value="目前沒有申請記錄",
+                inline=False,
+            )
+
+        embed.set_footer(text="使用下方按鈕申請服務或查看申請歷史")
+        return embed
+
+    def _get_combined_applications(
+        self,
+    ) -> list[tuple[str, str, str, Any]]:
+        """取得合併的申請列表 (type, status, summary, application)。"""
+        combined: list[tuple[str, str, str, Any]] = []
+        for app in self._welfare_applications:
+            summary = f"福利申請 - {app.amount:,} 元"
+            combined.append(("welfare", app.status, summary, app))
+        for app in self._license_applications:
+            summary = f"商業許可 - {app.license_type}"
+            combined.append(("license", app.status, summary, app))
+        # 按時間排序（最新在前）
+        combined.sort(key=lambda x: x[3].created_at, reverse=True)
+        return combined
+
+    def create_application_history_embed(
+        self, page_items: list[tuple[str, str, str, Any]], page_num: int, total_pages: int
+    ) -> discord.Embed:
+        """創建申請歷史嵌入訊息。"""
+        embed = discord.Embed(
+            title="📋 我的申請記錄",
+            color=0x9B59B6,
+        )
+
+        if not page_items:
+            embed.add_field(
+                name="📭 無申請記錄",
+                value="目前沒有任何申請記錄。",
+                inline=False,
+            )
+        else:
+            lines: list[str] = []
+            for _, status, summary, app in page_items:
+                timestamp = app.created_at.astimezone(timezone.utc).strftime("%m-%d %H:%M")
+                if status == "pending":
+                    status_icon = "⏳ 待審批"
+                elif status == "approved":
+                    status_icon = "✅ 已批准"
+                else:
+                    status_icon = "❌ 已拒絕"
+
+                line = f"`{timestamp}` {summary}\n└─ {status_icon}"
+                if status == "rejected" and app.rejection_reason:
+                    reason_short = (
+                        app.rejection_reason[:30] + "..."
+                        if len(app.rejection_reason) > 30
+                        else app.rejection_reason
+                    )
+                    line += f" | {reason_short}"
+                lines.append(line)
+
+            embed.add_field(
+                name=f"申請記錄（第 {page_num} 頁，共 {total_pages} 頁）",
+                value="\n".join(lines),
+                inline=False,
+            )
+
+        embed.set_footer(text="使用下方按鈕導航或返回政府服務")
+        return embed
+
+    def _add_government_controls(self) -> None:
+        """添加政府服務分頁的控制項。"""
+        # 申請福利按鈕
+        welfare_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="💰 申請福利",
+            style=discord.ButtonStyle.success,
+            custom_id="personal_panel_apply_welfare",
+            row=2,
+        )
+        welfare_btn.callback = self._on_apply_welfare
+        self.add_item(welfare_btn)
+
+        # 申請商業許可按鈕
+        license_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="📜 申請商業許可",
+            style=discord.ButtonStyle.success,
+            custom_id="personal_panel_apply_license",
+            row=2,
+        )
+        license_btn.callback = self._on_apply_license
+        self.add_item(license_btn)
+
+        # 查看申請歷史按鈕
+        history_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="📋 申請歷史",
+            style=discord.ButtonStyle.secondary,
+            custom_id="personal_panel_application_history",
+            row=2,
+        )
+        history_btn.callback = self._on_application_history
+        self.add_item(history_btn)
+
+    async def _on_government_tab(self, interaction: discord.Interaction) -> None:
+        """切換到政府服務分頁。"""
+        if not await self._check_author(interaction):
+            return
+        self.current_tab = "government"
+        self._gov_page = 0
+
+        # 載入申請記錄
+        await self._load_applications()
+
+        self._update_view_items()
+        await edit_message_compat(interaction, embed=self.create_government_embed(), view=self)
+
+    async def _load_applications(self) -> None:
+        """載入用戶的申請記錄。"""
+        try:
+            welfare_result = await self.application_service.get_user_welfare_applications(
+                guild_id=self.guild_id,
+                applicant_id=self.author_id,
+                limit=20,
+            )
+            if not welfare_result.is_err():
+                self._welfare_applications = list(welfare_result.unwrap())
+        except Exception as exc:
+            LOGGER.warning("personal_panel.load_welfare_applications.error", error=str(exc))
+
+        try:
+            license_result = await self.application_service.get_user_license_applications(
+                guild_id=self.guild_id,
+                applicant_id=self.author_id,
+                limit=20,
+            )
+            if not license_result.is_err():
+                self._license_applications = list(license_result.unwrap())
+        except Exception as exc:
+            LOGGER.warning("personal_panel.load_license_applications.error", error=str(exc))
+
+    async def _on_apply_welfare(self, interaction: discord.Interaction) -> None:
+        """處理申請福利按鈕點擊。"""
+        if not await self._check_author(interaction):
+            return
+
+        modal = WelfareApplicationModal(
+            currency_display=self._get_currency_display(),
+            on_submit=self._handle_welfare_submit,
+        )
+        await send_modal_compat(interaction, modal)
+
+    async def _on_apply_license(self, interaction: discord.Interaction) -> None:
+        """處理申請商業許可按鈕點擊。"""
+        if not await self._check_author(interaction):
+            return
+
+        # 預設商業許可類型列表
+        # TODO: 後續可以從配置檔或資料庫讀取
+        license_types = [
+            "餐飲業",
+            "零售業",
+            "製造業",
+            "服務業",
+            "建築業",
+            "運輸業",
+            "金融業",
+        ]
+
+        modal = LicenseApplicationModal(
+            license_types=license_types,
+            on_submit=self._handle_license_submit,
+        )
+        await send_modal_compat(interaction, modal)
+
+    async def _on_application_history(self, interaction: discord.Interaction) -> None:
+        """處理查看申請歷史按鈕點擊。"""
+        if not await self._check_author(interaction):
+            return
+
+        all_applications = self._get_combined_applications()
+        total_pages = max(
+            1, (len(all_applications) + self._gov_page_size - 1) // self._gov_page_size
+        )
+
+        start = self._gov_page * self._gov_page_size
+        end = start + self._gov_page_size
+        page_items = all_applications[start:end]
+
+        embed = self.create_application_history_embed(page_items, self._gov_page + 1, total_pages)
+        await send_message_compat(interaction, embed=embed, ephemeral=True)
+
+    async def _handle_welfare_submit(
+        self,
+        interaction: discord.Interaction,
+        amount: int,
+        reason: str,
+    ) -> None:
+        """處理福利申請提交。"""
+        result = await self.application_service.submit_welfare_application(
+            guild_id=self.guild_id,
+            applicant_id=self.author_id,
+            amount=amount,
+            reason=reason,
+        )
+
+        if result.is_err():
+            error = result.unwrap_err()
+            await send_message_compat(interaction, content=f"❌ {error}", ephemeral=True)
+            return
+
+        # 重新載入申請記錄
+        await self._load_applications()
+
+        await send_message_compat(
+            interaction,
+            content="✅ 福利申請已提交，等待內政部審批。",
+            ephemeral=True,
+        )
+
+    async def _handle_license_submit(
+        self,
+        interaction: discord.Interaction,
+        license_type: str,
+        reason: str,
+    ) -> None:
+        """處理商業許可申請提交。"""
+        result = await self.application_service.submit_license_application(
+            guild_id=self.guild_id,
+            applicant_id=self.author_id,
+            license_type=license_type,
+            reason=reason,
+        )
+
+        if result.is_err():
+            error = result.unwrap_err()
+            error_msg = str(error)
+            if "duplicate_pending_application" in error_msg:
+                error_msg = "您已有相同類型的待審批申請"
+            elif "already_has_license" in error_msg:
+                error_msg = "您已持有相同類型的有效許可"
+            await send_message_compat(interaction, content=f"❌ {error_msg}", ephemeral=True)
+            return
+
+        # 重新載入申請記錄
+        await self._load_applications()
+
+        await send_message_compat(
+            interaction,
+            content="✅ 商業許可申請已提交，等待內政部審批。",
+            ephemeral=True,
+        )
+
+
+class WelfareApplicationModal(discord.ui.Modal):
+    """福利申請 Modal。"""
+
+    amount_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+        label="申請金額",
+        placeholder="請輸入正整數金額",
+        required=True,
+        min_length=1,
+        max_length=15,
+    )
+
+    reason_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+        label="申請原因",
+        placeholder="請說明申請福利的原因",
+        required=True,
+        min_length=1,
+        max_length=500,
+        style=discord.TextStyle.paragraph,
+    )
+
+    def __init__(
+        self,
+        *,
+        currency_display: str,
+        on_submit: Callable[[discord.Interaction, int, str], Coroutine[Any, Any, None]],
+    ) -> None:
+        super().__init__(title="申請福利")
+        self.currency_display = currency_display
+        self._on_submit = on_submit
+        self.amount_input.placeholder = f"請輸入申請金額（{currency_display}）"
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        """處理 Modal 提交。"""
+        try:
+            amount = int(self.amount_input.value.strip())
+            if amount <= 0:
+                await send_message_compat(
+                    interaction, content="❌ 申請金額必須為正整數。", ephemeral=True
+                )
+                return
+        except ValueError:
+            await send_message_compat(
+                interaction, content="❌ 申請金額必須為正整數。", ephemeral=True
+            )
+            return
+
+        reason = self.reason_input.value.strip()
+        if not reason:
+            await send_message_compat(interaction, content="❌ 請填寫申請原因。", ephemeral=True)
+            return
+
+        await self._on_submit(interaction, amount, reason)
+
+
+class LicenseApplicationModal(discord.ui.Modal):
+    """商業許可申請 Modal。"""
+
+    license_type_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+        label="許可類型",
+        placeholder="請輸入許可類型（例如：餐飲業、零售業）",
+        required=True,
+        min_length=1,
+        max_length=50,
+    )
+
+    reason_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+        label="申請原因",
+        placeholder="請說明申請商業許可的原因",
+        required=True,
+        min_length=1,
+        max_length=500,
+        style=discord.TextStyle.paragraph,
+    )
+
+    def __init__(
+        self,
+        *,
+        license_types: list[str],
+        on_submit: Callable[[discord.Interaction, str, str], Coroutine[Any, Any, None]],
+    ) -> None:
+        super().__init__(title="申請商業許可")
+        self.license_types = license_types
+        self._on_submit = on_submit
+        if license_types:
+            self.license_type_input.placeholder = f"可選類型：{', '.join(license_types[:5])}"
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        """處理 Modal 提交。"""
+        license_type = self.license_type_input.value.strip()
+        if not license_type:
+            await send_message_compat(interaction, content="❌ 請填寫許可類型。", ephemeral=True)
+            return
+
+        reason = self.reason_input.value.strip()
+        if not reason:
+            await send_message_compat(interaction, content="❌ 請填寫申請原因。", ephemeral=True)
+            return
+
+        await self._on_submit(interaction, license_type, reason)
+
 
 class TransferModal(discord.ui.Modal):
     """轉帳金額輸入 Modal。"""
@@ -777,4 +1188,9 @@ class TransferModal(discord.ui.Modal):
         await self._on_submit(interaction, amount, reason)
 
 
-__all__ = ["PersonalPanelView", "TransferModal"]
+__all__ = [
+    "PersonalPanelView",
+    "TransferModal",
+    "WelfareApplicationModal",
+    "LicenseApplicationModal",
+]
