@@ -2,6 +2,7 @@
 
 Handles welfare and business license application workflows.
 """
+
 # pyright: reportUnknownMemberType=false
 # pyright: reportUnknownVariableType=false
 # pyright: reportUnknownArgumentType=false
@@ -15,10 +16,10 @@ Handles welfare and business license application workflows.
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Sequence
-import inspect
+from typing import Any, Callable, Sequence
 
 import structlog
 
@@ -263,7 +264,7 @@ class ApplicationService:
         *,
         application_id: int,
         reviewer_id: int,
-        transfer_callback: object,
+        transfer_callback: Callable[..., Any] | None,
     ) -> Result[WelfareApplication, Error]:
         """批准福利申請並（可選）立即執行福利發放。
 
@@ -317,9 +318,11 @@ class ApplicationService:
                                 )
                             except Exception:
                                 param_names = set()
-                                accepts_var_kwargs = True  # 寧可多給參數以避免 None 造成的 int() 失敗
+                                accepts_var_kwargs = (
+                                    True  # 寧可多給參數以避免 None 造成的 int() 失敗
+                                )
 
-                            payload = {}
+                            payload: dict[str, Any] = {}
                             # 若回調接受 **kwargs，直接提供完整上下文；否則依照實際參數命名填入
                             if accepts_var_kwargs or "application" in param_names:
                                 payload["application"] = approved
@@ -363,7 +366,7 @@ class ApplicationService:
                             raise BusinessLogicError(
                                 f"Welfare disbursement failed: {exc}",
                                 context={"error_type": "welfare_disburse_failed"},
-                            )
+                            ) from exc
 
                     LOGGER.info(
                         "application.welfare.approved",

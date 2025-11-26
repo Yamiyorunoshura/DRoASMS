@@ -935,6 +935,8 @@ class CouncilPanelView(PersistentPanelView):
         embed = discord.Embed(title="常任理事會面板", color=0x95A5A6)
         balance_str = "N/A"
         try:
+            if self.author_id is None:
+                raise ValueError("author_id is required")
             balance_service = BalanceService(get_pool())
             council_account_id = CouncilService.derive_council_account_id(self.guild.id)
             snap_result = await balance_service.get_balance_snapshot(

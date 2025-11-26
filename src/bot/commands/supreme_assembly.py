@@ -559,6 +559,8 @@ class SupremeAssemblyPanelView(PersistentPanelView):
         embed = discord.Embed(title="最高人民會議面板", color=0xE74C3C)
         balance_str = "N/A"
         try:
+            if self.author_id is None:
+                raise ValueError("author_id is required")
             balance_service = BalanceService(get_pool())
             account_id = SupremeAssemblyService.derive_account_id(self.guild.id)
             snap_result = await balance_service.get_balance_snapshot(
@@ -568,12 +570,13 @@ class SupremeAssemblyPanelView(PersistentPanelView):
                 can_view_others=True,
             )
             if hasattr(snap_result, "is_err") and callable(getattr(snap_result, "is_err", None)):
-                if snap_result.is_err():
-                    raise snap_result.unwrap_err()
-                snap = snap_result.unwrap()
+                _result = cast("Result[Any, Exception]", snap_result)
+                if _result.is_err():
+                    raise _result.unwrap_err()
+                snap = _result.unwrap()
             else:
                 snap = snap_result  # Legacy BalanceSnapshot
-            balance_str = f"{snap.balance:,}"  # type: ignore[union-attr]
+            balance_str = f"{getattr(snap, 'balance', 0):,}"
         except Exception as exc:  # pragma: no cover - best effort
             LOGGER.warning(
                 "supreme_assembly.panel.summary.balance_error",

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.1] - 2025-11-26
+
+### Fixed
+
+- **Gateway 錯誤處理改進**：
+  - 移除 `@async_returns_result` 裝飾器，改用顯式 try/except 區塊
+  - `WelfareApplicationGateway.create_application` 和 `LicenseApplicationGateway.create_application` 增加異常捕獲
+  - 確保所有資料庫例外都被正確包裝為 `Result[T, DatabaseError]` 類型
+
+### Changed
+
+- **測試程式碼格式化**：調整 `test_state_council_service.py` 中的程式碼格式
+
+[Compare changes](https://github.com/Yamiyorunoshura/DRoASMS/compare/v3.1.0...v3.1.1)
+
 ## [3.1.0] - 2025-11-26
 
 ### Added

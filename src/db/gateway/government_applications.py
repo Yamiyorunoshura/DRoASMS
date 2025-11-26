@@ -15,7 +15,7 @@ from src.cython_ext.state_council_models import (
     WelfareApplication,
     WelfareApplicationListResult,
 )
-from src.infra.result import DatabaseError, Err, Error, Ok, Result, async_returns_result
+from src.infra.result import DatabaseError, Err, Error, Ok, Result
 from src.infra.types.db import ConnectionProtocol
 
 ApplicationStatus = Literal["pending", "approved", "rejected"]
@@ -59,7 +59,6 @@ class WelfareApplicationGateway:
     def __init__(self, *, schema: str = "governance") -> None:
         self._schema = schema
 
-    @async_returns_result(DatabaseError)
     async def create_application(
         self,
         connection: ConnectionProtocol,
@@ -81,18 +80,20 @@ class WelfareApplicationGateway:
         Returns:
             Result[WelfareApplication, Error]: 成功返回申請記錄
         """
-        sql = f"""
-            INSERT INTO {self._schema}.welfare_applications
-                (guild_id, applicant_id, amount, reason)
-            VALUES ($1, $2, $3, $4)
-            RETURNING *
-        """
-        row = await connection.fetchrow(sql, guild_id, applicant_id, amount, reason)
-        if row is None:
-            return Err(DatabaseError("Failed to create welfare application"))
-        return Ok(_row_to_welfare_application(dict(row)))
+        try:
+            sql = f"""
+                INSERT INTO {self._schema}.welfare_applications
+                    (guild_id, applicant_id, amount, reason)
+                VALUES ($1, $2, $3, $4)
+                RETURNING *
+            """
+            row = await connection.fetchrow(sql, guild_id, applicant_id, amount, reason)
+            if row is None:
+                return Err(DatabaseError("Failed to create welfare application"))
+            return Ok(_row_to_welfare_application(dict(row)))
+        except Exception as exc:
+            return Err(DatabaseError(str(exc)))
 
-    @async_returns_result(DatabaseError)
     async def get_application(
         self,
         connection: ConnectionProtocol,
@@ -109,7 +110,6 @@ class WelfareApplicationGateway:
             return Ok(None)
         return Ok(_row_to_welfare_application(dict(row)))
 
-    @async_returns_result(DatabaseError)
     async def list_applications(
         self,
         connection: ConnectionProtocol,
@@ -166,7 +166,6 @@ class WelfareApplicationGateway:
             )
         )
 
-    @async_returns_result(DatabaseError)
     async def approve_application(
         self,
         connection: ConnectionProtocol,
@@ -189,7 +188,6 @@ class WelfareApplicationGateway:
             return Err(DatabaseError("Application not found or not pending"))
         return Ok(_row_to_welfare_application(dict(row)))
 
-    @async_returns_result(DatabaseError)
     async def reject_application(
         self,
         connection: ConnectionProtocol,
@@ -214,7 +212,6 @@ class WelfareApplicationGateway:
             return Err(DatabaseError("Application not found or not pending"))
         return Ok(_row_to_welfare_application(dict(row)))
 
-    @async_returns_result(DatabaseError)
     async def get_user_applications(
         self,
         connection: ConnectionProtocol,
@@ -240,7 +237,6 @@ class LicenseApplicationGateway:
     def __init__(self, *, schema: str = "governance") -> None:
         self._schema = schema
 
-    @async_returns_result(DatabaseError)
     async def create_application(
         self,
         connection: ConnectionProtocol,
@@ -251,18 +247,20 @@ class LicenseApplicationGateway:
         reason: str,
     ) -> Result[LicenseApplication, Error]:
         """建立商業許可申請。"""
-        sql = f"""
-            INSERT INTO {self._schema}.license_applications
-                (guild_id, applicant_id, license_type, reason)
-            VALUES ($1, $2, $3, $4)
-            RETURNING *
-        """
-        row = await connection.fetchrow(sql, guild_id, applicant_id, license_type, reason)
-        if row is None:
-            return Err(DatabaseError("Failed to create license application"))
-        return Ok(_row_to_license_application(dict(row)))
+        try:
+            sql = f"""
+                INSERT INTO {self._schema}.license_applications
+                    (guild_id, applicant_id, license_type, reason)
+                VALUES ($1, $2, $3, $4)
+                RETURNING *
+            """
+            row = await connection.fetchrow(sql, guild_id, applicant_id, license_type, reason)
+            if row is None:
+                return Err(DatabaseError("Failed to create license application"))
+            return Ok(_row_to_license_application(dict(row)))
+        except Exception as exc:
+            return Err(DatabaseError(str(exc)))
 
-    @async_returns_result(DatabaseError)
     async def get_application(
         self,
         connection: ConnectionProtocol,
@@ -279,7 +277,6 @@ class LicenseApplicationGateway:
             return Ok(None)
         return Ok(_row_to_license_application(dict(row)))
 
-    @async_returns_result(DatabaseError)
     async def list_applications(
         self,
         connection: ConnectionProtocol,
@@ -342,7 +339,6 @@ class LicenseApplicationGateway:
             )
         )
 
-    @async_returns_result(DatabaseError)
     async def approve_application(
         self,
         connection: ConnectionProtocol,
@@ -365,7 +361,6 @@ class LicenseApplicationGateway:
             return Err(DatabaseError("Application not found or not pending"))
         return Ok(_row_to_license_application(dict(row)))
 
-    @async_returns_result(DatabaseError)
     async def reject_application(
         self,
         connection: ConnectionProtocol,
@@ -390,7 +385,6 @@ class LicenseApplicationGateway:
             return Err(DatabaseError("Application not found or not pending"))
         return Ok(_row_to_license_application(dict(row)))
 
-    @async_returns_result(DatabaseError)
     async def check_pending_application(
         self,
         connection: ConnectionProtocol,
@@ -410,7 +404,6 @@ class LicenseApplicationGateway:
         row = await connection.fetchrow(sql, guild_id, applicant_id, license_type)
         return Ok(row[0] if row else False)
 
-    @async_returns_result(DatabaseError)
     async def get_user_applications(
         self,
         connection: ConnectionProtocol,

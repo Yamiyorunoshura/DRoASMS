@@ -44,7 +44,9 @@ from src.infra.events.state_council_events import (
 )
 from src.infra.result import (
     Err,
+    Error,
     Ok,
+    Result,
 )
 
 LOGGER = structlog.get_logger(__name__)
@@ -663,6 +665,8 @@ class StateCouncilPanelView(PersistentPanelView):
     """國務院面板容器。"""
 
     panel_type = "state_council"
+    # 重新聲明類型以覆蓋父類的 int | None
+    author_id: int
 
     def __init__(
         self,
@@ -3844,6 +3848,8 @@ class HomelandSecuritySuspectsPanelView(PersistentPanelView):
     """國土安全部嫌疑人管理面板。"""
 
     panel_type = "homeland_security"
+    # 重新聲明類型以覆蓋父類的 int | None
+    author_id: int
 
     def __init__(
         self,
@@ -5297,8 +5303,8 @@ class ApplicationManagementView(discord.ui.View):
                 page_size=100,
             )
             if not welfare_result.is_err():
-                result_data = welfare_result.unwrap()
-                self._welfare_apps = list(result_data.applications)
+                welfare_data = welfare_result.unwrap()
+                self._welfare_apps = list(welfare_data.applications)
         except Exception as exc:
             LOGGER.warning("application_management.load_welfare.error", error=str(exc))
 
@@ -5311,8 +5317,8 @@ class ApplicationManagementView(discord.ui.View):
                 page_size=100,
             )
             if not license_result.is_err():
-                result_data = license_result.unwrap()
-                self._license_apps = list(result_data.applications)
+                license_data = license_result.unwrap()
+                self._license_apps = list(license_data.applications)
         except Exception as exc:
             LOGGER.warning("application_management.load_license.error", error=str(exc))
 
@@ -5337,9 +5343,11 @@ class ApplicationManagementView(discord.ui.View):
         # 篩選按鈕
         all_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="全部",
-            style=discord.ButtonStyle.primary
-            if self.filter_type is None
-            else discord.ButtonStyle.secondary,
+            style=(
+                discord.ButtonStyle.primary
+                if self.filter_type is None
+                else discord.ButtonStyle.secondary
+            ),
             row=0,
         )
         all_btn.callback = self._filter_all_callback
@@ -5347,9 +5355,11 @@ class ApplicationManagementView(discord.ui.View):
 
         welfare_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="💰 福利申請",
-            style=discord.ButtonStyle.primary
-            if self.filter_type == "welfare"
-            else discord.ButtonStyle.secondary,
+            style=(
+                discord.ButtonStyle.primary
+                if self.filter_type == "welfare"
+                else discord.ButtonStyle.secondary
+            ),
             row=0,
         )
         welfare_btn.callback = self._filter_welfare_callback
@@ -5357,9 +5367,11 @@ class ApplicationManagementView(discord.ui.View):
 
         license_btn: discord.ui.Button[Any] = discord.ui.Button(
             label="📜 許可申請",
-            style=discord.ButtonStyle.primary
-            if self.filter_type == "license"
-            else discord.ButtonStyle.secondary,
+            style=(
+                discord.ButtonStyle.primary
+                if self.filter_type == "license"
+                else discord.ButtonStyle.secondary
+            ),
             row=0,
         )
         license_btn.callback = self._filter_license_callback
@@ -5387,7 +5399,7 @@ class ApplicationManagementView(discord.ui.View):
                 custom_id=f"approve_{app_type}_{app.id}",
                 row=1 + i,
             )
-            approve_btn.callback = self._make_approve_callback(app_type, app.id)  # type: ignore[method-assign]
+            approve_btn.callback = self._make_approve_callback(app_type, app.id)
             self.add_item(approve_btn)
 
             # 拒絕按鈕
@@ -5397,7 +5409,7 @@ class ApplicationManagementView(discord.ui.View):
                 custom_id=f"reject_{app_type}_{app.id}",
                 row=1 + i,
             )
-            reject_btn.callback = self._make_reject_callback(app_type, app.id)  # type: ignore[method-assign]
+            reject_btn.callback = self._make_reject_callback(app_type, app.id)
             self.add_item(reject_btn)
 
     def build_embed(self) -> discord.Embed:
@@ -5454,12 +5466,13 @@ class ApplicationManagementView(discord.ui.View):
                 return
 
             if app_type == "welfare":
+
                 async def _welfare_transfer_callback(**kwargs: Any) -> bool:
                     application = kwargs.get("application")
                     if application is None:
                         # 後備：以 kwargs 重新組合資料
-                        applicant_id = int(kwargs.get("applicant_id"))
-                        amount = int(kwargs.get("amount"))
+                        applicant_id = int(kwargs.get("applicant_id") or 0)
+                        amount = int(kwargs.get("amount") or 0)
                         reason = str(kwargs.get("reason") or "福利發放")
                         guild_id = int(kwargs.get("guild_id", self.guild_id))
                     else:
@@ -5479,7 +5492,7 @@ class ApplicationManagementView(discord.ui.View):
                     )
                     return True
 
-                result = await self._app_service.approve_welfare_application(
+                result: Result[Any, Error] = await self._app_service.approve_welfare_application(
                     application_id=app_id,
                     reviewer_id=self.author_id,
                     transfer_callback=_welfare_transfer_callback,

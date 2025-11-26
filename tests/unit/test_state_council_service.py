@@ -810,9 +810,9 @@ class TestStateCouncilService:
             gw.fetch_government_accounts.return_value = [dept_account]
 
             # 模擬 DB 層不足錯誤 → 服務層應轉換為 InsufficientFundsError
-            cast(
-                AsyncMock, service._transfer.transfer_currency
-            ).side_effect = InsufficientBalanceError("Transfer denied: insufficient funds")
+            cast(AsyncMock, service._transfer.transfer_currency).side_effect = (
+                InsufficientBalanceError("Transfer denied: insufficient funds")
+            )
 
             with patch.object(service, "check_department_permission", return_value=True):
                 with pytest.raises(InsufficientFundsError):

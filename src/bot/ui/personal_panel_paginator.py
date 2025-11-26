@@ -77,6 +77,7 @@ class PersonalPanelView(PersistentPanelView):
             timeout: 超時時間（秒）
         """
         super().__init__(author_id=author_id, timeout=timeout)
+        self._author_id: int = author_id  # Store non-optional copy for type safety
         self.guild_id = guild_id
         self.balance_snapshot = balance_snapshot
         self.history_entries = history_entries
@@ -724,7 +725,7 @@ class PersonalPanelView(PersistentPanelView):
         try:
             success, message = await self.transfer_callback(
                 self.guild_id,
-                self.author_id,
+                self._author_id,
                 self._pending_transfer_target_id,
                 reason,
                 amount,
@@ -802,12 +803,12 @@ class PersonalPanelView(PersistentPanelView):
     ) -> list[tuple[str, str, str, Any]]:
         """取得合併的申請列表 (type, status, summary, application)。"""
         combined: list[tuple[str, str, str, Any]] = []
-        for app in self._welfare_applications:
-            summary = f"福利申請 - {app.amount:,} 元"
-            combined.append(("welfare", app.status, summary, app))
-        for app in self._license_applications:
-            summary = f"商業許可 - {app.license_type}"
-            combined.append(("license", app.status, summary, app))
+        for welfare_app in self._welfare_applications:
+            summary = f"福利申請 - {welfare_app.amount:,} 元"
+            combined.append(("welfare", welfare_app.status, summary, welfare_app))
+        for license_app in self._license_applications:
+            summary = f"商業許可 - {license_app.license_type}"
+            combined.append(("license", license_app.status, summary, license_app))
         # 按時間排序（最新在前）
         combined.sort(key=lambda x: x[3].created_at, reverse=True)
         return combined
@@ -907,7 +908,7 @@ class PersonalPanelView(PersistentPanelView):
         try:
             welfare_result = await self.application_service.get_user_welfare_applications(
                 guild_id=self.guild_id,
-                applicant_id=self.author_id,
+                applicant_id=self._author_id,
                 limit=20,
             )
             if not welfare_result.is_err():
@@ -918,7 +919,7 @@ class PersonalPanelView(PersistentPanelView):
         try:
             license_result = await self.application_service.get_user_license_applications(
                 guild_id=self.guild_id,
-                applicant_id=self.author_id,
+                applicant_id=self._author_id,
                 limit=20,
             )
             if not license_result.is_err():
@@ -986,7 +987,7 @@ class PersonalPanelView(PersistentPanelView):
         """處理福利申請提交。"""
         result = await self.application_service.submit_welfare_application(
             guild_id=self.guild_id,
-            applicant_id=self.author_id,
+            applicant_id=self._author_id,
             amount=amount,
             reason=reason,
         )
@@ -1014,7 +1015,7 @@ class PersonalPanelView(PersistentPanelView):
         """處理商業許可申請提交。"""
         result = await self.application_service.submit_license_application(
             guild_id=self.guild_id,
-            applicant_id=self.author_id,
+            applicant_id=self._author_id,
             license_type=license_type,
             reason=reason,
         )

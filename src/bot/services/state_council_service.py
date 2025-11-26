@@ -175,7 +175,7 @@ class StateCouncilService:
                     return 0
                 record = result.unwrap()
             else:
-                record = result
+                record = result  # type: ignore[assignment]
             bal = getattr(record, "balance", None)
             return int(bal) if isinstance(bal, (int, float)) else None
         except Exception:
@@ -498,7 +498,7 @@ class StateCouncilService:
                     conn, guild_id=guild_id, member_id=account_id
                 )
                 if econ_balance is None:
-                    econ_balance = int(gov_balance) if gov_balance is not None else 0
+                    econ_balance = int(gov_balance)
                 if int(econ_balance) < int(required_amount):
                     econ_balance = int(gov_balance)
 
@@ -1563,8 +1563,7 @@ class StateCouncilService:
                 reference_val = period or None
                 if normalized_type not in allowed_welfare_types:
                     # 保留原始輸入於 reference 以利追蹤，並改用安全預設值
-                    if reference_val is None and raw_type is not None:
-                        reference_val = str(raw_type)
+                    reference_val = str(raw_type)
                     normalized_type = "特殊福利"
 
                 kwargs: dict[str, Any] = {
