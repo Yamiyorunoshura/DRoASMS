@@ -22,6 +22,12 @@ start-dev: ## 啟動機器人（開發環境，包含完整開發工具和 pgadm
 start-prod: ## 啟動機器人（生產環境，僅啟動 bot 和 postgres，後台執行）
 	$(DOCKER_COMPOSE) --profile prod up -d --build --force-recreate
 
+restart: ## 重啟機器人
+	docker compose down && make start-prod
+
+restart-in-dev-mode: ## 重啟機器人（開發環境）
+	docker compose down && make start-dev
+
 install: ## 安裝專案依賴
 	uv sync --group dev
 
@@ -57,9 +63,6 @@ compile-check: ## 執行 Cython 編譯檢查（增量編譯，錯誤不阻止執
 	else \
 		echo "⚠️  Cython 編譯檢查發現錯誤，但不阻止 CI 繼續執行"; \
 	fi
-
-ci-local: compile-check format-check lint type-check pyright-check pre-commit-all ## 執行所有本地 CI 檢查（格式化、lint、型別檢查、pre-commit、Cython編譯檢查）
-	@echo "✓ 所有本地 CI 檢查通過！"
 
 ci: ## 執行完整的 CI 檢查（包含所有測試與整合測試）
 	$(TEST_RUN) ci
@@ -105,42 +108,3 @@ test-council: ## 使用測試容器執行議會相關測試
 
 test-all: ## 使用測試容器執行所有測試類型（含整合測試與 SQL 函數測試）
 	$(TEST_RUN) all && $(TEST_RUN) integration
-
-# ---- 統一編譯器配置 ----
-unified-migrate: ## 遷移配置到統一格式
-	@echo "遷移編譯配置到統一格式..."
-	uv run python scripts/migrate_unified_config.py
-
-unified-migrate-dry-run: ## 試運行配置遷移（不修改文件）
-	@echo "試運行配置遷移..."
-	uv run python scripts/migrate_unified_config.py --dry-run
-
-unified-compile: ## 使用 Cython 編譯器編譯所有模組
-	@echo "使用 Cython 編譯器編譯模組..."
-	uv run python scripts/compile_modules.py compile
-
-unified-compile-test: ## 執行 Cython 專用測試
-	@echo "執行 Cython 專用測試..."
-	uv run python scripts/compile_modules.py test
-
-unified-compile-clean: ## 清理 Cython 產物
-	@echo "清理 Cython 產物..."
-	uv run python scripts/compile_modules.py clean
-
-unified-refresh-baseline: ## 重新編譯並刷新性能監控基線（確保結果穩定後再執行）
-	@echo "刷新 Cython 編譯性能基線..."
-	uv run python scripts/compile_modules.py compile --refresh-baseline
-
-unified-status: ## 顯示 Cython 編譯狀態
-	@echo "=== Cython 編譯狀態 ==="
-	@if [ -f "build/cython/compile_report.json" ]; then \
-		echo "編譯報告: ✅ 存在"; \
-		cat build/cython/compile_report.json; \
-	else \
-		echo "編譯報告: ❌ 不存在"; \
-	fi
-	@if [ -d "build/cython" ]; then \
-		echo "編譯模組: $$(find build/cython -name "*.so" | wc -l | tr -d ' ') 個"; \
-	else \
-		echo "編譯模組: 0 個"; \
-	fi
