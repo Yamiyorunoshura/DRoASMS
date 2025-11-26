@@ -267,3 +267,146 @@ class TestPanelView:
             or (leader_role_id and leader_role_id in user_roles)
         )
         assert is_leader is False
+
+
+class TestHelpEmbedGeneration:
+    """Task 3.1: Help embed generation tests for improved guidance.
+
+    使用 mock 物件直接測試 help embed 生成邏輯，避免 event loop 問題。
+    """
+
+    def _create_mock_view(self, current_page: str) -> MagicMock:
+        """建立用於測試 help embed 的 mock view。"""
+        from src.bot.commands.state_council import StateCouncilPanelView
+
+        # 建立 mock 並綁定真實方法
+        mock_view = MagicMock()
+        mock_view.current_page = current_page
+
+        # 綁定所有 help embed 方法（測試需要存取受保護的方法）
+        mock_view._build_help_embed = lambda: StateCouncilPanelView._build_help_embed(
+            mock_view
+        )  # pyright: ignore[reportPrivateUsage]
+        mock_view._build_overview_help_embed = (
+            lambda: StateCouncilPanelView._build_overview_help_embed(
+                mock_view
+            )  # pyright: ignore[reportPrivateUsage]
+        )
+        mock_view._build_internal_affairs_help_embed = (
+            lambda: StateCouncilPanelView._build_internal_affairs_help_embed(
+                mock_view
+            )  # pyright: ignore[reportPrivateUsage]
+        )
+        mock_view._build_finance_help_embed = (
+            lambda: StateCouncilPanelView._build_finance_help_embed(
+                mock_view
+            )  # pyright: ignore[reportPrivateUsage]
+        )
+        mock_view._build_security_help_embed = (
+            lambda: StateCouncilPanelView._build_security_help_embed(
+                mock_view
+            )  # pyright: ignore[reportPrivateUsage]
+        )
+        mock_view._build_central_bank_help_embed = (
+            lambda: StateCouncilPanelView._build_central_bank_help_embed(
+                mock_view
+            )  # pyright: ignore[reportPrivateUsage]
+        )
+        mock_view._build_justice_help_embed = (
+            lambda: StateCouncilPanelView._build_justice_help_embed(
+                mock_view
+            )  # pyright: ignore[reportPrivateUsage]
+        )
+        mock_view._build_generic_help_embed = (
+            lambda: StateCouncilPanelView._build_generic_help_embed(
+                mock_view
+            )  # pyright: ignore[reportPrivateUsage]
+        )
+
+        return mock_view
+
+    def test_overview_help_embed_has_fields(self) -> None:
+        """Task 3.1.1: 總覽頁指引使用 fields 分區排版。"""
+        mock_view = self._create_mock_view("總覽")
+        embed = mock_view._build_help_embed()
+
+        assert embed.title == "🏛️ 使用指引｜國務院總覽"
+        assert len(embed.fields) >= 4  # 功能總覽, 權限說明, 注意事項, 快速開始
+
+        # 檢查必要的 field 名稱
+        field_names = [f.name for f in embed.fields]
+        assert "📋 功能總覽" in field_names
+        assert "🔑 權限說明" in field_names
+        assert "⚠️ 注意事項" in field_names
+        assert "💡 快速開始" in field_names
+
+    def test_internal_affairs_help_embed_has_fields(self) -> None:
+        """Task 3.1.2: 內政部指引使用 fields 分區排版。"""
+        mock_view = self._create_mock_view("內政部")
+        embed = mock_view._build_help_embed()
+
+        assert embed.title == "🏘️ 使用指引｜內政部"
+        assert len(embed.fields) >= 4
+
+        field_names = [f.name for f in embed.fields]
+        assert "📋 功能列表" in field_names
+        assert "📝 操作步驟" in field_names
+        assert "⚠️ 注意事項" in field_names
+        assert "💡 常見問題" in field_names
+
+    def test_finance_help_embed_has_fields(self) -> None:
+        """Task 3.1.3: 財政部指引使用 fields 分區排版。"""
+        mock_view = self._create_mock_view("財政部")
+        embed = mock_view._build_help_embed()
+
+        assert embed.title == "💰 使用指引｜財政部"
+        assert len(embed.fields) >= 4
+
+        field_names = [f.name for f in embed.fields]
+        assert "📋 功能列表" in field_names
+        assert "📝 操作步驟" in field_names
+
+    def test_security_help_embed_has_fields(self) -> None:
+        """Task 3.1.4: 國土安全部指引使用 fields 分區排版。"""
+        mock_view = self._create_mock_view("國土安全部")
+        embed = mock_view._build_help_embed()
+
+        assert embed.title == "🛡️ 使用指引｜國土安全部"
+        assert len(embed.fields) >= 4
+
+    def test_central_bank_help_embed_has_risk_warning(self) -> None:
+        """Task 3.1.5: 中央銀行指引包含風險警告。"""
+        mock_view = self._create_mock_view("中央銀行")
+        embed = mock_view._build_help_embed()
+
+        assert embed.title == "🏦 使用指引｜中央銀行"
+
+        field_names = [f.name for f in embed.fields]
+        assert "⚠️ 風險警告" in field_names
+
+    def test_justice_help_embed_has_fields(self) -> None:
+        """Task 3.1.6: 法務部指引使用 fields 分區排版。"""
+        mock_view = self._create_mock_view("法務部")
+        embed = mock_view._build_help_embed()
+
+        assert embed.title == "⚖️ 使用指引｜法務部"
+        assert len(embed.fields) >= 5  # 功能列表, 操作步驟, 注意事項, 常見問題, 權限說明
+
+        field_names = [f.name for f in embed.fields]
+        assert "📋 功能列表" in field_names
+        assert "🔑 權限說明" in field_names
+
+    def test_help_embed_uses_blue_color(self) -> None:
+        """Task 3.1.7: 所有指引 embed 使用藍色主題。"""
+        for page in ["總覽", "內政部", "財政部", "國土安全部", "中央銀行", "法務部"]:
+            mock_view = self._create_mock_view(page)
+            embed = mock_view._build_help_embed()
+            assert embed.color == discord.Color.blue()
+
+    def test_generic_help_embed_fallback(self) -> None:
+        """Task 3.1.8: 未知部門使用通用指引。"""
+        mock_view = self._create_mock_view("未知部門")
+        embed = mock_view._build_help_embed()
+
+        assert "使用指引｜未知部門" in embed.title
+        assert len(embed.fields) >= 3

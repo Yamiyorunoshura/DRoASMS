@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2025-11-26
+
+### Added
+
+- **國務院面板使用指引改進**：重構 help embed 生成，使用 Discord embed fields 分區排版取代純文字
+  - 總覽頁指引新增：功能總覽、權限說明、注意事項、快速開始四大區塊
+  - 內政部指引新增：功能列表、操作步驟、注意事項、常見問題區塊
+  - 財政部指引新增：功能列表、操作步驟、注意事項區塊
+  - 國土安全部指引新增：功能列表、注意事項區塊
+  - 中央銀行指引新增：功能列表、注意事項、風險警告區塊
+  - 法務部指引新增：功能列表、操作步驟、注意事項、常見問題、權限說明區塊
+  - 通用指引提供未知部門的基礎指引 fallback
+- **Help Embed 單元測試**：新增 `TestHelpEmbedGeneration` 測試類別驗證所有指引 embed 結構
+
+### Changed
+
+- **Help Embed 樣式統一**：所有使用指引 embed 統一使用藍色主題（`discord.Color.blue()`）取代 blurple
+
+### Fixed
+
+- **型別註解修正**：移除 `_PatchedConnection` 類別上的 `# type: ignore[misc]` 註解
+
+[Compare changes](https://github.com/Yamiyorunoshura/DRoASMS/compare/v3.1.2...v3.2.0)
+
 ## [3.1.2] - 2025-11-26
 
 ### Added
