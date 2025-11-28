@@ -912,17 +912,20 @@ class PersonalPanelView(PersistentPanelView):
         if not await self._check_author(interaction):
             return
 
-        # 預設商業許可類型列表
-        # TODO: 後續可以從配置檔或資料庫讀取
-        license_types = [
-            "餐飲業",
-            "零售業",
-            "製造業",
-            "服務業",
-            "建築業",
-            "運輸業",
-            "金融業",
-        ]
+        from src.config.settings import get_settings
+
+        cfg = get_settings()
+        license_types = list(cfg.license_types or [])
+        if not license_types:
+            license_types = [
+                "餐飲業",
+                "零售業",
+                "製造業",
+                "服務業",
+                "建築業",
+                "運輸業",
+                "金融業",
+            ]
 
         modal = LicenseApplicationModal(
             license_types=license_types,

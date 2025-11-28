@@ -1,45 +1,44 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="DROASMS_", case_sensitive=False)
+
+    license_types: list[str] = Field(default_factory=list)
+
+
 class BotSettings(BaseSettings):
-    """Configuration values required to bootstrap the Discord bot."""
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
+    token: str = Field(
+        ...,
+        min_length=1,
+        validation_alias=AliasChoices("DISCORD_BOT_TOKEN", "DISCORD_TOKEN"),
     )
-
-    discord_token: str = Field(..., alias="DISCORD_TOKEN", min_length=1)
-    discord_guild_allowlist: str = Field(default="", alias="DISCORD_GUILD_ALLOWLIST")
-
-    @property
-    def token(self) -> str:
-        """Discord bot token."""
-        return self.discord_token
+    # Raw string from environment; parsed via property for flexibility
+    guild_allowlist_raw: str = Field(default="", alias="DISCORD_GUILD_ALLOWLIST")
 
     @property
-    def guild_allowlist(self) -> Sequence[int]:
-        """List of allowed guild IDs. Returns empty tuple if not set."""
-        if not self.discord_guild_allowlist:
-            return ()
+    def guild_allowlist(self) -> list[int]:
+        s = str(self.guild_allowlist_raw).strip()
+        if not s:
+            return []
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                items = [p.strip() for p in s[1:-1].split(",") if p.strip()]
+                return [int(i) for i in items]
+            except Exception:
+                # Fall through to comma parsing
+                pass
+        parts = [p.strip() for p in s.split(",") if p.strip()]
+        return [int(p) for p in parts]
 
-        parsed_ids = [
-            int(value.strip()) for value in self.discord_guild_allowlist.split(",") if value.strip()
-        ]
-        # 以保序去重，避免同一 guild 被重複同步造成潛在副作用或額外延遲
-        return tuple(dict.fromkeys(parsed_ids))
 
-    @field_validator("discord_token")
-    @classmethod
-    def validate_token(cls, v: str) -> str:
-        """Validate that token is not empty."""
-        if not v or not v.strip():
-            raise ValueError("DISCORD_TOKEN cannot be empty")
-        return v.strip()
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()

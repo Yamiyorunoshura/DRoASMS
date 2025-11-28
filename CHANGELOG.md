@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2025-11-28
+
+### Added
+
+- **單元測試覆蓋率提升**：新增多個核心服務的單元測試
+  - 新增 `test_company_service.py`：公司服務層測試，確保公司建立時不會重置序列
+  - 新增 `test_council_register.py`：議會註冊功能測試，驗證依賴注入正確性
+  - 新增 `test_settings_env_parsing.py`：環境變數解析測試，支援多種格式
+- **依賴注入強化**：
+  - 新增 `bootstrap.py` 嚴格依賴注入驗證，確保所有關鍵服務在啟動時正確解析
+  - 新增 `DepartmentRegistry` 和 `BusinessLicenseGateway` 服務註冊
+- **資料庫測試改進**：
+ - 更新 `test_fn_companies.sql` 和 `test_fn_list_active_proposals.sql`，新增資料清理機制
+
+### Changed
+
+- **服務層依賴注入重構**：
+  - `BalanceService` 現在接受 `EconomyQueryGateway` 依賴
+  - `CurrencyConfigService` 現在接受 `EconomyConfigurationGateway` 依賴
+  - `StateCouncilService` 強化依賴注入，新增多個閘道器依賴
+- **版本依賴更新**：
+  - 放寬 `asyncpg` 版本限制至 `<0.32.0`
+  - 放寬 `structlog` 版本限制至 `<26.0.0`
+  - 放寬 `black` 版本限制至 `<26.0.0`
+
+### Fixed
+
+- **公司序列管理**：修正公司建立時可能重置序列導致 ID 重複的問題
+- **環境變數解析**：改進 `DISCORD_BOT_TOKEN` 別名支援和 `guild_allowlist` 多格式解析
+
+[Compare changes](https://github.com/Yamiyorunoshura/DRoASMS/compare/v3.3.1...v3.4.0)
+
 ## [3.3.1] - 2025-11-28
 
 ### Changed

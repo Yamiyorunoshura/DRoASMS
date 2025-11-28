@@ -16,6 +16,7 @@ from src.cython_ext.state_council_models import (
     CompanyListResult,
 )
 from src.db.gateway.company import CompanyGateway
+from src.db.gateway.economy_queries import EconomyQueryGateway
 from src.infra.result import (
     DatabaseError,
     Err,
@@ -113,26 +114,14 @@ class CompanyService:
             return Err(InvalidCompanyNameError())
 
         async with self._pool.acquire() as connection:
-            # First, we need to get a temporary company ID to calculate account_id
-            # We'll use a sequence approach - get next ID first
             try:
-                row = await connection.fetchrow(
-                    "SELECT nextval('governance.companies_id_seq'::regclass)"
-                )
-                if row is None:
-                    return Err(DatabaseError("Failed to get next company ID"))
-                next_id: int = row[0]
+                next_id_result = await self._gateway.next_company_id(connection)
+                if isinstance(next_id_result, Err):
+                    return Err(next_id_result.error)
+                next_id = int(cast(Ok[int, Error], next_id_result).value)
 
-                # Calculate account_id
                 account_id = CompanyGateway.derive_account_id(guild_id, next_id)
 
-                # Reset sequence since we'll use the generated ID
-                await connection.execute(
-                    "SELECT setval('governance.companies_id_seq'::regclass, $1, false)",
-                    next_id,
-                )
-
-                # Create company
                 result = await self._gateway.create_company(
                     connection,
                     guild_id=guild_id,
@@ -156,7 +145,10 @@ class CompanyService:
                 company = cast(Company, result.value)
 
                 # Ensure balance record exists for the company account
-                await self._ensure_balance_record(connection, guild_id, account_id)
+                econ_q = EconomyQueryGateway()
+                await econ_q.ensure_balance_record(
+                    connection, guild_id=guild_id, member_id=account_id
+                )
 
                 LOGGER.info(
                     "company.created",
@@ -185,17 +177,9 @@ class CompanyService:
                 return Err(DatabaseError(f"Failed to create company: {exc}"))
 
     async def _ensure_balance_record(self, connection: Any, guild_id: int, account_id: int) -> None:
-        """確保公司帳戶在經濟系統中有餘額記錄。"""
+        econ_q = EconomyQueryGateway()
         try:
-            await connection.execute(
-                """
-                INSERT INTO economy.guild_member_balances (guild_id, member_id, current_balance)
-                VALUES ($1, $2, 0)
-                ON CONFLICT (guild_id, member_id) DO NOTHING
-                """,
-                guild_id,
-                account_id,
-            )
+            await econ_q.ensure_balance_record(connection, guild_id=guild_id, member_id=account_id)
         except Exception as exc:
             LOGGER.warning(
                 "company.ensure_balance.failed",
@@ -395,18 +379,14 @@ class CompanyService:
         """
         async with self._pool.acquire() as connection:
             try:
-                row = await connection.fetchrow(
-                    """
-                    SELECT current_balance
-                    FROM economy.guild_member_balances
-                    WHERE guild_id = $1 AND member_id = $2
-                    """,
-                    guild_id,
-                    account_id,
+                econ_q = EconomyQueryGateway()
+                snapshot = await econ_q.fetch_balance_snapshot(
+                    connection, guild_id=guild_id, member_id=account_id
                 )
-                if row is None:
-                    return Ok(0)
-                return Ok(row["current_balance"])
+                if isinstance(snapshot, Err):
+                    return Err(snapshot.error)
+                record = snapshot.value
+                return Ok(0 if record is None else int(record.balance))
             except Exception as exc:
                 LOGGER.exception(
                     "company.get_balance.failed",

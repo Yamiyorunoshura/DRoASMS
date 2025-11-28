@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "droasms-bot"
-version = "3.3.2"
+version = "3.4.0"
 description = "Discord bot economy foundations."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -14,10 +14,10 @@ authors = [
 ]
 dependencies = [
     "discord.py>=2.4.0,<3.0.0",
-    "asyncpg>=0.30.0,<0.31.0",
+    "asyncpg>=0.30.0,<0.32.0",
     "alembic>=1.13.0,<2.0.0",
     "SQLAlchemy>=2.0.30,<3.0.0",
-    "structlog>=24.1.0,<25.0.0",
+    "structlog>=24.1.0,<26.0.0",
     "python-dotenv>=1.0.1,<2.0.0",
     "mypy-extensions>=1.0.0,<2.0.0",
     "psycopg2-binary>=2.9.11",
@@ -38,7 +38,7 @@ dev = [
     "faker>=33.0.0",
     "mypy>=1.13.0,<2.0.0",
     "ruff>=0.7.3,<0.8.0",
-    "black>=24.10.0,<25.0.0",
+    "black>=24.10.0,<26.0.0",
     "pre-commit>=4.0.0",
     "hypothesis>=6.111.0",
     "typer>=0.12.0",

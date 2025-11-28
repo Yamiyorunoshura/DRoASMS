@@ -15,9 +15,12 @@ from src.config.db_settings import PoolConfig
 LOGGER = structlog.get_logger(__name__)
 
 if TYPE_CHECKING:
-    from asyncpg import Connection as _AsyncpgConnection
-else:
-    _AsyncpgConnection = asyncpg.Connection
+    # 僅供型別檢查使用；避免 AsyncPG 沒有完整型別時回退為 Any
+    from asyncpg.connection import Connection as _AsyncpgConnection
+else:  # pragma: no cover - runtime 分支
+    from asyncpg import connection as _asyncpg_connection
+
+    _AsyncpgConnection = _asyncpg_connection.Connection
 
 
 class _PatchedConnection(_AsyncpgConnection):  # type: ignore[misc]

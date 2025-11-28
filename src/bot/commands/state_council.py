@@ -890,9 +890,7 @@ class StateCouncilPanelView(PersistentPanelView):
                 # 導航下拉選單佔滿第 0 列（寬度 5），避免溢出將按鈕移至下一列
                 row=1,
             )
-            transfer_btn.callback = self._make_dept_transfer_callback(
-                department
-            )  # pyright: ignore[reportAttributeAccessIssue]
+            transfer_btn.callback = cast(Any, self._make_dept_transfer_callback(department))
             self.add_item(transfer_btn)
 
         if department == "內政部":
@@ -1603,10 +1601,10 @@ class StateCouncilPanelView(PersistentPanelView):
 
     def _make_dept_transfer_callback(
         self, department: str
-    ) -> Callable[[discord.Interaction[Any]], Awaitable[None]]:
+    ) -> Callable[[discord.Interaction[discord.Client]], Coroutine[Any, Any, None]]:
         """創建部門轉帳回調函數。"""
 
-        async def callback(interaction: discord.Interaction) -> None:
+        async def callback(interaction: discord.Interaction[discord.Client]) -> None:
             if interaction.user.id != self.author_id:
                 await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
@@ -3105,19 +3103,20 @@ class StateCouncilToUserTransferView(discord.ui.View):
             row=0,
         )
 
-        async def _on_user_select(interaction: discord.Interaction) -> None:
+        async def _on_user_select(interaction: discord.Interaction[discord.Client]) -> None:
             if interaction.user.id != self.author_id:
                 await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
                 )
                 return
-            if not interaction.data:
+            data = interaction.data
+            if not isinstance(data, dict):
                 return
-            values = interaction.data.get("values", [])
-            if values:
+            values = data.get("values")
+            if isinstance(values, list) and values and isinstance(values[0], str):
                 self.recipient_id = int(values[0])
-                # 選擇使用者後彈出金額 Modal
-                await send_modal_compat(interaction, StateCouncilTransferAmountModal(self))
+            # 選擇使用者後彈出金額 Modal
+            await send_modal_compat(interaction, StateCouncilTransferAmountModal(self))
 
         user_select.callback = _on_user_select
         self.add_item(user_select)
@@ -7302,9 +7301,7 @@ class ApplicationManagementView(discord.ui.View):
                 custom_id=f"approve_{app_type}_{app.id}",
                 row=1 + i,
             )
-            approve_btn.callback = self._make_approve_callback(
-                app_type, app.id
-            )  # pyright: ignore[reportAttributeAccessIssue]
+            approve_btn.callback = cast(Any, self._make_approve_callback(app_type, app.id))
             self.add_item(approve_btn)
 
             # 拒絕按鈕
@@ -7314,9 +7311,7 @@ class ApplicationManagementView(discord.ui.View):
                 custom_id=f"reject_{app_type}_{app.id}",
                 row=1 + i,
             )
-            reject_btn.callback = self._make_reject_callback(
-                app_type, app.id
-            )  # pyright: ignore[reportAttributeAccessIssue]
+            reject_btn.callback = cast(Any, self._make_reject_callback(app_type, app.id))
             self.add_item(reject_btn)
 
     def build_embed(self) -> discord.Embed:
@@ -7364,8 +7359,8 @@ class ApplicationManagementView(discord.ui.View):
 
     def _make_approve_callback(
         self, app_type: str, app_id: int
-    ) -> Callable[[discord.Interaction], Coroutine[Any, Any, None]]:
-        async def callback(interaction: discord.Interaction) -> None:
+    ) -> Callable[[discord.Interaction[discord.Client]], Coroutine[Any, Any, None]]:
+        async def callback(interaction: discord.Interaction[discord.Client]) -> None:
             if interaction.user.id != self.author_id:
                 await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True
@@ -7427,8 +7422,8 @@ class ApplicationManagementView(discord.ui.View):
 
     def _make_reject_callback(
         self, app_type: str, app_id: int
-    ) -> Callable[[discord.Interaction], Coroutine[Any, Any, None]]:
-        async def callback(interaction: discord.Interaction) -> None:
+    ) -> Callable[[discord.Interaction[discord.Client]], Coroutine[Any, Any, None]]:
+        async def callback(interaction: discord.Interaction[discord.Client]) -> None:
             if interaction.user.id != self.author_id:
                 await send_message_compat(
                     interaction, content="僅限面板開啟者操作。", ephemeral=True

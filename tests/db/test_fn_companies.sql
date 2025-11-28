@@ -5,6 +5,9 @@ BEGIN;
 SELECT plan(15);
 SELECT set_config('search_path', 'pgtap, governance, economy, public', false);
 
+-- 全面清空相關資料，避免先前測試或開發資料造成唯一鍵衝突
+TRUNCATE governance.companies, governance.business_licenses RESTART IDENTITY CASCADE;
+
 -- Ensure functions exist
 SELECT has_function(
     'governance',

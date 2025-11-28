@@ -50,6 +50,24 @@ class CompanyGateway:
         self._schema = schema
 
     @async_returns_result(DatabaseError)
+    async def next_company_id(self, connection: ConnectionProtocol) -> Result[int, Error]:
+        """取得下一個公司 ID（使用序列）。"""
+        sql = "SELECT nextval('governance.companies_id_seq'::regclass)"
+        row = await connection.fetchrow(sql)
+        if row is None:
+            return Err(DatabaseError("Failed to get next company id"))
+        return Ok(int(row[0]))
+
+    @async_returns_result(DatabaseError)
+    async def reset_company_sequence(
+        self, connection: ConnectionProtocol, *, value: int
+    ) -> Result[bool, Error]:
+        """重置公司序列值以匹配剛產生的 ID。"""
+        sql = "SELECT setval('governance.companies_id_seq'::regclass, $1, false)"
+        await connection.execute(sql, value)
+        return Ok(True)
+
+    @async_returns_result(DatabaseError)
     async def create_company(
         self,
         connection: ConnectionProtocol,

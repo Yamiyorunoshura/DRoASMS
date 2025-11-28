@@ -78,20 +78,36 @@ class StateCouncilService:
         adjustment_service: AdjustmentService | None = None,
         department_registry: DepartmentRegistry | None = None,
         business_license_gateway: BusinessLicenseGateway | None = None,
+        economy_gateway: EconomyQueryGateway | None = None,
     ) -> None:
         # 注意：不要在建構子中即刻觸發資料庫事件圈（event loop）相依物件建立，
         # 以便單元測試能在無 event loop 的情況下建構 service。
-        self._gateway = gateway or StateCouncilGovernanceGateway()
-        # TransferService 可於建構時立即建立（若未注入），
-        # 測試會以 patch(get_pool) 提供替身，因此不會觸發真實 event loop。
-        # _transfer 在建構時即建立，避免 Optional 帶來的型態歧義
-        self._transfer: TransferService = transfer_service or TransferService(get_pool())
+        from src.db.gateway.state_council_governance import StateCouncilGovernanceGateway as _GW
+
+        self._gateway = gateway or _GW()
+        from src.bot.services.transfer_service import TransferService as _TS
+
+        class _NullAcquire:
+            async def __aenter__(self) -> ConnectionProtocol:
+                raise RuntimeError("Database pool not initialised. Call init_pool() first.")
+
+            async def __aexit__(
+                self,
+                exc_type: type[BaseException] | None,
+                exc: BaseException | None,
+                tb: Any | None,
+            ) -> bool:
+                return False
+
+        class _NullPool(PoolProtocol):
+            def acquire(self, *, timeout: float | None = None) -> _NullAcquire:
+                _ = timeout
+                return _NullAcquire()
+
+        self._transfer: TransferService | None = transfer_service or _TS(_NullPool())
         self._adjust: AdjustmentService | None = adjustment_service
-        # 以經濟系統為唯一真實來源查詢餘額
-        self._economy = EconomyQueryGateway()
-        # 政府註冊表
+        self._economy = economy_gateway or EconomyQueryGateway()
         self._department_registry = department_registry or DepartmentRegistry()
-        # 商業許可 Gateway
         self._license_gateway = business_license_gateway or BusinessLicenseGateway()
 
     async def _get_economy_balance_snapshot(
@@ -166,12 +182,14 @@ class StateCouncilService:
 
     def _ensure_transfer(self) -> TransferService:
         """取得 TransferService（非 Optional）。"""
+        if self._transfer is None:
+            raise RuntimeError("TransferService not initialized")
         return self._transfer
 
     def _ensure_adjust(self) -> AdjustmentService:
-        """取得 AdjustmentService，必要時以目前事件圈的連線池延遲建立。"""
+        """取得 AdjustmentService（非 Optional）。"""
         if self._adjust is None:
-            self._adjust = AdjustmentService(get_pool())
+            raise RuntimeError("AdjustmentService not initialized")
         return self._adjust
 
     # --- Internal safe wrappers / adapters ---

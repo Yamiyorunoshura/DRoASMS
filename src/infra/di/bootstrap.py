@@ -12,12 +12,14 @@ from src.bot.services.balance_service import BalanceService
 from src.bot.services.company_service import CompanyService
 from src.bot.services.council_service import CouncilService, CouncilServiceResult
 from src.bot.services.currency_config_service import CurrencyConfigService
+from src.bot.services.department_registry import DepartmentRegistry
 from src.bot.services.permission_service import PermissionService
 from src.bot.services.state_council_service import StateCouncilService
 from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 from src.bot.services.supreme_assembly_service_result import SupremeAssemblyServiceResult
 from src.bot.services.transfer_service import TransferService
 from src.db import pool as db_pool
+from src.db.gateway.business_license import BusinessLicenseGateway
 from src.db.gateway.company import CompanyGateway
 from src.db.gateway.council_governance import CouncilGovernanceGateway
 from src.db.gateway.economy_adjustments import EconomyAdjustmentGateway
@@ -74,10 +76,11 @@ def bootstrap_container() -> DependencyContainer:
         TransferService, factory=create_transfer_service, lifecycle=Lifecycle.SINGLETON
     )
 
-    # BalanceService depends on pool and optional gateway
+    # BalanceService depends on pool and EconomyQueryGateway
     def create_balance_service() -> BalanceService:
         pool = container.resolve(asyncpg.Pool)
-        return BalanceService(pool)
+        econ_q = container.resolve(EconomyQueryGateway)
+        return BalanceService(pool, gateway=econ_q)
 
     container.register(
         BalanceService, factory=create_balance_service, lifecycle=Lifecycle.SINGLETON
@@ -92,10 +95,11 @@ def bootstrap_container() -> DependencyContainer:
         AdjustmentService, factory=create_adjustment_service, lifecycle=Lifecycle.SINGLETON
     )
 
-    # CurrencyConfigService depends on pool and optional gateway
+    # CurrencyConfigService depends on pool and EconomyConfigurationGateway
     def create_currency_config_service() -> CurrencyConfigService:
         pool = container.resolve(asyncpg.Pool)
-        return CurrencyConfigService(pool)
+        econ_cfg = container.resolve(EconomyConfigurationGateway)
+        return CurrencyConfigService(pool, gateway=econ_cfg)
 
     container.register(
         CurrencyConfigService, factory=create_currency_config_service, lifecycle=Lifecycle.SINGLETON
@@ -120,22 +124,42 @@ def bootstrap_container() -> DependencyContainer:
         CouncilService, factory=create_council_service, lifecycle=Lifecycle.SINGLETON
     )
 
-    # StateCouncilService depends on optional gateway, transfer_service, and adjustment_service
+    # StateCouncilService depends on gateways and services (strict DI)
     def create_state_council_service() -> StateCouncilService:
         transfer_service = container.resolve(TransferService)
         adjustment_service = container.resolve(AdjustmentService)
+        sc_gw = container.resolve(StateCouncilGovernanceGateway)
+        econ_q = container.resolve(EconomyQueryGateway)
+        registry = container.resolve(DepartmentRegistry)
+        license_gw = container.resolve(BusinessLicenseGateway)
         return StateCouncilService(
-            transfer_service=transfer_service, adjustment_service=adjustment_service
+            gateway=sc_gw,
+            transfer_service=transfer_service,
+            adjustment_service=adjustment_service,
+            department_registry=registry,
+            business_license_gateway=license_gw,
+            economy_gateway=econ_q,
         )
 
     container.register(
         StateCouncilService, factory=create_state_council_service, lifecycle=Lifecycle.SINGLETON
     )
 
-    # SupremeAssemblyService depends on SupremeAssemblyGovernanceGateway (optional)
-    # The service can build its own gateway, but registering it enables DI resolution
-    # via commands like container.resolve(SupremeAssemblyService).
+    # SupremeAssemblyService registration
     container.register(SupremeAssemblyService, lifecycle=Lifecycle.SINGLETON)
+
+    # Register additional singletons required by strict DI
+    container.register(DepartmentRegistry, lifecycle=Lifecycle.SINGLETON)
+    container.register(BusinessLicenseGateway, lifecycle=Lifecycle.SINGLETON)
+
+    # Validation: ensure all critical resolutions succeed at bootstrap
+    _ = container.resolve(TransferService)
+    _ = container.resolve(BalanceService)
+    _ = container.resolve(CurrencyConfigService)
+    _ = container.resolve(CompanyService)
+    _ = container.resolve(StateCouncilService)
+    _ = container.resolve(CouncilService)
+    _ = container.resolve(SupremeAssemblyService)
 
     return container
 

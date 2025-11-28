@@ -267,21 +267,13 @@ def register(
 ) -> None:
     """Register the /adjust slash command with the provided command tree."""
     if container is None:
-        # Fallback to old behavior for backward compatibility during migration
-        from src.db import pool as db_pool
+        raise RuntimeError("DependencyContainer is required for command registration")
 
-        pool = db_pool.get_pool()
-        service = AdjustmentService(pool)
-        currency_service = CurrencyConfigService(pool)
-        state_council_service = StateCouncilService()
-        council_service = CouncilServiceResult()
-        supreme_assembly_service = SupremeAssemblyService()
-    else:
-        service = container.resolve(AdjustmentService)
-        currency_service = container.resolve(CurrencyConfigService)
-        state_council_service = container.resolve(StateCouncilService)
-        council_service = container.resolve(CouncilServiceResult)
-        supreme_assembly_service = container.resolve(SupremeAssemblyService)
+    service = container.resolve(AdjustmentService)
+    currency_service = container.resolve(CurrencyConfigService)
+    state_council_service = container.resolve(StateCouncilService)
+    council_service = container.resolve(CouncilServiceResult)
+    supreme_assembly_service = container.resolve(SupremeAssemblyService)
 
     command = build_adjust_command(
         service,
@@ -317,9 +309,9 @@ def build_adjust_command(
     _ = can_adjust  # Silence unused parameter warning
 
     # 使用傳入的服務或建立新實例（backward compatibility）
-    _state_council_service = state_council_service or StateCouncilService()
-    _council_service = council_service or CouncilServiceResult()
-    _supreme_assembly_service = supreme_assembly_service or SupremeAssemblyService()
+    _state_council_service = state_council_service
+    _council_service = council_service
+    _supreme_assembly_service = supreme_assembly_service
 
     @app_commands.command(
         name="adjust",
@@ -344,6 +336,16 @@ def build_adjust_command(
             )
             return
 
+        # 檢查國務院服務是否可用
+        if _state_council_service is None:
+            await interaction.response.send_message(
+                content=_format_error_response(
+                    StateCouncilNotConfiguredError("國務院治理尚未設定。")
+                ),
+                ephemeral=True,
+            )
+            return
+
         # 解析權限（使用 Result 模式，使用 DI 注入的服務）
         permission_result = await resolve_adjust_permission(
             interaction, target, _state_council_service
@@ -362,22 +364,32 @@ def build_adjust_command(
         )
 
         # 解析目標帳戶 ID（使用 Result 模式，使用 DI 注入的服務）
-        target_result = await resolve_target_account_id(
-            guild_id,
-            target,
-            _council_service,
-            _state_council_service,
-            _supreme_assembly_service,
-        )
-        if target_result.is_err():
-            error = target_result.unwrap_err()
-            await interaction.response.send_message(
-                content=_format_error_response(error),
-                ephemeral=True,
+        if isinstance(target, discord.Role):
+            if _council_service is None or _supreme_assembly_service is None:
+                await interaction.response.send_message(
+                    content=_format_error_response(
+                        InvalidTargetError("系統尚未完成治理設定，無法識別身分組目標。")
+                    ),
+                    ephemeral=True,
+                )
+                return
+            target_result = await resolve_target_account_id(
+                guild_id,
+                target,
+                _council_service,
+                _state_council_service,
+                _supreme_assembly_service,
             )
-            return
-
-        target_id = target_result.unwrap()
+            if target_result.is_err():
+                error = target_result.unwrap_err()
+                await interaction.response.send_message(
+                    content=_format_error_response(error),
+                    ephemeral=True,
+                )
+                return
+            target_id = target_result.unwrap()
+        else:
+            target_id = target.id
 
         # 呼叫服務層（Result 模式）
         service_result: Any = await service.adjust_balance(

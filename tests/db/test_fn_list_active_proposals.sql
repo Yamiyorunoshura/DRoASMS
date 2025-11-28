@@ -6,6 +6,9 @@ SELECT plan(6);
 
 SELECT set_config('search_path', 'pgtap, governance, public', false);
 
+-- 清空提案與關聯資料，確保測試從零開始
+TRUNCATE governance.proposal_snapshots, governance.votes, governance.proposals RESTART IDENTITY CASCADE;
+
 SELECT has_function(
     'governance',
     'fn_list_active_proposals',

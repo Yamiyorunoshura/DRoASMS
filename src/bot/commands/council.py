@@ -19,7 +19,6 @@ from src.bot.services.council_service import (
     CouncilService,
     CouncilServiceResult,
     GovernanceNotConfiguredError,
-    PermissionDeniedError,
     VoteTotals,
 )
 from src.bot.services.department_registry import get_registry
@@ -49,7 +48,7 @@ def _extract_select_values(interaction: discord.Interaction) -> list[str]:
     raw_values = data.get("values")
     if not isinstance(raw_values, list):
         return []
-    typed_values = cast(list[Any], raw_values)  # type: ignore[redundant-cast]
+    typed_values = cast(list[Any], raw_values)
     vals: list[str] = []
     for item in typed_values:
         if isinstance(item, str):
@@ -158,18 +157,23 @@ def get_help_data() -> dict[str, HelpData]:
 
 
 def register(
-    tree: app_commands.CommandTree, *, container: DependencyContainer | None = None
+    tree: app_commands.CommandTree,
+    *,
+    container: DependencyContainer | None = None,
+    council_service: CouncilService | None = None,
+    state_council_service: StateCouncilService | None = None,
+    supreme_assembly_service: SupremeAssemblyService | None = None,
 ) -> None:
     """Register the /council slash command group with the provided command tree."""
     if container is None:
-        # Fallback to unified service implementation
-        service = CouncilService()
-        service_result = CouncilServiceResult()
-        state_council_service = StateCouncilService()
+        service = council_service or CouncilService()
+        service_result = council_service or CouncilServiceResult()
+        state_service = state_council_service or StateCouncilService()
+        supreme_service = supreme_assembly_service or SupremeAssemblyService()
         permission_service = PermissionService(
             council_service=service_result,
-            state_council_service=state_council_service,
-            supreme_assembly_service=SupremeAssemblyService(),
+            state_council_service=state_service,
+            supreme_assembly_service=supreme_service,
         )
     else:
         service = container.resolve(CouncilService)
@@ -605,10 +609,9 @@ async def _handle_vote(
             choice=choice,
         )
     except CouncilPermissionDeniedError as error:
-        await interaction.response.send_message(error.message, ephemeral=True)
-        return
-    except PermissionDeniedError as error:
-        await interaction.response.send_message(str(error), ephemeral=True)
+        await interaction.response.send_message(
+            getattr(error, "message", str(error)), ephemeral=True
+        )
         return
     except Exception as exc:  # pragma: no cover - defensive
         LOGGER.error("council.vote.error", error=str(exc))
@@ -656,18 +659,10 @@ async def _handle_vote(
 async def _dm_council_for_voting(
     client: discord.Client,
     guild: discord.Guild,
+    service: CouncilServiceResult,
     proposal: Any,
 ) -> None:
-    # We'll need to get the service from somewhere - let's use the result service
-    # This is a bit of a hack but necessary for the migration
-    from src.infra.di.container import DependencyContainer
-
-    try:
-        container = DependencyContainer()
-        service = container.resolve(CouncilServiceResult)
-    except Exception:
-        # Fallback to creating a new instance
-        service = CouncilServiceResult()
+    # 直接使用傳入的 Result 服務，移除 DI 回退與臨時新建
 
     view = VotingView(proposal_id=proposal.proposal_id, service=service)
     # Anonymous in-progress: only aggregated counts are shown in the button acknowledgment
@@ -841,7 +836,7 @@ def _install_background_scheduler(client: discord.Client, service: CouncilServic
         pass
 
 
-__all__ = ["get_help_data", "register"]
+__all__ = ["get_help_data", "register", "SupremeAssemblyService"]
 
 
 # --- Panel UI ---
@@ -1737,7 +1732,7 @@ class TransferProposalModal(discord.ui.Modal, title="建立轉帳提案"):
             ephemeral=True,
         )
         try:
-            await _dm_council_for_voting(interaction.client, self.guild, proposal)
+            await _dm_council_for_voting(interaction.client, self.guild, self.service, proposal)
         except Exception:
             pass
         LOGGER.info(
@@ -1872,7 +1867,7 @@ class ProposeTransferModal(discord.ui.Modal, title="建立轉帳提案"):
             ephemeral=True,
         )
         try:
-            await _dm_council_for_voting(interaction.client, self.guild, proposal)
+            await _dm_council_for_voting(interaction.client, self.guild, self.service, proposal)
         except Exception:
             pass
         LOGGER.info(

@@ -49,25 +49,12 @@ def register(
 ) -> None:
     """Register the /personal_panel slash command with the provided command tree."""
     if container is None:
-        # Fallback to old behavior for backward compatibility during migration
-        import os
+        raise RuntimeError("DependencyContainer is required for command registration")
 
-        from dotenv import load_dotenv
-
-        from src.db import pool as db_pool
-
-        load_dotenv(override=False)
-        event_pool_enabled = os.getenv("TRANSFER_EVENT_POOL_ENABLED", "false").lower() == "true"
-        pool = db_pool.get_pool()
-        balance_service = BalanceService(pool)
-        transfer_service = TransferService(pool, event_pool_enabled=event_pool_enabled)
-        currency_service = CurrencyConfigService(pool)
-        state_council_service = StateCouncilService(transfer_service=transfer_service)
-    else:
-        balance_service = container.resolve(BalanceService)
-        transfer_service = container.resolve(TransferService)
-        currency_service = container.resolve(CurrencyConfigService)
-        state_council_service = container.resolve(StateCouncilService)
+    balance_service = container.resolve(BalanceService)
+    transfer_service = container.resolve(TransferService)
+    currency_service = container.resolve(CurrencyConfigService)
+    state_council_service = container.resolve(StateCouncilService)
 
     command = build_personal_panel_command(
         balance_service,

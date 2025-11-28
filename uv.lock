@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.13"
 
 [[package]]
@@ -419,7 +419,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.13.0,<2.0.0" },
-    { name = "asyncpg", specifier = ">=0.30.0,<0.31.0" },
+    { name = "asyncpg", specifier = ">=0.30.0,<0.32.0" },
     { name = "cython", specifier = ">=3.0.8,<4.0.0" },
     { name = "discord-py", specifier = ">=2.4.0,<3.0.0" },
     { name = "dpy-paginator", git = "https://github.com/Seniatical/dpy-paginator/" },
@@ -429,13 +429,13 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.1,<2.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.30,<3.0.0" },
-    { name = "structlog", specifier = ">=24.1.0,<25.0.0" },
+    { name = "structlog", specifier = ">=24.1.0,<26.0.0" },
     { name = "tenacity", specifier = ">=9.0.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "black", specifier = ">=24.10.0,<25.0.0" },
+    { name = "black", specifier = ">=24.10.0,<26.0.0" },
     { name = "faker", specifier = ">=33.0.0" },
     { name = "hypothesis", specifier = ">=6.111.0" },
     { name = "mypy", specifier = ">=1.13.0,<2.0.0" },

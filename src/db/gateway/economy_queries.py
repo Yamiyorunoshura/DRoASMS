@@ -41,6 +41,23 @@ class EconomyQueryGateway:
     def __init__(self, *, schema: str = "economy") -> None:
         self._schema = schema
 
+    @async_returns_result(DatabaseError)
+    async def ensure_balance_record(
+        self,
+        connection: AsyncPGConnectionProto,
+        *,
+        guild_id: int,
+        member_id: int,
+    ) -> bool:
+        """確保 guild_member_balances 中存在一筆初始記錄。"""
+        sql = f"""
+            INSERT INTO {self._schema}.guild_member_balances (guild_id, member_id, current_balance)
+            VALUES ($1, $2, 0)
+            ON CONFLICT (guild_id, member_id) DO NOTHING
+        """
+        await connection.execute(sql, guild_id, member_id)
+        return True
+
     @async_returns_result(DatabaseError, exception_map={RuntimeError: DatabaseError})
     async def fetch_balance(
         self,
