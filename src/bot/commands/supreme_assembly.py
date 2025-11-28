@@ -14,7 +14,7 @@ from src.bot.interaction_compat import (
     send_modal_compat,
 )
 from src.bot.services.balance_service import BalanceService
-from src.bot.services.council_service_result import CouncilServiceResult
+from src.bot.services.council_service import CouncilServiceResult
 from src.bot.services.department_registry import get_registry
 from src.bot.services.permission_service import PermissionService
 from src.bot.services.state_council_service import StateCouncilService
@@ -51,6 +51,72 @@ def _extract_select_values(interaction: discord.Interaction) -> list[str]:
         return []
     typed_values = cast(list[str], raw_values)
     return typed_values
+
+
+async def _resolve_department_account_id_for_supreme(
+    *,
+    guild_id: int,
+    department_name: str,
+    sc_gateway: "Any | None" = None,
+    state_council_service: "StateCouncilService | None" = None,
+) -> int:
+    """取得部門帳戶 ID（最高人民會議轉帳使用）。
+
+    優先順序：
+    1) 讀取國務院組態中的對應帳戶 ID（含法務部/社福部欄位相容）。
+    2) 回退至 StateCouncilService.get_department_account_id（會查詢政府帳戶表）。
+    3) 最後以 derive_department_account_id 推導穩定值。
+    """
+
+    # 1) 嘗試從國務院組態取得實際帳戶 ID，避免歷史資料與推導規則不一致
+    try:
+        from src.db.gateway.state_council_governance import StateCouncilGovernanceGateway
+
+        gateway = sc_gateway or StateCouncilGovernanceGateway()
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        async with pool.acquire() as conn:
+            cfg = await gateway.fetch_state_council_config(conn, guild_id=guild_id)
+
+        if cfg is not None:
+            name_to_account: dict[str, int | None] = {
+                "內政部": cfg.internal_affairs_account_id,
+                "財政部": cfg.finance_account_id,
+                "國土安全部": cfg.security_account_id,
+                "中央銀行": cfg.central_bank_account_id,
+            }
+
+            # 法務部欄位：若新欄位不存在，回退舊版 welfare_account_id
+            justice_id = getattr(cfg, "justice_account_id", None)
+            if justice_id is None:
+                justice_id = getattr(cfg, "welfare_account_id", None)
+            if justice_id is not None:
+                name_to_account["法務部"] = justice_id
+
+            account_id = name_to_account.get(department_name)
+            if account_id is not None:
+                return int(account_id)
+    except Exception as exc:  # pragma: no cover - 失敗時記錄並回退
+        LOGGER.debug(
+            "supreme_assembly.transfer.department_config_lookup_failed",
+            guild_id=guild_id,
+            department=department_name,
+            error=str(exc),
+        )
+
+    # 2) 改用 StateCouncilService 的查詢邏輯（會查政府帳戶表，缺失時回退推導值）
+    sc_service = state_council_service or StateCouncilService()
+    try:
+        return await sc_service.get_department_account_id(
+            guild_id=guild_id, department=department_name
+        )
+    except Exception as exc:  # pragma: no cover - 最後回退推導值
+        LOGGER.debug(
+            "supreme_assembly.transfer.department_account_lookup_failed",
+            guild_id=guild_id,
+            department=department_name,
+            error=str(exc),
+        )
+        return StateCouncilService.derive_department_account_id(guild_id, department_name)
 
 
 def get_help_data() -> dict[str, HelpData]:
@@ -250,7 +316,7 @@ def build_supreme_assembly_group(
             )
             return
 
-        account_id = SupremeAssemblyService.derive_account_id(interaction.guild_id)
+        account_id = await service.get_or_create_account_id(interaction.guild_id)
         if bootstrapped:
             await send_message_compat(
                 interaction,
@@ -330,7 +396,7 @@ def build_supreme_assembly_group(
             )
             return
 
-        account_id = SupremeAssemblyService.derive_account_id(interaction.guild_id)
+        account_id = await service.get_or_create_account_id(interaction.guild_id)
         if bootstrapped:
             await send_message_compat(
                 interaction,
@@ -531,6 +597,17 @@ class SupremeAssemblyPanelView(PersistentPanelView):
         self._select.callback = self._on_select_proposal
         self.add_item(self._select)
 
+    async def _resolve_account_id(self) -> int:
+        try:
+            return await self.service.get_or_create_account_id(self.guild.id)
+        except Exception as exc:  # pragma: no cover - 記錄並回退
+            LOGGER.debug(
+                "supreme_assembly.panel.account.resolve_failed",
+                guild_id=self.guild.id,
+                error=str(exc),
+            )
+            return SupremeAssemblyService.derive_account_id(self.guild.id)
+
     async def bind_message(self, message: discord.Message) -> None:
         """綁定訊息並訂閱治理事件，以便即時更新。"""
         if self._message is not None:
@@ -562,7 +639,7 @@ class SupremeAssemblyPanelView(PersistentPanelView):
             if self.author_id is None:
                 raise ValueError("author_id is required")
             balance_service = BalanceService(get_pool())
-            account_id = SupremeAssemblyService.derive_account_id(self.guild.id)
+            account_id = await self._resolve_account_id()
             snap_result = await balance_service.get_balance_snapshot(
                 guild_id=self.guild.id,
                 requester_id=self.author_id,
@@ -932,6 +1009,12 @@ class SupremeAssemblyTransferTypeSelectionView(discord.ui.View):
                 description="從下拉選單選擇部門",
                 emoji="🏢",
             ),
+            discord.SelectOption(
+                label="轉帳給公司",
+                value="company",
+                description="從下拉選單選擇公司",
+                emoji="🏢",
+            ),
         ]
 
         select: discord.ui.Select[Any] = discord.ui.Select(
@@ -974,6 +1057,17 @@ class SupremeAssemblyTransferTypeSelectionView(discord.ui.View):
             )
             await send_message_compat(
                 interaction, content="請選擇受款部門：", view=dept_view, ephemeral=True
+            )
+        elif selected_type == "company":
+            company_view = SupremeAssemblyCompanySelectView(service=self.service, guild=self.guild)
+            has_companies = await company_view.setup()
+            if not has_companies:
+                await send_message_compat(
+                    interaction, content="❗ 此伺服器目前沒有已登記的公司。", ephemeral=True
+                )
+                return
+            await send_message_compat(
+                interaction, content="請選擇受款公司：", view=company_view, ephemeral=True
             )
         else:
             await send_message_compat(interaction, content="未知的轉帳類型。", ephemeral=True)
@@ -1084,6 +1178,73 @@ class SupremeAssemblyDepartmentSelectView(discord.ui.View):
         await interaction.response.send_modal(modal)
 
 
+class SupremeAssemblyCompanySelectView(discord.ui.View):
+    """View for selecting a company (for Supreme Assembly transfers)."""
+
+    def __init__(self, *, service: SupremeAssemblyService, guild: discord.Guild) -> None:
+        super().__init__(timeout=300)
+        self.service = service
+        self.guild = guild
+        self._companies: dict[int, Any] = {}
+
+    async def setup(self) -> bool:
+        """Fetch companies and setup the select menu.
+
+        Returns:
+            True if companies are available, False otherwise
+        """
+        from src.bot.ui.company_select import build_company_select_options, get_active_companies
+
+        companies = await get_active_companies(self.guild.id)
+        if not companies:
+            return False
+
+        self._companies = {c.id: c for c in companies}
+        options = build_company_select_options(companies)
+
+        select: discord.ui.Select[Any] = discord.ui.Select(
+            placeholder="🏢 選擇公司...",
+            options=options,
+            min_values=1,
+            max_values=1,
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+        return True
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        """Handle company selection."""
+        if not interaction.data:
+            await send_message_compat(interaction, content="請選擇一家公司。", ephemeral=True)
+            return
+
+        values = _extract_select_values(interaction)
+        if not values:
+            await send_message_compat(interaction, content="請選擇一家公司。", ephemeral=True)
+            return
+
+        try:
+            company_id = int(values[0])
+        except ValueError:
+            await send_message_compat(interaction, content="選項格式錯誤。", ephemeral=True)
+            return
+
+        company = self._companies.get(company_id)
+        if company is None:
+            await send_message_compat(interaction, content="找不到指定的公司。", ephemeral=True)
+            return
+
+        # Show transfer modal with company selected
+        modal = SupremeAssemblyTransferModal(
+            service=self.service,
+            guild=self.guild,
+            target_type="company",
+            target_company_account_id=company.account_id,
+            target_company_name=company.name,
+        )
+        await send_modal_compat(interaction, modal)
+
+
 class SupremeAssemblyTransferModal(discord.ui.Modal, title="轉帳"):
     """Modal for creating transfer."""
 
@@ -1097,6 +1258,8 @@ class SupremeAssemblyTransferModal(discord.ui.Modal, title="轉帳"):
         target_user_name: str | None = None,
         target_department_id: str | None = None,
         target_department_name: str | None = None,
+        target_company_account_id: int | None = None,
+        target_company_name: str | None = None,
     ) -> None:
         super().__init__()
         self.service = service
@@ -1106,11 +1269,15 @@ class SupremeAssemblyTransferModal(discord.ui.Modal, title="轉帳"):
         self.target_user_name = target_user_name
         self.target_department_id = target_department_id
         self.target_department_name = target_department_name
+        self.target_company_account_id = target_company_account_id
+        self.target_company_name = target_company_name
 
         # Show target info
         target_label = "受款人"
         target_value = ""
-        if target_type == "council":
+        if target_type == "company" and target_company_name:
+            target_value = f"公司：{target_company_name}"
+        elif target_type == "council":
             target_value = "常任理事會"
         elif target_department_name:
             target_value = f"部門：{target_department_name}"
@@ -1149,18 +1316,51 @@ class SupremeAssemblyTransferModal(discord.ui.Modal, title="轉帳"):
             await send_message_compat(interaction, content="金額需 > 0。", ephemeral=True)
             return
 
+        async def _resolve_institution_account(
+            department_name: str, fallback: Callable[[int], int]
+        ) -> int:
+            """優先使用政府帳戶記錄取得帳戶 ID，找不到則回退舊版推導值。"""
+            try:
+                if department_name == "最高人民會議":
+                    return await self.service.get_or_create_account_id(self.guild.id)
+
+                sc_service = StateCouncilService()
+                accounts = await sc_service.get_all_accounts(guild_id=self.guild.id)
+                aliases = {department_name}
+                if department_name == "常任理事會":
+                    aliases.add("permanent_council")
+                for acc in accounts:
+                    dept = getattr(acc, "department", None)
+                    if dept in aliases:
+                        account_id = getattr(acc, "account_id", None)
+                        if account_id is not None:
+                            return int(account_id)
+            except Exception as exc:  # pragma: no cover - 記錄後回退
+                LOGGER.debug(
+                    "supreme_assembly.transfer.account.resolve_failed",
+                    guild_id=self.guild.id,
+                    department=department_name,
+                    error=str(exc),
+                )
+            return fallback(self.guild.id)
+
         # Determine target account ID
         target_id: int | None = None
         if self.target_type == "user" and self.target_user_id:
             target_id = self.target_user_id
         elif self.target_type == "council":
-            target_id = CouncilServiceResult.derive_council_account_id(self.guild.id)
+            target_id = await _resolve_institution_account(
+                "常任理事會", CouncilServiceResult.derive_council_account_id
+            )
+        elif self.target_type == "company" and self.target_company_account_id:
+            target_id = self.target_company_account_id
         elif self.target_type == "department" and self.target_department_id:
             registry = get_registry()
             dept = registry.get_by_id(self.target_department_id)
             if dept:
-                target_id = StateCouncilService.derive_department_account_id(
-                    self.guild.id, dept.name
+                target_id = await _resolve_department_account_id_for_supreme(
+                    guild_id=self.guild.id,
+                    department_name=dept.name,
                 )
 
         if not target_id:
@@ -1170,7 +1370,9 @@ class SupremeAssemblyTransferModal(discord.ui.Modal, title="轉帳"):
             return
 
         # Get initiator account ID
-        initiator_id = SupremeAssemblyService.derive_account_id(self.guild.id)
+        initiator_id = await _resolve_institution_account(
+            "最高人民會議", SupremeAssemblyService.derive_account_id
+        )
 
         # Execute transfer
         try:
@@ -1924,7 +2126,7 @@ class SummonPermanentCouncilView(discord.ui.View):
 
         try:
             # Create summon records for each selected member
-            from src.bot.services.council_service_result import CouncilServiceResult
+            from src.bot.services.council_service import CouncilServiceResult
 
             target_id = CouncilServiceResult.derive_council_account_id(self.guild.id)
             target_name = "常任理事會成員"

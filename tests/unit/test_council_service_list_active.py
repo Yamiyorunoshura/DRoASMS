@@ -6,6 +6,7 @@ import pytest
 from faker import Faker
 
 from src.bot.services.council_service import CouncilService
+from src.infra.result import Ok
 from tests.unit.test_council_service import FakeConnection, FakeGateway, FakePool
 
 
@@ -22,7 +23,7 @@ async def test_list_active_proposals_returns_in_progress(
     gw = FakeGatewayWithList()
     conn = FakeConnection(gw)
     pool = FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
     guild_id = faker.random_int(min=1, max=1000000)
@@ -60,6 +61,8 @@ async def test_list_active_proposals_returns_in_progress(
     # 標記第二筆為已撤案
     await gw.mark_status(conn, proposal_id=p2.proposal_id, status="已撤案")
 
-    items = await svc.list_active_proposals()
+    result = await svc.list_active_proposals()
+    assert isinstance(result, Ok)
+    items = result.unwrap()
     ids = {p.proposal_id for p in items}
     assert p1.proposal_id in ids and p2.proposal_id not in ids

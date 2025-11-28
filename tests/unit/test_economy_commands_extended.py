@@ -89,7 +89,11 @@ class TestAdjustCommandErrorPaths:
         currency_service = SimpleNamespace(get_currency_config=AsyncMock())
 
         command = build_adjust_command(
-            cast(AdjustmentService, service), cast(CurrencyConfigService, currency_service)
+            cast(AdjustmentService, service),
+            cast(CurrencyConfigService, currency_service),
+            state_council_service=MagicMock(),
+            council_service=MagicMock(),
+            supreme_assembly_service=MagicMock(),
         )
         interaction = StubInteraction(guild_id=12345, user_id=67890, is_admin=True)
         target = StubMember(id=11111)
@@ -123,7 +127,11 @@ class TestAdjustCommandErrorPaths:
         )
 
         command = build_adjust_command(
-            cast(AdjustmentService, service), cast(CurrencyConfigService, currency_service)
+            cast(AdjustmentService, service),
+            cast(CurrencyConfigService, currency_service),
+            state_council_service=MagicMock(),
+            council_service=MagicMock(),
+            supreme_assembly_service=MagicMock(),
         )
         interaction = StubInteraction(guild_id=12345, user_id=67890, is_admin=True)
         target = StubMember(id=11111)
@@ -156,7 +164,11 @@ class TestAdjustCommandErrorPaths:
         )
 
         command = build_adjust_command(
-            cast(AdjustmentService, service), cast(CurrencyConfigService, currency_service)
+            cast(AdjustmentService, service),
+            cast(CurrencyConfigService, currency_service),
+            state_council_service=MagicMock(),
+            council_service=MagicMock(),
+            supreme_assembly_service=MagicMock(),
         )
         interaction = StubInteraction(guild_id=12345, user_id=67890, is_admin=True)
         target = StubMember(id=11111)

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import secrets
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 from discord import Interaction
@@ -16,10 +18,13 @@ from src.bot.services.adjustment_service import (
     AdjustmentService,
     ValidationError,
 )
+from src.bot.services.council_service import CouncilServiceResult
 from src.bot.services.currency_config_service import (
     CurrencyConfigResult,
     CurrencyConfigService,
 )
+from src.bot.services.state_council_service import StateCouncilService
+from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 from src.infra.result import Err, Ok
 
 
@@ -44,6 +49,7 @@ class _StubInteraction:
         self.user = SimpleNamespace(
             id=user_id,
             guild_permissions=SimpleNamespace(administrator=is_admin, manage_guild=is_admin),
+            roles=[],  # 新增 roles 以支援 resolve_adjust_permission
         )
         self.response = _StubResponse()
 
@@ -61,6 +67,21 @@ class _StubMember(SimpleNamespace):
         return f"<@{self.id}>"
 
 
+def _create_mock_services() -> tuple[MagicMock, MagicMock, MagicMock]:
+    """建立測試用的 mock 服務實例。"""
+    state_council_service = MagicMock(spec=StateCouncilService)
+    state_council_service.check_leader_permission = AsyncMock(return_value=False)
+    state_council_service.find_department_by_role = AsyncMock(return_value=None)
+
+    council_service = MagicMock(spec=CouncilServiceResult)
+    council_service.get_config = AsyncMock(return_value=Err(Exception("Not configured")))
+
+    supreme_assembly_service = MagicMock(spec=SupremeAssemblyService)
+    supreme_assembly_service.get_config = AsyncMock(side_effect=Exception("Not configured"))
+
+    return state_council_service, council_service, supreme_assembly_service
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_adjust_command_validates_admin_permission() -> None:
@@ -75,13 +96,18 @@ async def test_adjust_command_validates_admin_permission() -> None:
     )
     currency_service = SimpleNamespace(get_currency_config=AsyncMock())
 
+    state_council_service, council_service, supreme_assembly_service = _create_mock_services()
     command = build_adjust_command(
-        cast(AdjustmentService, service), cast(CurrencyConfigService, currency_service)
+        cast(AdjustmentService, service),
+        cast(CurrencyConfigService, currency_service),
+        state_council_service=state_council_service,
+        council_service=council_service,
+        supreme_assembly_service=supreme_assembly_service,
     )
     interaction = _StubInteraction(guild_id=guild_id, user_id=admin_id, is_admin=False)
     target = _StubMember(id=target_id)
 
-    await command._callback(
+    await command._callback(  # type: ignore[protected-access]
         cast(Interaction[Any], interaction), cast(Interaction[Any], target), 100, "Test"
     )
 
@@ -104,13 +130,18 @@ async def test_adjust_command_validates_amount() -> None:
     )
     currency_service = SimpleNamespace(get_currency_config=AsyncMock())
 
+    state_council_service, council_service, supreme_assembly_service = _create_mock_services()
     command = build_adjust_command(
-        cast(AdjustmentService, service), cast(CurrencyConfigService, currency_service)
+        cast(AdjustmentService, service),
+        cast(CurrencyConfigService, currency_service),
+        state_council_service=state_council_service,
+        council_service=council_service,
+        supreme_assembly_service=supreme_assembly_service,
     )
     interaction = _StubInteraction(guild_id=guild_id, user_id=admin_id, is_admin=True)
     target = _StubMember(id=target_id)
 
-    await command._callback(
+    await command._callback(  # type: ignore[protected-access]
         cast(Interaction[Any], interaction), cast(Interaction[Any], target), 0, "Test"
     )
 
@@ -131,14 +162,14 @@ async def test_adjust_command_calls_service_with_correct_parameters() -> None:
         adjust_balance=AsyncMock(
             return_value=Ok(
                 AdjustmentResult(
-                    transaction_id=None,
+                    transaction_id=uuid4(),
                     guild_id=guild_id,
                     admin_id=admin_id,
                     target_id=target_id,
                     amount=150,
                     target_balance_after=350,
                     direction="adjustment_grant",
-                    created_at=None,
+                    created_at=datetime.now(timezone.utc),
                     metadata={"reason": "Bonus"},
                 )
             )
@@ -147,13 +178,18 @@ async def test_adjust_command_calls_service_with_correct_parameters() -> None:
     currency_config = CurrencyConfigResult(currency_name="金幣", currency_icon="🪙")
     currency_service = SimpleNamespace(get_currency_config=AsyncMock(return_value=currency_config))
 
+    state_council_service, council_service, supreme_assembly_service = _create_mock_services()
     command = build_adjust_command(
-        cast(AdjustmentService, service), cast(CurrencyConfigService, currency_service)
+        cast(AdjustmentService, service),
+        cast(CurrencyConfigService, currency_service),
+        state_council_service=state_council_service,
+        council_service=council_service,
+        supreme_assembly_service=supreme_assembly_service,
     )
     interaction = _StubInteraction(guild_id=guild_id, user_id=admin_id, is_admin=True)
     target = _StubMember(id=target_id)
 
-    await command._callback(
+    await command._callback(  # type: ignore[protected-access]
         cast(Interaction[Any], interaction), cast(Interaction[Any], target), 150, "Bonus"
     )
 
@@ -185,14 +221,14 @@ async def test_adjust_command_uses_currency_config() -> None:
         adjust_balance=AsyncMock(
             return_value=Ok(
                 AdjustmentResult(
-                    transaction_id=None,
+                    transaction_id=uuid4(),
                     guild_id=guild_id,
                     admin_id=admin_id,
                     target_id=target_id,
                     amount=150,
                     target_balance_after=350,
                     direction="adjustment_grant",
-                    created_at=None,
+                    created_at=datetime.now(timezone.utc),
                     metadata={"reason": "Bonus"},
                 )
             )
@@ -201,13 +237,18 @@ async def test_adjust_command_uses_currency_config() -> None:
     currency_config = CurrencyConfigResult(currency_name="點數", currency_icon="💰")
     currency_service = SimpleNamespace(get_currency_config=AsyncMock(return_value=currency_config))
 
+    state_council_service, council_service, supreme_assembly_service = _create_mock_services()
     command = build_adjust_command(
-        cast(AdjustmentService, service), cast(CurrencyConfigService, currency_service)
+        cast(AdjustmentService, service),
+        cast(CurrencyConfigService, currency_service),
+        state_council_service=state_council_service,
+        council_service=council_service,
+        supreme_assembly_service=supreme_assembly_service,
     )
     interaction = _StubInteraction(guild_id=guild_id, user_id=admin_id, is_admin=True)
     target = _StubMember(id=target_id)
 
-    await command._callback(
+    await command._callback(  # type: ignore[protected-access]
         cast(Interaction[Any], interaction), cast(Interaction[Any], target), 150, "Bonus"
     )
 

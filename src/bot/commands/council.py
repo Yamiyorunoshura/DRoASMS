@@ -17,10 +17,11 @@ from src.bot.interaction_compat import send_message_compat
 from src.bot.services.balance_service import BalanceService
 from src.bot.services.council_service import (
     CouncilService,
+    CouncilServiceResult,
     GovernanceNotConfiguredError,
     PermissionDeniedError,
+    VoteTotals,
 )
-from src.bot.services.council_service_result import CouncilServiceResult, VoteTotals
 from src.bot.services.department_registry import get_registry
 from src.bot.services.permission_service import PermissionResult, PermissionService
 from src.bot.services.state_council_service import StateCouncilService
@@ -907,6 +908,27 @@ class CouncilPanelView(PersistentPanelView):
         self._select.callback = self._on_select_proposal
         self.add_item(self._select)
 
+    async def _resolve_council_account_id(self) -> int:
+        """優先使用政府帳戶映射取得常任理事會帳戶 ID，失敗時回退舊版推導值。"""
+        try:
+            sc_service = StateCouncilService()
+            accounts = await sc_service.get_all_accounts(guild_id=self.guild.id)
+            for acc in accounts:
+                department = getattr(acc, "department", None)
+                if department in {"常任理事會", "permanent_council"}:
+                    account_id = getattr(acc, "account_id", None)
+                    if account_id is not None:
+                        return int(account_id)
+        except Exception as exc:  # pragma: no cover - 記錄並回退
+            LOGGER.debug(
+                "council.panel.account.resolve_failed",
+                guild_id=self.guild.id,
+                error=str(exc),
+            )
+            return CouncilService.derive_council_account_id(self.guild.id)
+
+        return CouncilService.derive_council_account_id(self.guild.id)
+
     async def bind_message(self, message: discord.Message) -> None:
         """綁定訊息並訂閱治理事件，以便即時更新。"""
         if self._message is not None:
@@ -938,7 +960,7 @@ class CouncilPanelView(PersistentPanelView):
             if self.author_id is None:
                 raise ValueError("author_id is required")
             balance_service = BalanceService(get_pool())
-            council_account_id = CouncilService.derive_council_account_id(self.guild.id)
+            council_account_id = await self._resolve_council_account_id()
             snap_result = await balance_service.get_balance_snapshot(
                 guild_id=self.guild.id,
                 requester_id=self.author_id,
@@ -1324,7 +1346,7 @@ class CouncilPanelView(PersistentPanelView):
 
 
 class TransferTypeSelectionView(discord.ui.View):
-    """View for selecting transfer type (user or department)."""
+    """View for selecting transfer type (user, department, or company)."""
 
     def __init__(self, *, service: CouncilServiceResult, guild: discord.Guild) -> None:
         super().__init__(timeout=300)
@@ -1354,6 +1376,24 @@ class TransferTypeSelectionView(discord.ui.View):
         # Show department select view
         view = DepartmentSelectView(service=self.service, guild=self.guild)
         await interaction.response.send_message("請選擇受款部門：", view=view, ephemeral=True)
+
+    @discord.ui.button(
+        label="轉帳給公司",
+        style=discord.ButtonStyle.primary,
+        emoji="🏢",
+    )
+    async def select_company(
+        self, interaction: discord.Interaction, button: discord.ui.Button[Any]
+    ) -> None:
+        # Show company select view
+        view = CouncilCompanySelectView(service=self.service, guild=self.guild)
+        has_companies = await view.setup()
+        if not has_companies:
+            await interaction.response.send_message(
+                "❗ 此伺服器目前沒有已登記的公司。", ephemeral=True
+            )
+            return
+        await interaction.response.send_message("請選擇受款公司：", view=view, ephemeral=True)
 
 
 class DepartmentSelectView(discord.ui.View):
@@ -1466,6 +1506,72 @@ class UserSelectView(discord.ui.View):
         await interaction.response.send_modal(modal)
 
 
+class CouncilCompanySelectView(discord.ui.View):
+    """View for selecting a company (for council transfer proposals)."""
+
+    def __init__(self, *, service: CouncilServiceResult, guild: discord.Guild) -> None:
+        super().__init__(timeout=300)
+        self.service = service
+        self.guild = guild
+        self._companies: dict[int, Any] = {}
+
+    async def setup(self) -> bool:
+        """Fetch companies and setup the select menu.
+
+        Returns:
+            True if companies are available, False otherwise
+        """
+        from src.bot.ui.company_select import build_company_select_options, get_active_companies
+
+        companies = await get_active_companies(self.guild.id)
+        if not companies:
+            return False
+
+        self._companies = {c.id: c for c in companies}
+        options = build_company_select_options(companies)
+
+        select: discord.ui.Select[Any] = discord.ui.Select(
+            placeholder="🏢 選擇公司...",
+            options=options,
+            min_values=1,
+            max_values=1,
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+        return True
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        """Handle company selection."""
+        if not interaction.data:
+            await interaction.response.send_message("請選擇一家公司。", ephemeral=True)
+            return
+
+        values = _extract_select_values(interaction)
+        if not values:
+            await interaction.response.send_message("請選擇一家公司。", ephemeral=True)
+            return
+
+        try:
+            company_id = int(values[0])
+        except ValueError:
+            await interaction.response.send_message("選項格式錯誤。", ephemeral=True)
+            return
+
+        company = self._companies.get(company_id)
+        if company is None:
+            await interaction.response.send_message("找不到指定的公司。", ephemeral=True)
+            return
+
+        # Show transfer proposal modal with company selected
+        modal = TransferProposalModal(
+            service=self.service,
+            guild=self.guild,
+            target_company_account_id=company.account_id,
+            target_company_name=company.name,
+        )
+        await interaction.response.send_modal(modal)
+
+
 class TransferProposalModal(discord.ui.Modal, title="建立轉帳提案"):
     """Modal for creating transfer proposal with amount, description, and attachment."""
 
@@ -1478,6 +1584,8 @@ class TransferProposalModal(discord.ui.Modal, title="建立轉帳提案"):
         target_user_name: str | None = None,
         target_department_id: str | None = None,
         target_department_name: str | None = None,
+        target_company_account_id: int | None = None,
+        target_company_name: str | None = None,
     ) -> None:
         super().__init__()
         self.service = service
@@ -1486,11 +1594,15 @@ class TransferProposalModal(discord.ui.Modal, title="建立轉帳提案"):
         self.target_user_name = target_user_name
         self.target_department_id = target_department_id
         self.target_department_name = target_department_name
+        self.target_company_account_id = target_company_account_id
+        self.target_company_name = target_company_name
 
         # Show target info in a disabled text input
         target_label = "受款人"
         target_value = ""
-        if target_department_name:
+        if target_company_name:
+            target_value = f"公司：{target_company_name}"
+        elif target_department_name:
             target_value = f"部門：{target_department_name}"
         elif target_user_name:
             target_value = f"使用者：{target_user_name}"
@@ -1523,7 +1635,11 @@ class TransferProposalModal(discord.ui.Modal, title="建立轉帳提案"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:  # noqa: D401
         # Validate that a target is selected
-        if not self.target_user_id and not self.target_department_id:
+        if (
+            not self.target_user_id
+            and not self.target_department_id
+            and not self.target_company_account_id
+        ):
             await interaction.response.send_message("錯誤：未選擇受款人。", ephemeral=True)
             return
 
@@ -1575,8 +1691,12 @@ class TransferProposalModal(discord.ui.Modal, title="建立轉帳提案"):
         # Create proposal
         # For department transfers, we still need a target_id (use department account ID)
         # For user transfers, use the user ID
+        # For company transfers, use the company account ID
         target_id = self.target_user_id
-        if self.target_department_id and not target_id:
+        if self.target_company_account_id and not target_id:
+            # Use company account ID directly
+            target_id = self.target_company_account_id
+        elif self.target_department_id and not target_id:
             # Derive department account ID for the target_id field
             from src.bot.services.state_council_service import StateCouncilService
 

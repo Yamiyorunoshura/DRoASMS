@@ -18,10 +18,10 @@ from src.bot.commands.council import (
 )
 from src.bot.services.council_service import (
     CouncilService,
+    CouncilServiceResult,
     GovernanceNotConfiguredError,
     PermissionDeniedError,
 )
-from src.bot.services.council_service_result import CouncilServiceResult
 from src.infra.result import Err, Ok, ValidationError
 
 

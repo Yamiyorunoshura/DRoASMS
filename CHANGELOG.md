@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2025-11-28
+
+### Added
+
+- **公司管理系統**：完整的公司帳戶管理功能
+  - 新增 `/company` 指令群組，支援公司建立、查詢、存取款等操作
+  - 新增 `CompanyService` 服務層處理公司業務邏輯
+  - 新增 `CompanyGateway` 資料庫閘道層
+  - 新增 `CompanySelectView` UI 元件用於公司選擇
+  - 新增資料庫函數 `fn_companies.sql` 處理公司相關 SQL 操作
+- **資料庫遷移**：
+  - `049_add_companies.py`：新增公司資料表結構
+  - `050_company_functions.py`：新增公司相關資料庫函數
+  - `051_fix_company_account_overflow.py`：修正公司帳戶溢位問題
+  - `052_allow_council_targets.py`：擴展議會轉帳目標支援
+- **轉帳 UI 增強**：
+  - 新增 `test_council_transfer_proposal_ui.py`：議會轉帳提案 UI 測試
+  - 新增 `test_personal_panel_transfer_ui.py`：個人面板轉帳 UI 測試
+  - 新增 `test_state_council_transfer_ui.py`：國務院轉帳 UI 測試
+  - 新增 `test_supreme_assembly_transfer_ui.py`：最高人民會議轉帳 UI 測試
+  - 新增 `test_supreme_assembly_transfer_resolver.py`：轉帳解析器測試
+  - 新增 `test_transfer_ui_cross_panel.py`：跨面板轉帳整合測試
+- **Cython 擴展**：擴展 `state_council_models.py` 支援新資料模型
+
+### Changed
+
+- **議會服務重構**：
+  - 重構 `council_service.py`，整合 Result 模式並移除獨立的 `council_service_result.py`
+  - 更新 `council_errors.py` 擴展錯誤類型定義
+- **國務院面板增強**：大幅擴展 `state_council.py` 支援更多操作流程
+- **個人面板分頁器改進**：更新 `personal_panel_paginator.py` 支援轉帳 UI 流程
+- **依賴注入更新**：更新 `bootstrap.py` 和 `result_container.py` 註冊新服務
+- **遙測監聽器**：擴展 `listener.py` 支援新事件追蹤
+
+### Removed
+
+- **服務結果檔案合併**：移除 `council_service_result.py`，功能已整合至 `council_service.py`
+
+[Compare changes](https://github.com/Yamiyorunoshura/DRoASMS/compare/v3.2.0...v3.3.0)
+
 ## [3.2.0] - 2025-11-26
 
 ### Added

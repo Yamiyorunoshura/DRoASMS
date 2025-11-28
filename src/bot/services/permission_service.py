@@ -13,8 +13,7 @@ from src.infra.result import Err, Error, Ok, Result
 from src.infra.result_compat import mark_migrated
 
 if TYPE_CHECKING:
-    from src.bot.services.council_service import CouncilService
-    from src.bot.services.council_service_result import CouncilServiceResult
+    from src.bot.services.council_service import CouncilService, CouncilServiceResult
     from src.bot.services.state_council_service import StateCouncilService
     from src.bot.services.state_council_service_result import StateCouncilServiceResult
     from src.bot.services.supreme_assembly_service import SupremeAssemblyService

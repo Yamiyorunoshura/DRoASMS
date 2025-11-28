@@ -29,22 +29,24 @@ async def test_transfer_to_user_full_flow(monkeypatch: pytest.MonkeyPatch) -> No
     gw = _FakeGatewayWithList()
     conn = FakeConnection(gw)
     pool = FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw, transfer_service=cast(Any, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # Step 1: Create proposal for user transfer
-    p = await svc.create_transfer_proposal(
-        guild_id=100,
-        proposer_id=10,
-        target_id=20,  # User ID
-        amount=100,
-        description="測試轉帳給使用者",
-        attachment_url="https://example.com/doc.pdf",
-        snapshot_member_ids=[10, 11, 12],
-        target_department_id=None,  # Explicitly None for user transfer
-    )
+    p = (
+        await svc.create_transfer_proposal(
+            guild_id=100,
+            proposer_id=10,
+            target_id=20,  # User ID
+            amount=100,
+            description="測試轉帳給使用者",
+            attachment_url="https://example.com/doc.pdf",
+            snapshot_member_ids=[10, 11, 12],
+            target_department_id=None,  # Explicitly None for user transfer
+        )
+    ).unwrap()
 
     # Step 2: Verify proposal created correctly
     assert p.target_id == 20
@@ -55,14 +57,14 @@ async def test_transfer_to_user_full_flow(monkeypatch: pytest.MonkeyPatch) -> No
     assert p.status == "進行中"
 
     # Step 3: Verify proposal appears in active list
-    items = await svc.list_active_proposals()
+    items = (await svc.list_active_proposals()).unwrap()
     assert any(x.proposal_id == p.proposal_id for x in items)
 
     # Step 4: Vote on proposal
-    _, status = await svc.vote(proposal_id=p.proposal_id, voter_id=10, choice="approve")
+    _, status = (await svc.vote(proposal_id=p.proposal_id, voter_id=10, choice="approve")).unwrap()
     assert status == "進行中"
 
-    _, status = await svc.vote(proposal_id=p.proposal_id, voter_id=11, choice="approve")
+    _, status = (await svc.vote(proposal_id=p.proposal_id, voter_id=11, choice="approve")).unwrap()
     assert status in ("已執行", "執行失敗")
 
 
@@ -72,7 +74,7 @@ async def test_transfer_to_department_full_flow(monkeypatch: pytest.MonkeyPatch)
     gw = _FakeGatewayWithList()
     conn = FakeConnection(gw)
     pool = FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw, transfer_service=cast(Any, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
@@ -83,16 +85,18 @@ async def test_transfer_to_department_full_flow(monkeypatch: pytest.MonkeyPatch)
     assert dept is not None
 
     # Step 1: Create proposal for department transfer
-    p = await svc.create_transfer_proposal(
-        guild_id=100,
-        proposer_id=10,
-        target_id=9500000000000001,  # Department account ID (derived)
-        amount=500,
-        description="測試轉帳給內政部",
-        attachment_url=None,
-        snapshot_member_ids=[10, 11, 12],
-        target_department_id="interior_affairs",
-    )
+    p = (
+        await svc.create_transfer_proposal(
+            guild_id=100,
+            proposer_id=10,
+            target_id=9500000000000001,  # Department account ID (derived)
+            amount=500,
+            description="測試轉帳給內政部",
+            attachment_url=None,
+            snapshot_member_ids=[10, 11, 12],
+            target_department_id="interior_affairs",
+        )
+    ).unwrap()
 
     # Step 2: Verify proposal created correctly
     assert p.target_department_id == "interior_affairs"
@@ -101,7 +105,7 @@ async def test_transfer_to_department_full_flow(monkeypatch: pytest.MonkeyPatch)
     assert p.status == "進行中"
 
     # Step 3: Verify proposal appears in active list
-    items = await svc.list_active_proposals()
+    items = (await svc.list_active_proposals()).unwrap()
     assert any(x.proposal_id == p.proposal_id for x in items)
 
     # Step 4: Verify department can be retrieved
@@ -110,10 +114,10 @@ async def test_transfer_to_department_full_flow(monkeypatch: pytest.MonkeyPatch)
     assert fetched_dept.name == "內政部"
 
     # Step 5: Vote on proposal
-    _, status = await svc.vote(proposal_id=p.proposal_id, voter_id=10, choice="approve")
+    _, status = (await svc.vote(proposal_id=p.proposal_id, voter_id=10, choice="approve")).unwrap()
     assert status == "進行中"
 
-    _, status = await svc.vote(proposal_id=p.proposal_id, voter_id=11, choice="approve")
+    _, status = (await svc.vote(proposal_id=p.proposal_id, voter_id=11, choice="approve")).unwrap()
     assert status in ("已執行", "執行失敗")
 
 

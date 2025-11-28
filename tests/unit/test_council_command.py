@@ -26,10 +26,10 @@ from src.bot.commands.council import (
 )
 from src.bot.services.council_service import (
     CouncilService,
+    CouncilServiceResult,
     GovernanceNotConfiguredError,
     PermissionDeniedError,
 )
-from src.bot.services.council_service_result import CouncilServiceResult
 from src.bot.services.permission_service import PermissionResult, PermissionService
 from src.bot.services.state_council_service import StateCouncilService
 from src.bot.services.supreme_assembly_service import SupremeAssemblyService

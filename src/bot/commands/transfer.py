@@ -9,8 +9,7 @@ import structlog
 from discord import app_commands
 
 from src.bot.commands.help_data import HelpData
-from src.bot.services.council_service import GovernanceNotConfiguredError
-from src.bot.services.council_service_result import CouncilServiceResult
+from src.bot.services.council_service import CouncilServiceResult, GovernanceNotConfiguredError
 from src.bot.services.currency_config_service import (
     CurrencyConfigResult,
     CurrencyConfigService,
@@ -180,7 +179,7 @@ def build_transfer_command(
                     LOGGER.debug("bot.transfer.sa_config_unavailable", error=str(exc))
                     sa_cfg = None
                 if sa_cfg and target.id == sa_cfg.speaker_role_id:
-                    target_id = SupremeAssemblyService.derive_account_id(guild_id)
+                    target_id = await sa_service.get_or_create_account_id(guild_id)
                 else:
                     # 嘗試國務院領袖身分組
                     sc_service = StateCouncilService()

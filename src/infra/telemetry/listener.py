@@ -10,6 +10,7 @@ from uuid import UUID
 
 import structlog
 
+from src.bot.services.council_service import CouncilService
 from src.bot.services.currency_config_service import (
     CurrencyConfigResult,
     CurrencyConfigService,
@@ -17,6 +18,12 @@ from src.bot.services.currency_config_service import (
 from src.db import pool as db_pool
 from src.db.gateway.economy_queries import EconomyQueryGateway
 from src.db.gateway.state_council_governance import StateCouncilGovernanceGateway
+from src.infra.events.council_events import (
+    CouncilEvent,
+)
+from src.infra.events.council_events import (
+    publish as publish_council_event,
+)
 from src.infra.events.state_council_events import (
     StateCouncilEvent,
 )
@@ -162,6 +169,8 @@ class TelemetryListener:
                 LOGGER.exception("telemetry.listener.notify_initiator_server_failed", payload=data)
             # 嘗試判定是否涉及政府部門帳戶，若是則通知國務院面板刷新
             await _maybe_emit_state_council_event(data, cause="transaction_success")
+            # 若涉及常任理事會帳戶，觸發理事會面板即時刷新（補齊事件池執行後的餘額更新）
+            await _maybe_emit_council_refresh(data)
         elif event_type == "transaction_denied":
             LOGGER.warning(
                 "telemetry.transfer.denied",
@@ -632,3 +641,30 @@ async def _maybe_emit_state_council_event(parsed: Any, *, cause: str) -> None:
             guild_id=parsed.get("guild_id"),
             cause=cause,
         )
+
+
+async def _maybe_emit_council_refresh(parsed: Any) -> None:
+    """若交易涉及常任理事會帳戶，發布理事會事件以觸發面板餘額更新。"""
+    try:
+        guild_id = int(parsed.get("guild_id"))
+    except Exception:
+        return
+
+    council_account_id = CouncilService.derive_council_account_id(guild_id)
+    initiator_id = parsed.get("initiator_id")
+    target_id = parsed.get("target_id")
+
+    if initiator_id != council_account_id and target_id != council_account_id:
+        return
+
+    try:
+        await publish_council_event(
+            CouncilEvent(
+                guild_id=guild_id,
+                proposal_id=None,
+                kind="proposal_updated",
+                status=None,
+            )
+        )
+    except Exception:
+        LOGGER.exception("telemetry.listener.council.emit_failed", payload=parsed)

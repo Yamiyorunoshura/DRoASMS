@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Sequence, cast
+from typing import TYPE_CHECKING, Any, Sequence, cast
+
+if TYPE_CHECKING:
+    from src.cython_ext.council_governance_models import Proposal, Tally
 from uuid import uuid4
 
 import pytest
@@ -89,13 +92,13 @@ async def test_council_panel_create_proposal_contract(monkeypatch: pytest.Monkey
     gw = FakeGatewayWithList()
     conn = FakeConnection(gw)
     pool = FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # 建案
-    p = await svc.create_transfer_proposal(
+    result = await svc.create_transfer_proposal(
         guild_id=100,
         proposer_id=10,
         target_id=20,
@@ -104,6 +107,7 @@ async def test_council_panel_create_proposal_contract(monkeypatch: pytest.Monkey
         attachment_url=None,
         snapshot_member_ids=[10, 11, 12],
     )
+    p = cast("Proposal", result.unwrap())
 
     assert p.proposal_id is not None
     assert p.status == "進行中"
@@ -120,33 +124,43 @@ async def test_council_panel_list_active_proposals_contract(
     gw = FakeGatewayWithList()
     conn = FakeConnection(gw)
     pool = FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # 建立多個提案
-    p1 = await svc.create_transfer_proposal(
-        guild_id=100,
-        proposer_id=10,
-        target_id=20,
-        amount=30,
-        description="proposal 1",
-        attachment_url=None,
-        snapshot_member_ids=[10, 11, 12],
+    p1 = cast(
+        "Proposal",
+        (
+            await svc.create_transfer_proposal(
+                guild_id=100,
+                proposer_id=10,
+                target_id=20,
+                amount=30,
+                description="proposal 1",
+                attachment_url=None,
+                snapshot_member_ids=[10, 11, 12],
+            )
+        ).unwrap(),
     )
-    p2 = await svc.create_transfer_proposal(
-        guild_id=100,
-        proposer_id=11,
-        target_id=21,
-        amount=40,
-        description="proposal 2",
-        attachment_url=None,
-        snapshot_member_ids=[10, 11, 12],
+    p2 = cast(
+        "Proposal",
+        (
+            await svc.create_transfer_proposal(
+                guild_id=100,
+                proposer_id=11,
+                target_id=21,
+                amount=40,
+                description="proposal 2",
+                attachment_url=None,
+                snapshot_member_ids=[10, 11, 12],
+            )
+        ).unwrap(),
     )
 
     # 面板列出
-    items = await svc.list_active_proposals()
+    items = cast("Sequence[Proposal]", (await svc.list_active_proposals()).unwrap())
     assert len(items) >= 2
     assert any(x.proposal_id == p1.proposal_id for x in items)
     assert any(x.proposal_id == p2.proposal_id for x in items)
@@ -159,31 +173,44 @@ async def test_council_panel_vote_contract(monkeypatch: pytest.MonkeyPatch) -> N
     gw = FakeGatewayWithList()
     conn = FakeConnection(gw)
     pool = FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # 建案
-    p = await svc.create_transfer_proposal(
-        guild_id=100,
-        proposer_id=10,
-        target_id=20,
-        amount=30,
-        description="vote test",
-        attachment_url=None,
-        snapshot_member_ids=[10, 11, 12],
+    p = cast(
+        "Proposal",
+        (
+            await svc.create_transfer_proposal(
+                guild_id=100,
+                proposer_id=10,
+                target_id=20,
+                amount=30,
+                description="vote test",
+                attachment_url=None,
+                snapshot_member_ids=[10, 11, 12],
+            )
+        ).unwrap(),
     )
 
     # 投票
-    totals, status = await svc.vote(proposal_id=p.proposal_id, voter_id=10, choice="approve")
+    vote_result = cast(
+        "tuple[Tally, str]",
+        (await svc.vote(proposal_id=p.proposal_id, voter_id=10, choice="approve")).unwrap(),
+    )
+    totals, status = vote_result
     assert totals.approve == 1
     assert totals.reject == 0
     assert totals.abstain == 0
     assert status == "進行中"  # 尚未達到門檻
 
     # 再投一票
-    totals2, _ = await svc.vote(proposal_id=p.proposal_id, voter_id=11, choice="reject")
+    vote_result2 = cast(
+        "tuple[Tally, str]",
+        (await svc.vote(proposal_id=p.proposal_id, voter_id=11, choice="reject")).unwrap(),
+    )
+    totals2, _ = vote_result2
     assert totals2.approve == 1
     assert totals2.reject == 1
 
@@ -195,26 +222,35 @@ async def test_council_panel_execute_contract(monkeypatch: pytest.MonkeyPatch) -
     gw = FakeGatewayWithList()
     conn = FakeConnection(gw)
     pool = FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     fake_transfer = FakeTransferService()
     svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, fake_transfer))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # 建案（僅需 2 票即可通過）
-    p = await svc.create_transfer_proposal(
-        guild_id=100,
-        proposer_id=10,
-        target_id=20,
-        amount=30,
-        description="execute test",
-        attachment_url=None,
-        snapshot_member_ids=[10, 11],  # 僅 2 人，門檻為 2
+    p = cast(
+        "Proposal",
+        (
+            await svc.create_transfer_proposal(
+                guild_id=100,
+                proposer_id=10,
+                target_id=20,
+                amount=30,
+                description="execute test",
+                attachment_url=None,
+                snapshot_member_ids=[10, 11],  # 僅 2 人，門檻為 2
+            )
+        ).unwrap(),
     )
 
     # 投兩票通過
     await svc.vote(proposal_id=p.proposal_id, voter_id=10, choice="approve")
-    totals, status = await svc.vote(proposal_id=p.proposal_id, voter_id=11, choice="approve")
+    vote_result = cast(
+        "tuple[Tally, str]",
+        (await svc.vote(proposal_id=p.proposal_id, voter_id=11, choice="approve")).unwrap(),
+    )
+    totals, status = vote_result
 
     # 應該已通過並執行
     assert totals.approve >= p.threshold_t
@@ -234,27 +270,35 @@ async def test_council_panel_export_contract(monkeypatch: pytest.MonkeyPatch) ->
     gw = FakeGatewayWithList()
     conn = FakeConnection(gw)
     pool = FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # 建立提案
     now = datetime.now(timezone.utc)
-    p = await svc.create_transfer_proposal(
-        guild_id=100,
-        proposer_id=10,
-        target_id=20,
-        amount=30,
-        description="export test",
-        attachment_url=None,
-        snapshot_member_ids=[10, 11, 12],
+    p = cast(
+        "Proposal",
+        (
+            await svc.create_transfer_proposal(
+                guild_id=100,
+                proposer_id=10,
+                target_id=20,
+                amount=30,
+                description="export test",
+                attachment_url=None,
+                snapshot_member_ids=[10, 11, 12],
+            )
+        ).unwrap(),
     )
 
     # 匯出指定時間範圍
     start = now - timedelta(days=1)
     end = now + timedelta(days=1)
-    results = await svc.export_interval(guild_id=100, start=start, end=end)
+    results = cast(
+        "list[dict[str, object]]",
+        (await svc.export_interval(guild_id=100, start=start, end=end)).unwrap(),
+    )
 
     assert len(results) >= 1
     assert any(r["proposal_id"] == str(p.proposal_id) for r in results)
@@ -275,36 +319,46 @@ async def test_council_panel_cancel_proposal_contract(
     gw = FakeGatewayWithList()
     conn = FakeConnection(gw)
     pool = FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # 建案後撤案（未有投票前可行）
-    p = await svc.create_transfer_proposal(
-        guild_id=100,
-        proposer_id=10,
-        target_id=20,
-        amount=30,
-        description="cancel test",
-        attachment_url=None,
-        snapshot_member_ids=[10, 11, 12],
+    p = cast(
+        "Proposal",
+        (
+            await svc.create_transfer_proposal(
+                guild_id=100,
+                proposer_id=10,
+                target_id=20,
+                amount=30,
+                description="cancel test",
+                attachment_url=None,
+                snapshot_member_ids=[10, 11, 12],
+            )
+        ).unwrap(),
     )
-    ok = await svc.cancel_proposal(proposal_id=p.proposal_id)
+    ok = cast(bool, (await svc.cancel_proposal(proposal_id=p.proposal_id)).unwrap())
     assert ok is True
 
     # 重新建案，投票後撤案應失敗
-    p2 = await svc.create_transfer_proposal(
-        guild_id=100,
-        proposer_id=10,
-        target_id=20,
-        amount=30,
-        description="cancel test 2",
-        attachment_url=None,
-        snapshot_member_ids=[10, 11, 12],
+    p2 = cast(
+        "Proposal",
+        (
+            await svc.create_transfer_proposal(
+                guild_id=100,
+                proposer_id=10,
+                target_id=20,
+                amount=30,
+                description="cancel test 2",
+                attachment_url=None,
+                snapshot_member_ids=[10, 11, 12],
+            )
+        ).unwrap(),
     )
     await svc.vote(proposal_id=p2.proposal_id, voter_id=10, choice="approve")
-    ok2 = await svc.cancel_proposal(proposal_id=p2.proposal_id)
+    ok2 = cast(bool, (await svc.cancel_proposal(proposal_id=p2.proposal_id)).unwrap())
     assert ok2 is False
 
 
@@ -317,25 +371,28 @@ async def test_council_panel_error_handling_contract(
     gw = FakeGatewayWithList()
     conn = FakeConnection(gw)
     pool = FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
 
-    # 測試金額必須為正整數
-    with pytest.raises(ValueError, match="Amount must be a positive integer"):
-        await svc.create_transfer_proposal(
-            guild_id=100,
-            proposer_id=10,
-            target_id=20,
-            amount=0,  # 無效金額
-            description="invalid",
-            attachment_url=None,
-            snapshot_member_ids=[10, 11, 12],
-        )
+    # 測試金額必須為正整數 - Result pattern returns Err instead of raising
+    from src.bot.services.council_errors import CouncilValidationError, GovernanceNotConfiguredError
+    from src.infra.result import Err
 
-    # 測試未配置的 guild
-    from src.bot.services.council_service import GovernanceNotConfiguredError
+    result = await svc.create_transfer_proposal(
+        guild_id=100,
+        proposer_id=10,
+        target_id=20,
+        amount=0,  # 無效金額
+        description="invalid",
+        attachment_url=None,
+        snapshot_member_ids=[10, 11, 12],
+    )
+    assert isinstance(result, Err)
+    assert isinstance(result.error, CouncilValidationError)
 
-    with pytest.raises(GovernanceNotConfiguredError):
-        await svc.get_config(guild_id=999)  # 未配置的 guild
+    # 測試未配置的 guild - Result pattern returns Err instead of raising
+    result2 = await svc.get_config(guild_id=999)  # 未配置的 guild
+    assert isinstance(result2, Err)
+    assert isinstance(result2.error, GovernanceNotConfiguredError)

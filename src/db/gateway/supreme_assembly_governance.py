@@ -124,6 +124,22 @@ class SupremeAssemblyGovernanceGateway:
         """
         await connection.execute(sql, account_id, guild_id)
 
+    async def update_account_id(
+        self, connection: AsyncPGConnectionProto, *, guild_id: int, new_account_id: int
+    ) -> tuple[int, int] | None:
+        """Update account_id for a guild (used to修正舊版帳號算法)。"""
+        sql = f"""
+            UPDATE {self._schema}.supreme_assembly_accounts
+            SET account_id = $1,
+                updated_at = timezone('utc', clock_timestamp())
+            WHERE guild_id = $2
+            RETURNING account_id, balance
+        """
+        row: Mapping[str, Any] | None = await connection.fetchrow(sql, new_account_id, guild_id)
+        if row is None:
+            return None
+        return (int(row["account_id"]), int(row["balance"]))
+
     # --- Proposals ---
     async def create_proposal(
         self,

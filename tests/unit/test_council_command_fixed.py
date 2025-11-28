@@ -20,10 +20,10 @@ from src.bot.commands.council import (
 )
 from src.bot.services.council_service import (
     CouncilService,
+    CouncilServiceResult,
     GovernanceNotConfiguredError,
     PermissionDeniedError,
 )
-from src.bot.services.council_service_result import CouncilServiceResult
 from src.infra.result import Err, Ok
 
 # --- Test Helper Functions (Non-UI) ---
@@ -477,6 +477,7 @@ class TestUIComponents:
                 # Set required attributes
                 modal.target_user_id = None
                 modal.target_department_id = None
+                modal.target_company_account_id = None
                 modal.amount = MagicMock()
                 modal.amount.value = "100"
                 modal.service = mock_service

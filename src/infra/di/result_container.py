@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from src.bot.services.council_service_result import CouncilServiceResult
 from src.bot.services.state_council_service_result import StateCouncilServiceResult
 from src.bot.services.supreme_assembly_service_result import SupremeAssemblyServiceResult
 from src.bot.services.transfer_service import TransferService
-from src.db.gateway.council_governance import CouncilGovernanceGateway
 from src.db.gateway.state_council_governance import StateCouncilGovernanceGateway
 from src.db.gateway.supreme_assembly_governance import (
     SupremeAssemblyGovernanceGateway,
@@ -23,17 +21,11 @@ class ResultContainer:
         self._base = base_container
 
     def register_result_services(self) -> None:
-        """Register Result-based service implementations."""
-        # CouncilServiceResult - depends on CouncilGovernanceGateway and TransferService
-        self._base.register(
-            CouncilServiceResult,
-            factory=lambda: CouncilServiceResult(
-                gateway=self._base.resolve(CouncilGovernanceGateway),
-                transfer_service=self._base.resolve(TransferService),
-            ),
-            lifecycle=Lifecycle.SINGLETON,
-        )
+        """Register Result-based service implementations.
 
+        Note: CouncilServiceResult is an alias for CouncilService which is already
+        registered in bootstrap_container(), so we do NOT register it here.
+        """
         # StateCouncilServiceResult - depends on StateCouncilGovernanceGateway and other services
         self._base.register(
             StateCouncilServiceResult,

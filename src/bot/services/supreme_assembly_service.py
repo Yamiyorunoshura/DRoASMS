@@ -73,8 +73,53 @@ class SupremeAssemblyService:
     # --- Configuration ---
     @staticmethod
     def derive_account_id(guild_id: int) -> int:
-        # Deterministic account id: 9.2e15 + guild_id
-        return 9_200_000_000_000_000 + int(guild_id)
+        """導出最高人民會議帳戶 ID，與政府帳戶表一致。
+
+        使用政府帳戶統一區段 9.5e15，最高人民會議部門代碼為 200：
+        account_id = 9_500_000_000_000_000 + guild_id + 200
+        """
+        base = 9_500_000_000_000_000
+        return int(base + int(guild_id) + 200)
+
+    async def get_or_create_account_id(self, guild_id: int) -> int:
+        """取得最高人民會議帳戶 ID，若已存在則沿用，否則使用推導值建立。
+
+        - 若資料庫已有帳戶但採用舊公式，會嘗試更新為新公式的 account_id
+          （避免面板與轉帳使用不同帳號）
+        - 若不存在，使用 derive_account_id 推導並確保建立記錄
+        """
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        async with pool.acquire() as conn:
+            c: ConnectionProtocol = conn
+            derived_id = self.derive_account_id(guild_id)
+            existing = await self._gateway.fetch_account(c, guild_id=guild_id)
+            if existing is not None:
+                current_id = int(existing[0])
+                if current_id != derived_id:
+                    try:
+                        migrated = await self._gateway.update_account_id(
+                            c, guild_id=guild_id, new_account_id=derived_id
+                        )
+                        LOGGER.info(
+                            "supreme_assembly.account.migrated",
+                            guild_id=guild_id,
+                            old_account_id=current_id,
+                            new_account_id=derived_id,
+                        )
+                        if migrated is not None:
+                            return int(migrated[0])
+                    except Exception as exc:  # pragma: no cover - 防禦性
+                        LOGGER.warning(
+                            "supreme_assembly.account.migrate_failed",
+                            guild_id=guild_id,
+                            old_account_id=current_id,
+                            new_account_id=derived_id,
+                            error=str(exc),
+                        )
+                return current_id
+
+            await self._gateway.ensure_account(c, guild_id=guild_id, account_id=derived_id)
+            return derived_id
 
     async def set_config(
         self,
@@ -93,8 +138,7 @@ class SupremeAssemblyService:
                 member_role_id=member_role_id,
             )
             # Ensure account exists
-            account_id = self.derive_account_id(guild_id)
-            await self._gateway.ensure_account(c, guild_id=guild_id, account_id=account_id)
+            _ = await self.get_or_create_account_id(guild_id)
             return config
 
     async def get_config(self, *, guild_id: int) -> SupremeAssemblyConfig:

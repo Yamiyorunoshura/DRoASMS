@@ -485,7 +485,7 @@ class TestPersonalPanelView:
             111111111, "permanent_council"
         )  # pyright: ignore[reportPrivateUsage]
 
-        # Should be 9_000_000_000_000_000 + guild_id
+        # Should be 9_000_000_000_000_000 + guild_id (council dedicated range)
         expected = 9_000_000_000_000_000 + 111111111
         assert account_id == expected
 
@@ -512,8 +512,8 @@ class TestPersonalPanelView:
             111111111, "supreme_assembly"
         )  # pyright: ignore[reportPrivateUsage]
 
-        # Should be 9_200_000_000_000_000 + guild_id
-        expected = 9_200_000_000_000_000 + 111111111
+        # Should be 9_500_000_000_000_000 + guild_id + code(200)
+        expected = 9_500_000_000_000_000 + 111111111 + 200
         assert account_id == expected
 
     async def test_derive_institution_account_id_state_council(
@@ -539,8 +539,9 @@ class TestPersonalPanelView:
             111111111, "state_council"
         )  # pyright: ignore[reportPrivateUsage]
 
-        # Should be 9_100_000_000_000_000 + guild_id
-        expected = 9_100_000_000_000_000 + 111111111
+        # State council transfers route to finance dept (dept_code=2)
+        # Formula: 9_500_000_000_000_000 + guild_id + finance_dept_code
+        expected = 9_500_000_000_000_000 + 111111111 + 2
         assert account_id == expected
 
     async def test_derive_institution_account_id_invalid(

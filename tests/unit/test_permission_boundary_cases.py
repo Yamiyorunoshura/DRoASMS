@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.bot.services.council_service_result import CouncilServiceResult
+from src.bot.services.council_service import CouncilServiceResult
 from src.bot.services.permission_service import (
     CouncilPermissionChecker,
     StateCouncilPermissionChecker,

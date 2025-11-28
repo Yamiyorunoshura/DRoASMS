@@ -39,7 +39,7 @@ class TestSupremeAssemblyCouncilInteraction:
 
     def test_derive_account_ids_are_distinct(self, mock_guild_id: int) -> None:
         """測試不同治理機構的帳戶 ID 是唯一的。"""
-        from src.bot.services.council_service_result import CouncilServiceResult
+        from src.bot.services.council_service import CouncilServiceResult
         from src.bot.services.state_council_service import StateCouncilService
         from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 
@@ -143,7 +143,7 @@ class TestTransferBetweenGovernanceBodies:
 
     def test_transfer_target_id_derivation(self, mock_guild_id: int) -> None:
         """測試轉帳目標 ID 正確導出。"""
-        from src.bot.services.council_service_result import CouncilServiceResult
+        from src.bot.services.council_service import CouncilServiceResult
         from src.bot.services.state_council_service import StateCouncilService
         from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 
@@ -175,7 +175,7 @@ class TestGovernanceConfigurationInteraction:
         # 這是一個概念測試，驗證設計允許多個治理機構共存
 
         # 每個治理機構應該有獨立的配置
-        from src.bot.services.council_service_result import CouncilServiceResult
+        from src.bot.services.council_service import CouncilServiceResult
         from src.bot.services.state_council_service import StateCouncilService
         from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 

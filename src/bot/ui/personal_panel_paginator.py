@@ -14,6 +14,7 @@ from src.bot.interaction_compat import (
     send_modal_compat,
 )
 from src.bot.services.application_service import ApplicationService
+from src.bot.services.council_service import CouncilService
 from src.bot.services.currency_config_service import CurrencyConfigResult
 from src.bot.services.department_registry import Department, get_registry
 from src.bot.services.state_council_service import (
@@ -212,7 +213,7 @@ class PersonalPanelView(PersistentPanelView):
         embed = discord.Embed(
             title="💸 轉帳",
             color=0xE74C3C,
-            description="選擇轉帳對象來發起轉帳。",
+            description="點擊下方按鈕發起轉帳。",
         )
         embed.add_field(
             name="💰 可用餘額",
@@ -231,13 +232,14 @@ class PersonalPanelView(PersistentPanelView):
         embed.add_field(
             name="📋 操作說明",
             value=(
-                "1️⃣ 點擊「👤 轉帳給使用者」選擇成員\n"
-                "2️⃣ 或點擊「🏛️ 轉帳給部門」選擇政府部門\n"
-                "3️⃣ 在彈出的視窗中輸入金額和備註"
+                "1️⃣ 點擊「💸 轉帳」按鈕\n"
+                "2️⃣ 選擇轉帳類型（使用者/政府部門/公司）\n"
+                "3️⃣ 選擇收款對象\n"
+                "4️⃣ 在彈出的視窗中輸入金額和備註"
             ),
             inline=False,
         )
-        embed.set_footer(text="使用下方按鈕切換分頁或選擇轉帳對象")
+        embed.set_footer(text="使用下方按鈕切換分頁")
         return embed
 
     def _update_view_items(self) -> None:
@@ -354,87 +356,42 @@ class PersonalPanelView(PersistentPanelView):
         self.add_item(next_btn)
 
     def _add_transfer_controls(self) -> None:
-        """添加轉帳分頁的控制項。"""
-        # 使用者選擇器
-        user_select: discord.ui.UserSelect[Any] = discord.ui.UserSelect(
-            placeholder="👤 選擇要轉帳的使用者...",
-            custom_id="personal_panel_transfer_user",
-            min_values=1,
-            max_values=1,
-            row=1,
+        """添加轉帳分頁的控制項：單一轉帳按鈕。"""
+        # 轉帳按鈕 - 點擊後發送類型選擇面板
+        transfer_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="💸 轉帳",
+            style=discord.ButtonStyle.primary,
+            custom_id="personal_panel_transfer_action",
+            row=2,
         )
-        user_select.callback = self._on_user_select
-        self.add_item(user_select)
+        transfer_btn.callback = self._on_transfer_button
+        self.add_item(transfer_btn)
 
-        # 政府機構選擇器（包含常任理事會、最高人民會議、國務院及其下屬部門）
-        registry = get_registry()
-        departments = list(registry.list_all())
+    async def _on_transfer_button(self, interaction: discord.Interaction) -> None:
+        """處理轉帳按鈕點擊，發送類型選擇面板。"""
+        if not await self._check_author(interaction):
+            return
 
-        # 建構選項：按層級分組顯示
-        options: list[discord.SelectOption] = []
-
-        # 最高決策機構：常任理事會
-        council = registry.get_by_id("permanent_council")
-        if council:
-            options.append(
-                discord.SelectOption(
-                    label=council.name,
-                    value="institution:permanent_council",
-                    emoji=council.emoji or "👑",
-                    description="最高決策機構",
-                )
-            )
-
-        # 立法機構：最高人民會議
-        assembly = registry.get_by_id("supreme_assembly")
-        if assembly:
-            options.append(
-                discord.SelectOption(
-                    label=assembly.name,
-                    value="institution:supreme_assembly",
-                    emoji=assembly.emoji or "🏛️",
-                    description="最高立法機構",
-                )
-            )
-
-        # 行政機構：國務院主帳戶
-        state_council = registry.get_by_id("state_council")
-        if state_council:
-            options.append(
-                discord.SelectOption(
-                    label=state_council.name,
-                    value="institution:state_council",
-                    emoji=state_council.emoji or "🏛️",
-                    description="國家治理執行機構",
-                )
-            )
-
-        # 行政機構：國務院下屬部門
-        transferable_depts = [d for d in departments if d.level == "department"][:20]
-        for dept in transferable_depts:
-            options.append(
-                discord.SelectOption(
-                    label=dept.name,
-                    value=f"department:{dept.id}",
-                    emoji=dept.emoji if dept.emoji else "🏛️",
-                    description=dept.description[:50] if dept.description else None,
-                )
-            )
-
-        if options:
-            govt_select: discord.ui.Select[Any] = discord.ui.Select(
-                placeholder="🏛️ 選擇要轉帳的政府機構...",
-                options=options[:25],  # Discord 限制最多 25 個選項
-                custom_id="personal_panel_transfer_govt",
-                min_values=1,
-                max_values=1,
-                row=2,
-            )
-            govt_select.callback = self._on_govt_select
-            self.add_item(govt_select)
-        else:
-            # 無任何政府機構可選
-            LOGGER.debug("personal_panel.no_government_options")
+        view = PersonalTransferTypeSelectionView(
+            guild_id=self.guild_id,
+            author_id=self._author_id,
+            balance=self.balance_snapshot.balance,
+            currency_display=self._get_currency_display(),
+            transfer_callback=self.transfer_callback,
+            refresh_callback=self.refresh_callback,
+            state_council_service=self.state_council_service,
+        )
+        embed = discord.Embed(
+            title="💸 選擇轉帳類型",
+            color=0xE74C3C,
+            description="請選擇您要轉帳的對象類型：",
+        )
+        embed.add_field(
+            name="💰 可用餘額",
+            value=f"**{self.balance_snapshot.balance:,}** {self._get_currency_display()}",
+            inline=False,
+        )
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
 
     async def _check_author(self, interaction: discord.Interaction) -> bool:
         """檢查操作者是否為面板擁有者。"""
@@ -656,16 +613,28 @@ class PersonalPanelView(PersistentPanelView):
         """計算政府機構帳戶 ID。
 
         帳戶 ID 映射：
-        - 常任理事會: 9_000_000_000_000_000 + guild_id
-        - 最高人民會議: 9_200_000_000_000_000 + guild_id
-        - 國務院: 9_100_000_000_000_000 + guild_id
+        - 常任理事會: CouncilService.derive_council_account_id (9_0e15 + guild_id)
+        - 最高人民會議: 9_500_000_000_000_000 + guild_id + code(200)
+        - 國務院: 路由至財政部帳戶 (9_500_000_000_000_000 + guild_id + 2)
+
+        Note: 外部向國務院轉帳時，資金自動入帳至財政部。
         """
+        code = 0
+        if institution_id in {"permanent_council", "supreme_assembly", "state_council"}:
+            try:
+                dept = get_registry().get_by_id(institution_id)
+                code = dept.code if dept else 0
+            except Exception:
+                code = 0
+
         if institution_id == "permanent_council":
-            return 9_000_000_000_000_000 + guild_id
+            return CouncilService.derive_council_account_id(guild_id)
         elif institution_id == "supreme_assembly":
-            return 9_200_000_000_000_000 + guild_id
+            return 9_500_000_000_000_000 + guild_id + code
         elif institution_id == "state_council":
-            return 9_100_000_000_000_000 + guild_id
+            # 外部向國務院轉帳自動路由至財政部 (dept_code=2)
+            finance_dept_code = 2
+            return 9_500_000_000_000_000 + guild_id + finance_dept_code
         return None
 
     async def _resolve_department_account_id(self, guild_id: int, dept: Department) -> int:
@@ -1189,9 +1158,567 @@ class TransferModal(discord.ui.Modal):
         await self._on_submit(interaction, amount, reason)
 
 
+# --- Personal Transfer Type Selection UI ---
+
+
+class PersonalTransferTypeSelectionView(discord.ui.View):
+    """個人面板轉帳類型選擇視圖。
+
+    提供三種轉帳對象選擇：使用者、政府部門、公司。
+    """
+
+    def __init__(
+        self,
+        *,
+        guild_id: int,
+        author_id: int,
+        balance: int,
+        currency_display: str,
+        transfer_callback: Callable[
+            [int, int, int, str | None, int],
+            Coroutine[Any, Any, tuple[bool, str]],
+        ],
+        refresh_callback: Callable[[], Coroutine[Any, Any, tuple[Any, Any]]],
+        state_council_service: "StateCouncilService | None" = None,
+        timeout: float = 300.0,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.guild_id = guild_id
+        self.author_id = author_id
+        self.balance = balance
+        self.currency_display = currency_display
+        self.transfer_callback = transfer_callback
+        self.refresh_callback = refresh_callback
+        self.state_council_service = state_council_service
+
+        # 類型選擇按鈕
+        user_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="👤 使用者",
+            style=discord.ButtonStyle.primary,
+            custom_id="personal_transfer_type_user",
+            row=0,
+        )
+        user_btn.callback = self._on_user_type
+        self.add_item(user_btn)
+
+        govt_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="🏛️ 政府部門",
+            style=discord.ButtonStyle.primary,
+            custom_id="personal_transfer_type_govt",
+            row=0,
+        )
+        govt_btn.callback = self._on_govt_type
+        self.add_item(govt_btn)
+
+        company_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="🏢 公司",
+            style=discord.ButtonStyle.primary,
+            custom_id="personal_transfer_type_company",
+            row=0,
+        )
+        company_btn.callback = self._on_company_type
+        self.add_item(company_btn)
+
+    async def _check_author(self, interaction: discord.Interaction) -> bool:
+        """檢查操作者是否為面板擁有者。"""
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return False
+        return True
+
+    async def _on_user_type(self, interaction: discord.Interaction) -> None:
+        """選擇使用者類型後，顯示使用者選擇器。"""
+        if not await self._check_author(interaction):
+            return
+
+        view = PersonalUserSelectView(
+            guild_id=self.guild_id,
+            author_id=self.author_id,
+            balance=self.balance,
+            currency_display=self.currency_display,
+            transfer_callback=self.transfer_callback,
+            refresh_callback=self.refresh_callback,
+        )
+        await send_message_compat(
+            interaction,
+            content="請選擇要轉帳的使用者：",
+            view=view,
+            ephemeral=True,
+        )
+
+    async def _on_govt_type(self, interaction: discord.Interaction) -> None:
+        """選擇政府部門類型後，顯示部門選擇器。"""
+        if not await self._check_author(interaction):
+            return
+
+        view = PersonalGovtSelectView(
+            guild_id=self.guild_id,
+            author_id=self.author_id,
+            balance=self.balance,
+            currency_display=self.currency_display,
+            transfer_callback=self.transfer_callback,
+            refresh_callback=self.refresh_callback,
+            state_council_service=self.state_council_service,
+        )
+        await send_message_compat(
+            interaction,
+            content="請選擇要轉帳的政府機構：",
+            view=view,
+            ephemeral=True,
+        )
+
+    async def _on_company_type(self, interaction: discord.Interaction) -> None:
+        """選擇公司類型後，顯示公司選擇器。"""
+        if not await self._check_author(interaction):
+            return
+
+        from src.bot.ui.company_select import CompanySelectView
+
+        async def on_company_selected(
+            select_interaction: discord.Interaction, company: Any
+        ) -> None:
+            """處理公司選擇。"""
+            modal = TransferModal(
+                target_name=f"🏢 {company.name}",
+                currency_display=self.currency_display,
+                available_balance=self.balance,
+                on_submit=lambda i, amount, reason: self._handle_company_transfer(
+                    i, amount, reason, company.account_id, company.name
+                ),
+            )
+            await send_modal_compat(select_interaction, modal)
+
+        view = CompanySelectView(
+            guild_id=self.guild_id,
+            on_company_selected=on_company_selected,
+        )
+        has_companies = await view.setup()
+
+        if not has_companies:
+            await send_message_compat(
+                interaction,
+                content="❌ 此伺服器目前沒有已登記的公司。",
+                ephemeral=True,
+            )
+            return
+
+        await send_message_compat(
+            interaction,
+            content="請選擇要轉帳的公司：",
+            view=view,
+            ephemeral=True,
+        )
+
+    async def _handle_company_transfer(
+        self,
+        interaction: discord.Interaction,
+        amount: int,
+        reason: str | None,
+        account_id: int,
+        company_name: str,
+    ) -> None:
+        """處理公司轉帳提交。"""
+        if amount <= 0:
+            await send_message_compat(
+                interaction, content="❌ 轉帳金額必須大於 0。", ephemeral=True
+            )
+            return
+
+        if amount > self.balance:
+            await send_message_compat(interaction, content="❌ 餘額不足。", ephemeral=True)
+            return
+
+        try:
+            success, message = await self.transfer_callback(
+                self.guild_id,
+                self.author_id,
+                account_id,
+                reason,
+                amount,
+            )
+
+            if success:
+                result_msg = (
+                    f"✅ 已成功將 **{amount:,}** {self.currency_display} 轉給 🏢 {company_name}。"
+                )
+                if reason:
+                    result_msg += f"\n📝 備註：{reason}"
+                await send_message_compat(interaction, content=result_msg, ephemeral=True)
+            else:
+                await send_message_compat(interaction, content=f"❌ {message}", ephemeral=True)
+        except Exception as exc:
+            LOGGER.exception("personal_panel.company_transfer.error", error=str(exc))
+            await send_message_compat(
+                interaction, content="❌ 轉帳失敗，請稍後再試。", ephemeral=True
+            )
+
+
+class PersonalUserSelectView(discord.ui.View):
+    """個人面板使用者選擇視圖。"""
+
+    def __init__(
+        self,
+        *,
+        guild_id: int,
+        author_id: int,
+        balance: int,
+        currency_display: str,
+        transfer_callback: Callable[
+            [int, int, int, str | None, int],
+            Coroutine[Any, Any, tuple[bool, str]],
+        ],
+        refresh_callback: Callable[[], Coroutine[Any, Any, tuple[Any, Any]]],
+        timeout: float = 300.0,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.guild_id = guild_id
+        self.author_id = author_id
+        self.balance = balance
+        self.currency_display = currency_display
+        self.transfer_callback = transfer_callback
+        self.refresh_callback = refresh_callback
+
+        # 使用者選擇器
+        user_select: discord.ui.UserSelect[Any] = discord.ui.UserSelect(
+            placeholder="👤 選擇要轉帳的使用者...",
+            custom_id="personal_user_select",
+            min_values=1,
+            max_values=1,
+        )
+        user_select.callback = self._on_user_select
+        self.add_item(user_select)
+
+    async def _on_user_select(self, interaction: discord.Interaction) -> None:
+        """處理使用者選擇。"""
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+
+        if not interaction.data:
+            return
+
+        data = cast(dict[str, Any] | None, interaction.data)
+        values = cast(list[str] | None, data.get("values") if data else None)
+        if not values:
+            return
+
+        user_id = int(values[0])
+        if user_id == self.author_id:
+            await send_message_compat(interaction, content="❌ 您不能轉帳給自己。", ephemeral=True)
+            return
+
+        # 取得成員名稱
+        member_name = f"<@{user_id}>"
+        if interaction.guild:
+            member = interaction.guild.get_member(user_id)
+            if member:
+                member_name = member.display_name
+
+        # 彈出轉帳 Modal
+        modal = TransferModal(
+            target_name=f"👤 {member_name}",
+            currency_display=self.currency_display,
+            available_balance=self.balance,
+            on_submit=lambda i, amount, reason: self._handle_transfer(
+                i, amount, reason, user_id, member_name
+            ),
+        )
+        await send_modal_compat(interaction, modal)
+
+    async def _handle_transfer(
+        self,
+        interaction: discord.Interaction,
+        amount: int,
+        reason: str | None,
+        target_id: int,
+        target_name: str,
+    ) -> None:
+        """處理轉帳提交。"""
+        if amount <= 0:
+            await send_message_compat(
+                interaction, content="❌ 轉帳金額必須大於 0。", ephemeral=True
+            )
+            return
+
+        if amount > self.balance:
+            await send_message_compat(interaction, content="❌ 餘額不足。", ephemeral=True)
+            return
+
+        try:
+            success, message = await self.transfer_callback(
+                self.guild_id,
+                self.author_id,
+                target_id,
+                reason,
+                amount,
+            )
+
+            if success:
+                result_msg = (
+                    f"✅ 已成功將 **{amount:,}** {self.currency_display} 轉給 👤 {target_name}。"
+                )
+                if reason:
+                    result_msg += f"\n📝 備註：{reason}"
+                await send_message_compat(interaction, content=result_msg, ephemeral=True)
+            else:
+                await send_message_compat(interaction, content=f"❌ {message}", ephemeral=True)
+        except Exception as exc:
+            LOGGER.exception("personal_panel.user_transfer.error", error=str(exc))
+            await send_message_compat(
+                interaction, content="❌ 轉帳失敗，請稍後再試。", ephemeral=True
+            )
+
+
+class PersonalGovtSelectView(discord.ui.View):
+    """個人面板政府機構選擇視圖。"""
+
+    def __init__(
+        self,
+        *,
+        guild_id: int,
+        author_id: int,
+        balance: int,
+        currency_display: str,
+        transfer_callback: Callable[
+            [int, int, int, str | None, int],
+            Coroutine[Any, Any, tuple[bool, str]],
+        ],
+        refresh_callback: Callable[[], Coroutine[Any, Any, tuple[Any, Any]]],
+        state_council_service: "StateCouncilService | None" = None,
+        timeout: float = 300.0,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.guild_id = guild_id
+        self.author_id = author_id
+        self.balance = balance
+        self.currency_display = currency_display
+        self.transfer_callback = transfer_callback
+        self.refresh_callback = refresh_callback
+        self.state_council_service = state_council_service
+
+        # 政府機構選擇器
+        registry = get_registry()
+        departments = list(registry.list_all())
+
+        options: list[discord.SelectOption] = []
+
+        # 常任理事會
+        council = registry.get_by_id("permanent_council")
+        if council:
+            options.append(
+                discord.SelectOption(
+                    label=council.name,
+                    value="institution:permanent_council",
+                    emoji=council.emoji or "👑",
+                    description="最高決策機構",
+                )
+            )
+
+        # 最高人民會議
+        assembly = registry.get_by_id("supreme_assembly")
+        if assembly:
+            options.append(
+                discord.SelectOption(
+                    label=assembly.name,
+                    value="institution:supreme_assembly",
+                    emoji=assembly.emoji or "🏛️",
+                    description="最高立法機構",
+                )
+            )
+
+        # 國務院
+        state_council = registry.get_by_id("state_council")
+        if state_council:
+            options.append(
+                discord.SelectOption(
+                    label=state_council.name,
+                    value="institution:state_council",
+                    emoji=state_council.emoji or "🏛️",
+                    description="國家治理執行機構",
+                )
+            )
+
+        # 國務院下屬部門
+        transferable_depts = [d for d in departments if d.level == "department"][:20]
+        for dept in transferable_depts:
+            options.append(
+                discord.SelectOption(
+                    label=dept.name,
+                    value=f"department:{dept.id}",
+                    emoji=dept.emoji if dept.emoji else "🏛️",
+                    description=dept.description[:50] if dept.description else None,
+                )
+            )
+
+        if options:
+            govt_select: discord.ui.Select[Any] = discord.ui.Select(
+                placeholder="🏛️ 選擇要轉帳的政府機構...",
+                options=options[:25],
+                custom_id="personal_govt_select",
+                min_values=1,
+                max_values=1,
+            )
+            govt_select.callback = self._on_govt_select
+            self.add_item(govt_select)
+
+    async def _on_govt_select(self, interaction: discord.Interaction) -> None:
+        """處理政府機構選擇。"""
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return
+
+        if not interaction.data:
+            return
+
+        data = cast(dict[str, Any] | None, interaction.data)
+        values = cast(list[str] | None, data.get("values") if data else None)
+        if not values:
+            return
+
+        selection = values[0]
+        registry = get_registry()
+
+        target_account_id: int | None = None
+        target_name: str = ""
+
+        if selection.startswith("institution:"):
+            institution_id = selection.split(":", 1)[1]
+            target_account_id = self._derive_institution_account_id(institution_id)
+            if target_account_id is None:
+                await send_message_compat(
+                    interaction, content="❌ 該伺服器尚未設定此政府機構。", ephemeral=True
+                )
+                return
+            inst = registry.get_by_id(institution_id)
+            if inst:
+                target_name = f"{inst.emoji} {inst.name}" if inst.emoji else inst.name
+            else:
+                target_name = institution_id
+        elif selection.startswith("department:"):
+            dept_id = selection.split(":", 1)[1]
+            dept = registry.get_by_id(dept_id)
+            if not dept:
+                await send_message_compat(
+                    interaction, content="❌ 找不到指定的部門。", ephemeral=True
+                )
+                return
+            target_account_id = await self._resolve_department_account_id(dept)
+            target_name = f"{dept.emoji} {dept.name}" if dept.emoji else dept.name
+        else:
+            await send_message_compat(interaction, content="❌ 無效的選擇。", ephemeral=True)
+            return
+
+        # 彈出轉帳 Modal
+        modal = TransferModal(
+            target_name=target_name,
+            currency_display=self.currency_display,
+            available_balance=self.balance,
+            on_submit=lambda i, amount, reason: self._handle_transfer(
+                i, amount, reason, target_account_id, target_name
+            ),
+        )
+        await send_modal_compat(interaction, modal)
+
+    def _derive_institution_account_id(self, institution_id: str) -> int | None:
+        """計算政府機構帳戶 ID。
+
+        Note: 外部向國務院轉帳時，資金自動入帳至財政部。
+        """
+        code = 0
+        if institution_id in {"permanent_council", "supreme_assembly", "state_council"}:
+            try:
+                dept = get_registry().get_by_id(institution_id)
+                code = dept.code if dept else 0
+            except Exception:
+                code = 0
+
+        if institution_id == "permanent_council":
+            return CouncilService.derive_council_account_id(self.guild_id)
+        elif institution_id == "supreme_assembly":
+            return 9_500_000_000_000_000 + self.guild_id + code
+        elif institution_id == "state_council":
+            # 外部向國務院轉帳自動路由至財政部 (dept_code=2)
+            finance_dept_code = 2
+            return 9_500_000_000_000_000 + self.guild_id + finance_dept_code
+        return None
+
+    async def _resolve_department_account_id(self, dept: Department) -> int:
+        """解析部門帳戶 ID。"""
+        if self.state_council_service is not None:
+            try:
+                account_id = await self.state_council_service.get_department_account_id(
+                    guild_id=self.guild_id,
+                    department=dept.name,
+                )
+                return int(account_id)
+            except StateCouncilNotConfiguredError:
+                pass
+            except Exception as exc:
+                LOGGER.warning(
+                    "personal_panel.department_account.resolve_failed",
+                    guild_id=self.guild_id,
+                    department=dept.id,
+                    error=str(exc),
+                )
+
+        # 回退推導公式
+        base = 9_500_000_000_000_000
+        return int(base + self.guild_id + dept.code)
+
+    async def _handle_transfer(
+        self,
+        interaction: discord.Interaction,
+        amount: int,
+        reason: str | None,
+        target_id: int | None,
+        target_name: str,
+    ) -> None:
+        """處理轉帳提交。"""
+        if target_id is None:
+            await send_message_compat(interaction, content="❌ 轉帳目標無效。", ephemeral=True)
+            return
+
+        if amount <= 0:
+            await send_message_compat(
+                interaction, content="❌ 轉帳金額必須大於 0。", ephemeral=True
+            )
+            return
+
+        if amount > self.balance:
+            await send_message_compat(interaction, content="❌ 餘額不足。", ephemeral=True)
+            return
+
+        try:
+            success, message = await self.transfer_callback(
+                self.guild_id,
+                self.author_id,
+                target_id,
+                reason,
+                amount,
+            )
+
+            if success:
+                result_msg = (
+                    f"✅ 已成功將 **{amount:,}** {self.currency_display} 轉給 {target_name}。"
+                )
+                if reason:
+                    result_msg += f"\n📝 備註：{reason}"
+                await send_message_compat(interaction, content=result_msg, ephemeral=True)
+            else:
+                await send_message_compat(interaction, content=f"❌ {message}", ephemeral=True)
+        except Exception as exc:
+            LOGGER.exception("personal_panel.govt_transfer.error", error=str(exc))
+            await send_message_compat(
+                interaction, content="❌ 轉帳失敗，請稍後再試。", ephemeral=True
+            )
+
+
 __all__ = [
     "PersonalPanelView",
     "TransferModal",
     "WelfareApplicationModal",
     "LicenseApplicationModal",
+    "PersonalTransferTypeSelectionView",
+    "PersonalUserSelectView",
+    "PersonalGovtSelectView",
 ]

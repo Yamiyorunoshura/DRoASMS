@@ -26,6 +26,9 @@ __all__ = [
     "WelfareApplicationListResult",
     "LicenseApplication",
     "LicenseApplicationListResult",
+    "Company",
+    "CompanyListResult",
+    "AvailableLicense",
 ]
 
 
@@ -344,3 +347,39 @@ class LicenseApplicationListResult:
     total_count: int
     page: int
     page_size: int
+
+
+@dataclass(slots=True, frozen=True)
+class Company:
+    """公司資料模型。"""
+
+    id: int
+    guild_id: int
+    owner_id: int
+    license_id: UUID
+    name: str
+    account_id: int
+    created_at: datetime
+    updated_at: datetime
+    license_type: str | None = None
+    license_status: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class CompanyListResult:
+    """公司列表結果（含分頁資訊）。"""
+
+    companies: Sequence[Company]
+    total_count: int
+    page: int
+    page_size: int
+
+
+@dataclass(slots=True, frozen=True)
+class AvailableLicense:
+    """可用於建立公司的許可證。"""
+
+    license_id: UUID
+    license_type: str
+    issued_at: datetime
+    expires_at: datetime

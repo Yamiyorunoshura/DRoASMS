@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import replace as dc_replace
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Sequence, cast
 from uuid import UUID, uuid4
 
 import pytest
 
-from src.bot.services.council_service import CouncilService, PermissionDeniedError
+from src.bot.services.council_service import CouncilService, VoteTotals
 from src.bot.services.transfer_service import TransferService
 from src.db.gateway.council_governance import (
     CouncilConfig,
@@ -15,6 +16,7 @@ from src.db.gateway.council_governance import (
     Proposal,
     Tally,
 )
+from src.infra.result import Err, Ok
 
 # ---- Fakes (no DB required) ----
 
@@ -309,7 +311,7 @@ async def test_vote_threshold_executes_success(monkeypatch: pytest.MonkeyPatch) 
     gw = FakeGateway()
     conn = FakeConnection(gw)
     pool = FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     # Patch the instance method after service creation using safe attribute access
@@ -322,10 +324,11 @@ async def test_vote_threshold_executes_success(monkeypatch: pytest.MonkeyPatch) 
         # Fallback if the internal structure changes
         pass
     # 設定 config（含 council 帳戶）
-    await svc.set_config(guild_id=1, council_role_id=200)
+    result = await svc.set_config(guild_id=1, council_role_id=200)
+    assert isinstance(result, Ok)
 
     # 建案：N=3, T=2
-    p = await svc.create_transfer_proposal(
+    result = await svc.create_transfer_proposal(
         guild_id=1,
         proposer_id=1,
         target_id=99,
@@ -334,11 +337,17 @@ async def test_vote_threshold_executes_success(monkeypatch: pytest.MonkeyPatch) 
         attachment_url=None,
         snapshot_member_ids=[1, 2, 3],
     )
+    assert isinstance(result, Ok)
+    p = cast(Proposal, result.value)
 
     # 兩票同意達標 → 立即執行，狀態最終應為已執行/執行失敗其中之一
-    _, status = await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="approve")
+    vote_result = await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="approve")
+    assert isinstance(vote_result, Ok)
+    _, status = vote_result.value
     assert status == "進行中"
-    _, status = await svc.vote(proposal_id=p.proposal_id, voter_id=2, choice="approve")
+    vote_result = await svc.vote(proposal_id=p.proposal_id, voter_id=2, choice="approve")
+    assert isinstance(vote_result, Ok)
+    _, status = vote_result.value
     assert status in ("已執行", "執行失敗")
 
 
@@ -347,11 +356,11 @@ async def test_early_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
     gw = FakeGateway()
     conn = FakeConnection(gw)
     pool = FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     await svc.set_config(guild_id=100, council_role_id=200)
-    p = await svc.create_transfer_proposal(
+    create_result = await svc.create_transfer_proposal(
         guild_id=100,
         proposer_id=10,
         target_id=99,
@@ -360,11 +369,15 @@ async def test_early_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
         attachment_url=None,
         snapshot_member_ids=[1, 2, 3, 4, 5],  # N=5, T=3
     )
+    assert isinstance(create_result, Ok)
+    p = cast(Proposal, create_result.value)
 
     await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="approve")
     await svc.vote(proposal_id=p.proposal_id, voter_id=2, choice="reject")
     await svc.vote(proposal_id=p.proposal_id, voter_id=3, choice="abstain")
-    totals, status = await svc.vote(proposal_id=p.proposal_id, voter_id=4, choice="reject")
+    vote_result = await svc.vote(proposal_id=p.proposal_id, voter_id=4, choice="reject")
+    assert isinstance(vote_result, Ok)
+    totals, status = cast(tuple[VoteTotals, str], vote_result.value)
     assert status == "已否決"
     assert totals.approve == 1 and totals.reject == 2 and totals.abstain == 1
 
@@ -374,11 +387,11 @@ async def test_cancel_proposal_rejected_after_first_vote(monkeypatch: pytest.Mon
     gw = FakeGateway()
     conn = FakeConnection(gw)
     pool = FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     await svc.set_config(guild_id=5, council_role_id=6)
-    p = await svc.create_transfer_proposal(
+    create_result = await svc.create_transfer_proposal(
         guild_id=5,
         proposer_id=11,
         target_id=12,
@@ -387,13 +400,16 @@ async def test_cancel_proposal_rejected_after_first_vote(monkeypatch: pytest.Mon
         attachment_url=None,
         snapshot_member_ids=[11, 12, 13],
     )
+    assert isinstance(create_result, Ok)
+    p = cast(Proposal, create_result.value)
 
     # 無票前可撤
-    ok = await svc.cancel_proposal(proposal_id=p.proposal_id)
-    assert ok is True
+    cancel_result = await svc.cancel_proposal(proposal_id=p.proposal_id)
+    assert isinstance(cancel_result, Ok)
+    assert cancel_result.unwrap() is True
 
     # 重新建立一筆，投第一票後不可撤
-    p = await svc.create_transfer_proposal(
+    create_result2 = await svc.create_transfer_proposal(
         guild_id=5,
         proposer_id=11,
         target_id=12,
@@ -402,9 +418,12 @@ async def test_cancel_proposal_rejected_after_first_vote(monkeypatch: pytest.Mon
         attachment_url=None,
         snapshot_member_ids=[11, 12, 13],
     )
-    await svc.vote(proposal_id=p.proposal_id, voter_id=11, choice="approve")
-    ok = await svc.cancel_proposal(proposal_id=p.proposal_id)
-    assert ok is False
+    assert isinstance(create_result2, Ok)
+    p2 = cast(Proposal, create_result2.value)
+    await svc.vote(proposal_id=p2.proposal_id, voter_id=11, choice="approve")
+    cancel_result = await svc.cancel_proposal(proposal_id=p2.proposal_id)
+    assert isinstance(cancel_result, Ok)
+    assert cancel_result.unwrap() is False
 
 
 @pytest.mark.asyncio
@@ -412,14 +431,14 @@ async def test_expire_due_proposals_exec_or_timeout(monkeypatch: pytest.MonkeyPa
     gw = FakeGateway()
     conn = FakeConnection(gw)
     pool = FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     # 一筆會通過並執行、一筆逾時
     svc_ok = CouncilService(
         gateway=gw, transfer_service=cast(TransferService, FakeTransferService())
     )
     await svc_ok.set_config(guild_id=1, council_role_id=2)
-    p1 = await svc_ok.create_transfer_proposal(
+    result = await svc_ok.create_transfer_proposal(
         guild_id=1,
         proposer_id=1,
         target_id=2,
@@ -428,6 +447,8 @@ async def test_expire_due_proposals_exec_or_timeout(monkeypatch: pytest.MonkeyPa
         attachment_url=None,
         snapshot_member_ids=[1, 2, 3],
     )
+    assert isinstance(result, Ok)
+    p1 = cast(Proposal, result.value)
     # 將 deadline 改成已過去
     proposal = gw.get_proposal(p1.proposal_id)
     if proposal:
@@ -441,7 +462,7 @@ async def test_expire_due_proposals_exec_or_timeout(monkeypatch: pytest.MonkeyPa
     svc_to = CouncilService(
         gateway=gw, transfer_service=cast(TransferService, FakeTransferService())
     )
-    p2 = await svc_to.create_transfer_proposal(
+    result2 = await svc_to.create_transfer_proposal(
         guild_id=1,
         proposer_id=3,
         target_id=4,
@@ -450,6 +471,8 @@ async def test_expire_due_proposals_exec_or_timeout(monkeypatch: pytest.MonkeyPa
         attachment_url=None,
         snapshot_member_ids=[3, 4, 5],
     )
+    assert isinstance(result2, Ok)
+    p2 = cast(Proposal, result2.value)
     proposal = gw.get_proposal(p2.proposal_id)
     if proposal:
         updated_proposal = dataclass_replace(
@@ -457,7 +480,9 @@ async def test_expire_due_proposals_exec_or_timeout(monkeypatch: pytest.MonkeyPa
         )
         gw.update_proposal(p2.proposal_id, updated_proposal)
 
-    changed = await svc_ok.expire_due_proposals()
+    expire_result = await svc_ok.expire_due_proposals()
+    assert isinstance(expire_result, Ok)
+    changed = cast(int, expire_result.value)
     assert changed >= 1
     # p1 最終不為進行中；若 scheduler 補執行，會標成已執行
     proposal1 = gw.get_proposal(p1.proposal_id)
@@ -467,14 +492,124 @@ async def test_expire_due_proposals_exec_or_timeout(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
+async def test_department_transfer_uses_config_account(monkeypatch: pytest.MonkeyPatch) -> None:
+    gw = FakeGateway()
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+
+    transfer_stub = cast(TransferService, FakeTransferService())
+    svc = CouncilService(gateway=gw, transfer_service=transfer_stub)
+    await svc.set_config(guild_id=42, council_role_id=999)
+
+    # 國務院配置返回自訂帳戶 ID，應優先採用而非重新導出
+    async def fake_fetch_state_council_config(self: Any, connection: Any, *, guild_id: int):
+        return SimpleNamespace(
+            guild_id=guild_id,
+            leader_id=None,
+            leader_role_id=None,
+            internal_affairs_account_id=11111,
+            finance_account_id=22222,
+            security_account_id=33333,
+            central_bank_account_id=44444,
+            citizen_role_id=None,
+            suspect_role_id=None,
+        )
+
+    from src.db.gateway import state_council_governance as scg_mod
+
+    monkeypatch.setattr(
+        scg_mod.StateCouncilGovernanceGateway,
+        "fetch_state_council_config",
+        fake_fetch_state_council_config,
+    )
+
+    cfg = await scg_mod.StateCouncilGovernanceGateway().fetch_state_council_config(
+        None, guild_id=42
+    )
+    assert cfg is not None and getattr(cfg, "finance_account_id", 0) == 22222
+
+    create_result = await svc.create_transfer_proposal(
+        guild_id=42,
+        proposer_id=10,
+        target_id=0,
+        amount=50,
+        description="dept transfer",
+        attachment_url=None,
+        snapshot_member_ids=[1, 2, 3],
+        target_department_id="finance",
+    )
+    assert isinstance(create_result, Ok)
+    p = cast(Proposal, create_result.value)
+
+    await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="approve")
+    vote_result = await svc.vote(proposal_id=p.proposal_id, voter_id=2, choice="approve")
+    assert isinstance(vote_result, Ok)
+
+    # 驗證轉帳目標使用配置的帳戶 ID
+    assert transfer_stub.calls, "transfer_service 未被呼叫"
+    _, target_id, _ = transfer_stub.calls[0]
+    assert target_id == 22222
+
+
+@pytest.mark.asyncio
+async def test_async_pending_transfer_marks_executed(monkeypatch: pytest.MonkeyPatch) -> None:
+    gw = FakeGateway()
+    conn = FakeConnection(gw)
+    pool = FakePool(conn)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
+
+    class PendingTransferService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int, int]] = []
+
+        async def transfer_currency(
+            self,
+            *,
+            guild_id: int,
+            initiator_id: int,
+            target_id: int,
+            amount: int,
+            reason: str | None = None,
+            connection: Any | None = None,
+        ) -> Any:
+            self.calls.append((initiator_id, target_id, amount))
+            return uuid4()  # 模擬事件池模式回傳 pending transfer_id
+
+    transfer_stub = cast(TransferService, PendingTransferService())
+    svc = CouncilService(gateway=gw, transfer_service=transfer_stub)
+    await svc.set_config(guild_id=7, council_role_id=8)
+
+    create_result = await svc.create_transfer_proposal(
+        guild_id=7,
+        proposer_id=1,
+        target_id=2,
+        amount=10,
+        description="async",
+        attachment_url=None,
+        snapshot_member_ids=[1, 2, 3],
+    )
+    assert isinstance(create_result, Ok)
+    p = cast(Proposal, create_result.value)
+
+    await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="approve")
+    vote_result = await svc.vote(proposal_id=p.proposal_id, voter_id=2, choice="approve")
+    assert isinstance(vote_result, Ok)
+
+    proposal = gw.get_proposal(p.proposal_id)
+    assert proposal is not None
+    assert proposal.status == "已執行"
+
+
+@pytest.mark.asyncio
 async def test_non_snapshot_voter_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     gw = FakeGateway()
     conn = FakeConnection(gw)
     pool = FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
     svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, FakeTransferService()))
     await svc.set_config(guild_id=7, council_role_id=8)
-    p = await svc.create_transfer_proposal(
+    result = await svc.create_transfer_proposal(
         guild_id=7,
         proposer_id=1,
         target_id=9,
@@ -483,5 +618,10 @@ async def test_non_snapshot_voter_rejected(monkeypatch: pytest.MonkeyPatch) -> N
         attachment_url=None,
         snapshot_member_ids=[1, 2, 3],
     )
-    with pytest.raises(PermissionDeniedError):
-        await svc.vote(proposal_id=p.proposal_id, voter_id=999, choice="approve")
+    assert isinstance(result, Ok)
+    p = cast(Proposal, result.value)
+    # Result pattern returns Err instead of raising exception
+    vote_result = await svc.vote(proposal_id=p.proposal_id, voter_id=999, choice="approve")
+    assert isinstance(vote_result, Err)
+    # Verify the error is a VotingNotAllowedError (derived from PermissionDenied)
+    assert "快照" in str(vote_result.error) or "snapshot" in str(vote_result.error).lower()

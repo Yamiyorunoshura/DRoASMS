@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Callable, Union, cast
 
 import discord
@@ -12,8 +13,7 @@ from src.bot.services.adjustment_service import (
     AdjustmentService,
     ValidationError,
 )
-from src.bot.services.council_service import GovernanceNotConfiguredError
-from src.bot.services.council_service_result import CouncilServiceResult
+from src.bot.services.council_service import CouncilServiceResult, GovernanceNotConfiguredError
 from src.bot.services.currency_config_service import (
     CurrencyConfigResult,
     CurrencyConfigService,
@@ -30,9 +30,198 @@ from src.bot.services.supreme_assembly_service import (
 )
 from src.db.gateway.council_governance import CouncilConfig
 from src.infra.di.container import DependencyContainer
-from src.infra.result import Err, Ok
+from src.infra.result import Err, Error, Ok, Result
 
 LOGGER = structlog.get_logger(__name__)
+
+
+# --- Error Types ---
+
+
+class AdjustCommandError(Error):
+    """adjust 命令專屬錯誤基類"""
+
+
+class GuildRequiredError(AdjustCommandError):
+    """非伺服器環境錯誤"""
+
+    def __init__(self) -> None:
+        super().__init__("此命令僅能在伺服器內執行。")
+
+
+class NoPermissionError(AdjustCommandError):
+    """權限不足錯誤，區分一般無權限與法務部無權限"""
+
+    permission_type: str  # "general" | "justice_department"
+
+    def __init__(self, permission_type: str = "general") -> None:
+        self.permission_type = permission_type
+        if permission_type == "justice_department":
+            message = "法務部無權調整其他部門餘額"
+        else:
+            message = "您沒有權限執行此操作"
+        super().__init__(message)
+
+
+class InvalidTargetError(AdjustCommandError):
+    """無效目標錯誤"""
+
+    def __init__(self, message: str = "無效的目標") -> None:
+        super().__init__(message)
+
+
+# --- Permission Resolution ---
+
+
+@dataclass
+class AdjustPermission:
+    """權限解析結果"""
+
+    has_admin_rights: bool
+    is_justice_leader: bool
+    can_adjust_target: bool
+
+
+async def resolve_adjust_permission(
+    interaction: discord.Interaction,
+    target: Union[discord.Member, discord.User, discord.Role],
+    state_council_service: StateCouncilService,
+) -> Result[AdjustPermission, NoPermissionError]:
+    """解析並驗證 adjust 命令的權限。
+
+    Args:
+        interaction: Discord 互動對象
+        target: 調整目標（成員或角色）
+        state_council_service: 國務院服務實例
+
+    Returns:
+        Result[AdjustPermission, NoPermissionError]: 成功時回傳權限結構，失敗時回傳錯誤
+    """
+    guild_id = interaction.guild_id
+    if guild_id is None:
+        return Err(NoPermissionError("general"))
+
+    # 檢查基本管理員權限
+    perms = getattr(interaction.user, "guild_permissions", None)
+    has_admin_rights = bool(perms and (perms.administrator or perms.manage_guild))
+
+    # 檢查法務部特殊權限
+    is_justice_leader = False
+    can_adjust_target = has_admin_rights  # 管理員可以調整任何目標
+
+    try:
+        user_roles_ids = [
+            getattr(role, "id", 0) for role in (getattr(interaction.user, "roles", []) or [])
+        ]
+        is_justice_leader = await state_council_service.check_leader_permission(
+            guild_id=guild_id,
+            user_id=interaction.user.id,
+            user_roles=user_roles_ids,
+        )
+
+        if is_justice_leader and not has_admin_rights:
+            # 法務部領導人需要額外檢查目標權限
+            if isinstance(target, discord.Role):
+                target_dept = await state_council_service.find_department_by_role(
+                    guild_id=guild_id, role_id=target.id
+                )
+                if target_dept is not None:
+                    # 目標為其他政府部門帳戶，法務部無權調整
+                    return Err(NoPermissionError("justice_department"))
+                # 不是部門角色，可以調整
+                can_adjust_target = True
+            else:
+                # 目標是個人成員，法務部領導人可以調整
+                can_adjust_target = True
+    except Exception:
+        # 未設定國務院或檢查過程出現任何錯誤時，略過法務部特殊權限檢查
+        pass
+
+    return Ok(
+        AdjustPermission(
+            has_admin_rights=has_admin_rights,
+            is_justice_leader=is_justice_leader,
+            can_adjust_target=can_adjust_target,
+        )
+    )
+
+
+async def resolve_target_account_id(
+    guild_id: int,
+    target: Union[discord.Member, discord.User, discord.Role],
+    council_service: CouncilServiceResult,
+    state_council_service: StateCouncilService,
+    supreme_assembly_service: SupremeAssemblyService,
+) -> Result[int, InvalidTargetError]:
+    """解析目標的帳戶 ID。
+
+    支援以下映射：
+    - 常任理事會身分組 -> 理事會公共帳戶
+    - 部門領導人身分組 -> 對應部門政府帳戶
+    - 最高人民會議議長身分組 -> 最高人民會議帳戶
+    - 一般成員 -> 成員 ID
+
+    Args:
+        guild_id: 伺服器 ID
+        target: 調整目標（成員或角色）
+        council_service: 理事會服務（Result 版本）
+        state_council_service: 國務院服務
+        supreme_assembly_service: 最高人民會議服務
+
+    Returns:
+        Result[int, InvalidTargetError]: 成功時回傳帳戶 ID，失敗時回傳錯誤
+    """
+    if not isinstance(target, discord.Role):
+        # 一般成員，直接回傳成員 ID
+        return Ok(target.id)
+
+    # 嘗試理事會身分組
+    cfg: CouncilConfig | None = None
+    try:
+        service_result = await council_service.get_config(guild_id=guild_id)
+        if isinstance(service_result, Ok):
+            cfg = service_result.value  # type: ignore[assignment]
+    except GovernanceNotConfiguredError:
+        pass  # 容忍未設定，改試其他身分組
+    except Exception:
+        pass
+
+    if cfg and target.id == cfg.council_role_id:
+        return Ok(CouncilServiceResult.derive_council_account_id(guild_id))
+
+    # 嘗試最高人民會議議長身分組
+    try:
+        sa_cfg = await supreme_assembly_service.get_config(guild_id=guild_id)
+        if sa_cfg and target.id == sa_cfg.speaker_role_id:
+            account_id = await supreme_assembly_service.get_or_create_account_id(guild_id)
+            return Ok(account_id)
+    except SAGovernanceNotConfiguredError:
+        pass
+    except Exception:
+        pass
+
+    # 嘗試國務院部門身分組
+    try:
+        department = await state_council_service.find_department_by_role(
+            guild_id=guild_id, role_id=target.id
+        )
+        if department is not None:
+            account_id = await state_council_service.get_department_account_id(
+                guild_id=guild_id, department=department
+            )
+            return Ok(account_id)
+    except StateCouncilNotConfiguredError:
+        pass
+    except Exception:
+        pass
+
+    # 沒有匹配到任何已知的身分組
+    return Err(
+        InvalidTargetError(
+            "僅支援提及常任理事會、最高人民會議議長或已綁定之部門領導人身分組，"
+            "或直接指定個別成員。"
+        )
+    )
 
 
 def get_help_data() -> HelpData:
@@ -84,11 +273,23 @@ def register(
         pool = db_pool.get_pool()
         service = AdjustmentService(pool)
         currency_service = CurrencyConfigService(pool)
+        state_council_service = StateCouncilService()
+        council_service = CouncilServiceResult()
+        supreme_assembly_service = SupremeAssemblyService()
     else:
         service = container.resolve(AdjustmentService)
         currency_service = container.resolve(CurrencyConfigService)
+        state_council_service = container.resolve(StateCouncilService)
+        council_service = container.resolve(CouncilServiceResult)
+        supreme_assembly_service = container.resolve(SupremeAssemblyService)
 
-    command = build_adjust_command(service, currency_service)
+    command = build_adjust_command(
+        service,
+        currency_service,
+        state_council_service=state_council_service,
+        council_service=council_service,
+        supreme_assembly_service=supreme_assembly_service,
+    )
     tree.add_command(command)
     LOGGER.debug("bot.command.adjust.registered")
 
@@ -97,19 +298,28 @@ def build_adjust_command(
     service: AdjustmentService,
     currency_service: CurrencyConfigService,
     *,
+    state_council_service: StateCouncilService | None = None,
+    council_service: CouncilServiceResult | None = None,
+    supreme_assembly_service: SupremeAssemblyService | None = None,
     can_adjust: Callable[[discord.Interaction], bool] | None = None,
 ) -> app_commands.Command[Any, Any, Any]:
     """Build the `/adjust` slash command bound to the provided service.
 
-    The `can_adjust` predicate determines if the invoking user has admin rights.
-    Defaults to True if the user has Administrator or Manage Guild permissions.
+    Args:
+        service: 調整服務實例
+        currency_service: 貨幣設定服務實例
+        state_council_service: 國務院服務實例（可選，預設為新建實例）
+        council_service: 理事會服務實例（可選，預設為新建實例）
+        supreme_assembly_service: 最高人民會議服務實例（可選，預設為新建實例）
+        can_adjust: 保留供測試相容性（已棄用）
     """
+    # Note: can_adjust parameter preserved for test compatibility but not actively used
+    _ = can_adjust  # Silence unused parameter warning
 
-    def _default_can_adjust(interaction: discord.Interaction) -> bool:
-        perms = getattr(interaction.user, "guild_permissions", None)
-        return bool(perms and (perms.administrator or perms.manage_guild))
-
-    predicate = can_adjust or _default_can_adjust
+    # 使用傳入的服務或建立新實例（backward compatibility）
+    _state_council_service = state_council_service or StateCouncilService()
+    _council_service = council_service or CouncilServiceResult()
+    _supreme_assembly_service = supreme_assembly_service or SupremeAssemblyService()
 
     @app_commands.command(
         name="adjust",
@@ -129,157 +339,77 @@ def build_adjust_command(
         guild_id = interaction.guild_id
         if guild_id is None:
             await interaction.response.send_message(
-                content="此命令僅能在伺服器內執行。",
+                content=_format_error_response(GuildRequiredError()),
                 ephemeral=True,
             )
             return
 
-        has_right = predicate(interaction)
-
-        # 檢查法務部特殊權限（以國務院領袖身分作為判定基準）
-        is_justice_leader = False
-        justice_can_adjust_target = False
-        justice_target_is_department = False
-        try:
-            sc_service = StateCouncilService()
-            user_roles_ids = [
-                getattr(role, "id", 0) for role in (getattr(interaction.user, "roles", []) or [])
-            ]
-            is_justice_leader = await sc_service.check_leader_permission(
-                guild_id=guild_id,
-                user_id=interaction.user.id,
-                user_roles=user_roles_ids,
-            )
-
-            # 如果是法務部領導人，檢查目標權限
-            if is_justice_leader:
-                if isinstance(target, discord.Role):
-                    # 法務部不能調整其他政府部門
-                    target_dept = await sc_service.find_department_by_role(
-                        guild_id=guild_id, role_id=target.id
-                    )
-                    if target_dept is None:
-                        # 不是部門角色，法務部領導人可以調整
-                        justice_can_adjust_target = True
-                    else:
-                        # 目標為其他政府部門帳戶，記錄以便回報專用錯誤訊息
-                        justice_target_is_department = True
-                else:
-                    # 目標是個人成員，法務部領導人可以調整
-                    justice_can_adjust_target = True
-        except Exception:
-            # 未設定國務院或檢查過程出現任何錯誤時，略過法務部特殊權限檢查，
-            # 僅依照基本管理員權限與下游 service 的 UnauthorizedAdjustmentError 處理。
-            pass
-
-        # 僅在「法務部領導人嘗試調整其他部門餘額、且本身不是管理員」時，提前回傳專用錯誤訊息；
-        # 其他情況一律交由 service 透過 can_adjust 與 UnauthorizedAdjustmentError 處理。
-        if is_justice_leader and justice_target_is_department and not has_right:
+        # 解析權限（使用 Result 模式，使用 DI 注入的服務）
+        permission_result = await resolve_adjust_permission(
+            interaction, target, _state_council_service
+        )
+        if permission_result.is_err():
+            error: Error = permission_result.unwrap_err()
             await interaction.response.send_message(
-                content="法務部無權調整其他部門餘額", ephemeral=True
-            )
-            return
-
-        # 支援以下映射：
-        # - 常任理事會身分組 -> 理事會公共帳戶
-        # - 部門領導人身分組 -> 對應部門政府帳戶
-        # - 最高人民會議議長身分組 -> 最高人民會議帳戶
-        target_id: int
-        if isinstance(target, discord.Role):
-            # 先嘗試理事會身分組
-            cfg: CouncilConfig | None = None
-            try:
-                service_result = await CouncilServiceResult().get_config(guild_id=guild_id)
-
-                if isinstance(service_result, Ok):
-                    cfg = service_result.value  # type: ignore[assignment]
-                else:
-                    cfg = None
-            except GovernanceNotConfiguredError:
-                cfg = None  # 容忍未設定，改試其他身分組
-            if cfg and target.id == cfg.council_role_id:
-                target_id = CouncilServiceResult.derive_council_account_id(guild_id)
-            else:
-                # 嘗試最高人民會議議長身分組
-                sa_service = SupremeAssemblyService()
-                try:
-                    sa_cfg = await sa_service.get_config(guild_id=guild_id)
-                except SAGovernanceNotConfiguredError:
-                    sa_cfg = None
-                if sa_cfg and target.id == sa_cfg.speaker_role_id:
-                    target_id = SupremeAssemblyService.derive_account_id(guild_id)
-                else:
-                    # 嘗試國務院部門身分組
-                    sc_service = StateCouncilService()
-                    try:
-                        department = await sc_service.find_department_by_role(
-                            guild_id=guild_id, role_id=target.id
-                        )
-                    except StateCouncilNotConfiguredError:
-                        department = None
-                    if department is None:
-                        await interaction.response.send_message(
-                            content=(
-                                "僅支援提及常任理事會、最高人民會議議長或已綁定之部門領導人身分組，"
-                                "或直接指定個別成員。"
-                            ),
-                            ephemeral=True,
-                        )
-                        return
-                    target_id = await sc_service.get_department_account_id(
-                        guild_id=guild_id, department=department
-                    )
-        else:
-            target_id = target.id
-
-        # 呼叫服務層：同時支援 Result 模式與舊版直接回傳 AdjustmentResult 的實作
-        try:
-            raw_result: Any = await service.adjust_balance(
-                guild_id=guild_id,
-                admin_id=interaction.user.id,
-                target_id=target_id,
-                amount=amount,
-                reason=reason,
-                can_adjust=has_right or (is_justice_leader and justice_can_adjust_target),
-                connection=None,
-            )
-        except ValidationError as exc:
-            # 權限 / 參數驗證錯誤：直接顯示訊息
-            await interaction.response.send_message(content=str(exc), ephemeral=True)
-            return
-        except Exception as exc:  # pragma: no cover - 防禦性日誌
-            LOGGER.exception("bot.adjust.service_exception", error=str(exc))
-            await interaction.response.send_message(
-                content="處理管理調整時發生錯誤，請稍後再試。",
+                content=_format_error_response(error),
                 ephemeral=True,
             )
             return
 
+        permission = permission_result.unwrap()
+        can_adjust = permission.has_admin_rights or (
+            permission.is_justice_leader and permission.can_adjust_target
+        )
+
+        # 解析目標帳戶 ID（使用 Result 模式，使用 DI 注入的服務）
+        target_result = await resolve_target_account_id(
+            guild_id,
+            target,
+            _council_service,
+            _state_council_service,
+            _supreme_assembly_service,
+        )
+        if target_result.is_err():
+            error = target_result.unwrap_err()
+            await interaction.response.send_message(
+                content=_format_error_response(error),
+                ephemeral=True,
+            )
+            return
+
+        target_id = target_result.unwrap()
+
+        # 呼叫服務層（Result 模式）
+        service_result: Any = await service.adjust_balance(
+            guild_id=guild_id,
+            admin_id=interaction.user.id,
+            target_id=target_id,
+            amount=amount,
+            reason=reason,
+            can_adjust=can_adjust,
+            connection=None,
+        )
+
+        # 處理服務回傳結果
         adjustment_result: AdjustmentResult
-        if isinstance(raw_result, Err):
-            err_result = cast(Err[AdjustmentResult, Exception], raw_result)
-            error = err_result.error
+        if isinstance(service_result, Err):
+            error = cast(Error, service_result.unwrap_err())
             LOGGER.error(
                 "bot.adjust.service_error", error=str(error), error_type=type(error).__name__
             )
-            if isinstance(error, ValidationError):
-                await interaction.response.send_message(content=str(error), ephemeral=True)
-            else:
-                await interaction.response.send_message(
-                    content="處理管理調整時發生錯誤，請稍後再試。",
-                    ephemeral=True,
-                )
+            await interaction.response.send_message(
+                content=_format_error_response(error),
+                ephemeral=True,
+            )
             return
-        elif isinstance(raw_result, Ok):
-            ok_result = cast(Ok[AdjustmentResult, Any], raw_result)
-            adjustment_result = ok_result.value
+        elif isinstance(service_result, Ok):
+            adjustment_result = cast(AdjustmentResult, service_result.unwrap())
         else:
             # 舊版合約：直接回傳 AdjustmentResult
-            adjustment_result = cast(AdjustmentResult, raw_result)
+            adjustment_result = cast(AdjustmentResult, service_result)
 
-        # Get currency config
+        # 取得貨幣設定並格式化成功訊息
         currency_config = await currency_service.get_currency_config(guild_id=guild_id)
-
         message = _format_success_message(target, adjustment_result, currency_config)
         await interaction.response.send_message(content=message, ephemeral=True)
 
@@ -288,11 +418,26 @@ def build_adjust_command(
     return cast(app_commands.Command[Any, Any, None], adjust)
 
 
+def _format_error_response(error: Exception) -> str:
+    """格式化錯誤訊息。
+
+    Args:
+        error: 錯誤實例
+
+    Returns:
+        格式化後的錯誤訊息字串
+    """
+    if isinstance(error, (AdjustCommandError, ValidationError)):
+        return str(error)
+    return "處理管理調整時發生錯誤，請稍後再試。"
+
+
 def _format_success_message(
     target: Union[discord.Member, discord.User, discord.Role],
     result: AdjustmentResult,
     currency_config: CurrencyConfigResult,
 ) -> str:
+    """格式化成功訊息。"""
     action = "加值" if result.direction == "adjustment_grant" else "扣點"
     currency_display = (
         f"{currency_config.currency_name} {currency_config.currency_icon}".strip()

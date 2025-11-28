@@ -22,13 +22,11 @@ import pytest
 
 # Import services for benchmarking - will skip entire file if imports fail
 pytest.importorskip("src.bot.services.council_service")
-pytest.importorskip("src.bot.services.council_service_result")
 pytest.importorskip("src.db.gateway.council_governance")
 pytest.importorskip("src.infra.result")
 
 # ruff: noqa: E402 - imports after importorskip are intentional
-from src.bot.services.council_service import CouncilService
-from src.bot.services.council_service_result import CouncilServiceResult, VoteTotals
+from src.bot.services.council_service import CouncilService, CouncilServiceResult, VoteTotals
 from src.db.gateway.council_governance import (
     Proposal,
 )
@@ -45,7 +43,7 @@ class TestCouncilServicePerformanceBenchmarks:
     def mock_pool(self) -> Any:
         """Mock get_pool() to avoid database dependency in benchmarks."""
         mock_pool = MagicMock()
-        with patch("src.bot.services.council_service_result.get_pool", return_value=mock_pool):
+        with patch("src.bot.services.council_service.get_pool", return_value=mock_pool):
             yield mock_pool
 
     @pytest.fixture

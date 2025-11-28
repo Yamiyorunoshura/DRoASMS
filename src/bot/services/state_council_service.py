@@ -170,12 +170,13 @@ class StateCouncilService:
 
         try:
             # Result 模式
+            record: Any
             if hasattr(result, "is_err") and callable(getattr(result, "is_err", None)):
                 if result.is_err():
                     return 0
                 record = result.unwrap()
             else:
-                record = result  # type: ignore[assignment]
+                record = result
             bal = getattr(record, "balance", None)
             return int(bal) if isinstance(bal, (int, float)) else None
         except Exception:
@@ -535,9 +536,9 @@ class StateCouncilService:
         `OverflowError: value out of int64 range` 與 `DataError`。
 
         修正：改為「不乘以 10」，使用 `base + guild_id + code` 保持單調且
-        跨伺服器唯一，同時避免超出 int64。並維持與理事會帳戶
-        `CouncilService.derive_council_account_id` 使用 9e15 區段的分區思路，
-        以 9.5e15 起始作為國務院部門帳戶區段，避免彼此碰撞。
+        跨伺服器唯一，同時避免超出 int64。政府帳戶（包含常任理事會、
+        最高人民會議與各部門）統一使用 9.5e15 起始的區段，透過部門代碼
+        確保互不碰撞。
 
         部門代碼：使用部門註冊表取得，若未找到則回退為 0。
         基底固定為 9_500_000_000_000_000。
@@ -2568,6 +2569,214 @@ class StateCouncilService:
                 department_stats=department_stats,
                 recent_transfers=recent_transfers,
             )
+
+    # --- State Council Auto-Deduction Transfer ---
+    async def get_all_department_balances_sorted(
+        self, *, guild_id: int
+    ) -> list[tuple[str, int, int]]:
+        """取得所有部門餘額並按餘額高低排序。
+
+        Returns:
+            list of (department_name, account_id, balance) tuples, sorted by balance descending
+        """
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        cm = await self._pool_acquire_cm(pool)
+        async with cm as conn:
+            accounts = await self._safe_fetch_accounts(conn, guild_id=guild_id)
+            result: list[tuple[str, int, int]] = []
+            for acc in accounts:
+                # 從經濟系統取得即時餘額
+                try:
+                    bal = await self._get_economy_balance_snapshot(
+                        conn, guild_id=guild_id, member_id=acc.account_id
+                    )
+                    if bal is None:
+                        bal = acc.balance
+                except Exception:
+                    bal = acc.balance
+                result.append((acc.department, acc.account_id, int(bal)))
+
+            # 按餘額由高到低排序
+            result.sort(key=lambda x: x[2], reverse=True)
+            return result
+
+    def calculate_deduction_plan(
+        self, balances: list[tuple[str, int, int]], amount: int
+    ) -> tuple[list[tuple[str, int, int]], int]:
+        """計算從各部門扣除的金額計畫。
+
+        Args:
+            balances: list of (department_name, account_id, balance) tuples, sorted by balance desc
+            amount: 需要轉帳的總金額
+
+        Returns:
+            (deduction_plan, total_available)
+            deduction_plan: list of (department_name, account_id, deduction_amount)
+            total_available: 所有部門餘額總和
+        """
+        deductions: list[tuple[str, int, int]] = []
+        remaining = amount
+        total_available = sum(b[2] for b in balances)
+
+        for dept_name, account_id, balance in balances:
+            if remaining <= 0:
+                break
+            if balance <= 0:
+                continue
+            deduct = min(balance, remaining)
+            deductions.append((dept_name, account_id, deduct))
+            remaining -= deduct
+
+        return deductions, total_available
+
+    async def transfer_from_state_council_auto_deduct(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        user_roles: Sequence[int],
+        target_id: int | None,
+        target_type: str,  # "user", "company", "department"
+        target_department: str | None = None,
+        amount: int,
+        reason: str,
+    ) -> tuple[bool, str, list[tuple[str, int]]]:
+        """從國務院帳戶轉帳，自動按餘額高低從各部門扣除。
+
+        Args:
+            guild_id: Discord 伺服器 ID
+            user_id: 執行者 ID
+            user_roles: 執行者身分組
+            target_id: 目標帳戶 ID
+            target_type: 目標類型
+            amount: 轉帳金額
+            reason: 轉帳理由
+
+        Returns:
+            (success, message, deductions)
+            success: 是否成功
+            message: 結果訊息
+            deductions: 實際扣除清單 [(department_name, amount), ...]
+        """
+        # 權限檢查：必須是國務院領袖
+        if not await self.check_leader_permission(
+            guild_id=guild_id, user_id=user_id, user_roles=user_roles
+        ):
+            return (False, "僅國務院領袖可執行此操作。", [])
+
+        if amount <= 0:
+            return (False, "轉帳金額必須為正整數。", [])
+
+        # 解析目標帳戶：使用者/公司直接使用 target_id；
+        # 部門則需解析實際帳戶 ID（考慮組態或現有治理帳戶）。
+        target_account_id: int | None = None
+        if target_type == "department":
+            # 允許呼叫端傳入部門名稱或帳戶 ID
+            dept_name = target_department or (str(target_id) if target_id else None)
+            if dept_name:
+                try:
+                    pool_lookup: PoolProtocol = cast(PoolProtocol, get_pool())
+                    cm_lookup = await self._pool_acquire_cm(pool_lookup)
+                    async with cm_lookup as conn_lookup:
+                        acct = await self._get_effective_account(
+                            conn_lookup, guild_id=guild_id, department=dept_name
+                        )
+                        if acct is not None:
+                            target_account_id = int(acct.account_id)
+                except Exception:
+                    target_account_id = None
+            if target_account_id is None and target_id is not None:
+                # 回退：若直接提供帳戶 ID，嘗試使用之
+                try:
+                    target_account_id = int(target_id)
+                except Exception:
+                    target_account_id = None
+            if target_account_id is None:
+                return (False, "找不到目標部門的帳戶。", [])
+        else:
+            try:
+                target_account_id = int(target_id) if target_id is not None else None
+            except Exception:
+                target_account_id = None
+
+        if target_account_id is None:
+            return (False, "無效的目標帳戶。", [])
+
+        # 取得各部門餘額
+        balances = await self.get_all_department_balances_sorted(guild_id=guild_id)
+
+        # 計算扣除計畫
+        deduction_plan, total_available = self.calculate_deduction_plan(balances, amount)
+
+        if total_available < amount:
+            return (
+                False,
+                f"政府總資產不足。需要 {amount:,}，目前總額 {total_available:,}。",
+                [],
+            )
+
+        # 執行扣除
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        cm = await self._pool_acquire_cm(pool)
+        actual_deductions: list[tuple[str, int]] = []
+
+        async with cm as conn:
+            _aenter = getattr(
+                getattr(getattr(pool, "acquire", None), "return_value", None),
+                "__aenter__",
+                None,
+            )
+            conn_for_gateway = getattr(_aenter, "return_value", None) or conn
+
+            tcm = await self._tx_cm(conn)
+            async with tcm:
+                for dept_name, account_id, deduct_amount in deduction_plan:
+                    if deduct_amount <= 0:
+                        continue
+
+                    try:
+                        # 執行轉帳
+                        await self._ensure_transfer().transfer_currency(
+                            guild_id=guild_id,
+                            initiator_id=account_id,
+                            target_id=target_account_id,
+                            amount=deduct_amount,
+                            reason=f"國務院轉帳（自{dept_name}扣除）- {reason}",
+                            connection=conn,
+                        )
+
+                        # 更新治理層餘額
+                        new_balance = await self._get_economy_balance_snapshot(
+                            conn, guild_id=guild_id, member_id=account_id
+                        )
+                        if new_balance is not None:
+                            await self._safe_update_account_balance(
+                                conn_for_gateway,
+                                account_id=account_id,
+                                new_balance=int(new_balance),
+                            )
+
+                        actual_deductions.append((dept_name, deduct_amount))
+                    except Exception as exc:
+                        LOGGER.warning(
+                            "state_council.auto_deduct.transfer_failed",
+                            guild_id=guild_id,
+                            department=dept_name,
+                            amount=deduct_amount,
+                            error=str(exc),
+                        )
+                        # 部分失敗時繼續嘗試其他部門
+                        continue
+
+        total_deducted = sum(d[1] for d in actual_deductions)
+        if total_deducted < amount:
+            return (
+                False,
+                f"轉帳部分失敗。預計轉 {amount:,}，實際轉 {total_deducted:,}。",
+                actual_deductions,
+            )
+
+        return (True, "轉帳成功。", actual_deductions)
 
     # --- Government Hierarchy Queries ---
     def get_government_hierarchy(self) -> dict[str, list[dict[str, Any]]]:

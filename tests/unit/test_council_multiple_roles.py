@@ -13,6 +13,7 @@ from src.db.gateway.council_governance import (
     CouncilGovernanceGateway,
     CouncilRoleConfig,
 )
+from src.infra.result import Ok
 
 # ---- Fakes for multiple role testing ----
 
@@ -190,7 +191,7 @@ async def test_check_council_permission_single_role(monkeypatch: pytest.MonkeyPa
     gw = _FakeGateway()
     conn = _FakeConnection(gw)
     pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
 
@@ -198,13 +199,16 @@ async def test_check_council_permission_single_role(monkeypatch: pytest.MonkeyPa
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # Test permission with matching role
-    assert await svc.check_council_permission(guild_id=100, user_roles=[200]) is True
+    result = await svc.check_council_permission(guild_id=100, user_roles=[200])
+    assert isinstance(result, Ok) and result.unwrap() is True
 
     # Test permission without matching role
-    assert await svc.check_council_permission(guild_id=100, user_roles=[300]) is False
+    result = await svc.check_council_permission(guild_id=100, user_roles=[300])
+    assert isinstance(result, Ok) and result.unwrap() is False
 
     # Test permission with multiple roles including correct one
-    assert await svc.check_council_permission(guild_id=100, user_roles=[300, 200, 400]) is True
+    result = await svc.check_council_permission(guild_id=100, user_roles=[300, 200, 400])
+    assert isinstance(result, Ok) and result.unwrap() is True
 
 
 @pytest.mark.unit
@@ -214,7 +218,7 @@ async def test_check_council_permission_multiple_roles(monkeypatch: pytest.Monke
     gw = _FakeGateway()
     conn = _FakeConnection(gw)
     pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
 
@@ -224,15 +228,20 @@ async def test_check_council_permission_multiple_roles(monkeypatch: pytest.Monke
     await svc.add_council_role(guild_id=100, role_id=400)
 
     # Test permission with any of the council roles
-    assert await svc.check_council_permission(guild_id=100, user_roles=[300]) is True
-    assert await svc.check_council_permission(guild_id=100, user_roles=[400]) is True
-    assert await svc.check_council_permission(guild_id=100, user_roles=[200]) is True
+    result = await svc.check_council_permission(guild_id=100, user_roles=[300])
+    assert isinstance(result, Ok) and result.unwrap() is True
+    result = await svc.check_council_permission(guild_id=100, user_roles=[400])
+    assert isinstance(result, Ok) and result.unwrap() is True
+    result = await svc.check_council_permission(guild_id=100, user_roles=[200])
+    assert isinstance(result, Ok) and result.unwrap() is True
 
     # Test permission with multiple roles including council role
-    assert await svc.check_council_permission(guild_id=100, user_roles=[500, 300, 600]) is True
+    result = await svc.check_council_permission(guild_id=100, user_roles=[500, 300, 600])
+    assert isinstance(result, Ok) and result.unwrap() is True
 
     # Test permission without any council role
-    assert await svc.check_council_permission(guild_id=100, user_roles=[500, 600]) is False
+    result = await svc.check_council_permission(guild_id=100, user_roles=[500, 600])
+    assert isinstance(result, Ok) and result.unwrap() is False
 
 
 @pytest.mark.unit
@@ -242,22 +251,24 @@ async def test_add_council_role(monkeypatch: pytest.MonkeyPatch) -> None:
     gw = _FakeGateway()
     conn = _FakeConnection(gw)
     pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # Add new role
     result = await svc.add_council_role(guild_id=100, role_id=300)
-    assert result is True
+    assert isinstance(result, Ok) and result.unwrap() is True
 
     # Verify role was added
-    role_ids = await svc.get_council_role_ids(guild_id=100)
+    result = await svc.get_council_role_ids(guild_id=100)
+    assert isinstance(result, Ok)
+    role_ids = result.unwrap()
     assert 300 in role_ids
 
     # Try to add same role again
     result = await svc.add_council_role(guild_id=100, role_id=300)
-    assert result is False
+    assert isinstance(result, Ok) and result.unwrap() is False
 
 
 @pytest.mark.unit
@@ -267,7 +278,7 @@ async def test_remove_council_role(monkeypatch: pytest.MonkeyPatch) -> None:
     gw = _FakeGateway()
     conn = _FakeConnection(gw)
     pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
     await svc.set_config(guild_id=100, council_role_id=200)
@@ -275,15 +286,17 @@ async def test_remove_council_role(monkeypatch: pytest.MonkeyPatch) -> None:
     # Add and then remove role
     await svc.add_council_role(guild_id=100, role_id=300)
     result = await svc.remove_council_role(guild_id=100, role_id=300)
-    assert result is True
+    assert isinstance(result, Ok) and result.unwrap() is True
 
     # Verify role was removed
-    role_ids = await svc.get_council_role_ids(guild_id=100)
+    result = await svc.get_council_role_ids(guild_id=100)
+    assert isinstance(result, Ok)
+    role_ids = result.unwrap()
     assert 300 not in role_ids
 
     # Try to remove non-existent role
     result = await svc.remove_council_role(guild_id=100, role_id=400)
-    assert result is False
+    assert isinstance(result, Ok) and result.unwrap() is False
 
 
 @pytest.mark.unit
@@ -293,13 +306,15 @@ async def test_get_council_role_ids_empty(monkeypatch: pytest.MonkeyPatch) -> No
     gw = _FakeGateway()
     conn = _FakeConnection(gw)
     pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
 
     # Test with no roles configured
-    role_ids = await svc.get_council_role_ids(guild_id=100)
-    assert role_ids == []
+    result = await svc.get_council_role_ids(guild_id=100)
+    assert isinstance(result, Ok)
+    role_ids = result.unwrap()
+    assert list(role_ids) == []
 
 
 @pytest.mark.unit
@@ -309,7 +324,7 @@ async def test_list_council_role_configs(monkeypatch: pytest.MonkeyPatch) -> Non
     gw = _FakeGateway()
     conn = _FakeConnection(gw)
     pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
     await svc.set_config(guild_id=100, council_role_id=200)
@@ -319,7 +334,9 @@ async def test_list_council_role_configs(monkeypatch: pytest.MonkeyPatch) -> Non
     await svc.add_council_role(guild_id=100, role_id=400)
 
     # List configurations
-    configs = await svc.list_council_role_configs(guild_id=100)
+    result = await svc.list_council_role_configs(guild_id=100)
+    assert isinstance(result, Ok)
+    configs = result.unwrap()
     role_ids = [config.role_id for config in configs]
 
     assert 300 in role_ids
@@ -334,7 +351,7 @@ async def test_backward_compatibility_with_existing_config(monkeypatch: pytest.M
     gw = _FakeGateway()
     conn = _FakeConnection(gw)
     pool = _FakePool(conn)
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw)
 
@@ -342,11 +359,15 @@ async def test_backward_compatibility_with_existing_config(monkeypatch: pytest.M
     await svc.set_config(guild_id=100, council_role_id=200)
 
     # Should work with traditional role
-    assert await svc.check_council_permission(guild_id=100, user_roles=[200]) is True
+    result = await svc.check_council_permission(guild_id=100, user_roles=[200])
+    assert isinstance(result, Ok) and result.unwrap() is True
 
     # Should return empty list for new multiple role API (since none configured)
-    role_ids = await svc.get_council_role_ids(guild_id=100)
-    assert role_ids == []
+    result = await svc.get_council_role_ids(guild_id=100)
+    assert isinstance(result, Ok)
+    role_ids = result.unwrap()
+    assert list(role_ids) == []
 
     # But permission should still work through backward compatibility
-    assert await svc.check_council_permission(guild_id=100, user_roles=[200]) is True
+    result = await svc.check_council_permission(guild_id=100, user_roles=[200])
+    assert isinstance(result, Ok) and result.unwrap() is True

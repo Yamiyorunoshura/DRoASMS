@@ -296,7 +296,7 @@ async def test_derive_account_id() -> None:
     """測試帳戶 ID 生成邏輯"""
     guild_id = 123456789
     account_id = SupremeAssemblyService.derive_account_id(guild_id)
-    expected = 9_200_000_000_000_000 + guild_id
+    expected = 9_500_000_000_000_000 + guild_id + 200
     assert account_id == expected
 
 

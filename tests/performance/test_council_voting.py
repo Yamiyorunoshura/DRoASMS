@@ -83,7 +83,7 @@ async def test_council_voting_latency_p95_under_3s(
     conn = FakeConnection(gw)
     pool = FakePool(conn)
     fake_transfer = FakeTransferService()
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, fake_transfer))
     await svc.set_config(guild_id=100, council_role_id=200)
@@ -91,15 +91,17 @@ async def test_council_voting_latency_p95_under_3s(
     # 建立一個提案（需要多票才能通過）
     snapshot_size = 10
     snapshot_member_ids = [_snowflake() for _ in range(snapshot_size)]
-    proposal = await svc.create_transfer_proposal(
-        guild_id=100,
-        proposer_id=snapshot_member_ids[0],
-        target_id=_snowflake(),
-        amount=100,
-        description="performance test",
-        attachment_url=None,
-        snapshot_member_ids=snapshot_member_ids,
-    )
+    proposal = (
+        await svc.create_transfer_proposal(
+            guild_id=100,
+            proposer_id=snapshot_member_ids[0],
+            target_id=_snowflake(),
+            amount=100,
+            description="performance test",
+            attachment_url=None,
+            snapshot_member_ids=snapshot_member_ids,
+        )
+    ).unwrap()
 
     latencies: list[float] = []
 
@@ -140,7 +142,7 @@ async def test_council_proposal_creation_latency(
     conn = FakeConnection(gw)
     pool = FakePool(conn)
     fake_transfer = FakeTransferService()
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, fake_transfer))
     await svc.set_config(guild_id=100, council_role_id=200)
@@ -184,7 +186,7 @@ async def test_council_list_active_proposals_latency(
     conn = FakeConnection(gw)
     pool = FakePool(conn)
     fake_transfer = FakeTransferService()
-    monkeypatch.setattr("src.bot.services.council_service_result.get_pool", lambda: pool)
+    monkeypatch.setattr("src.bot.services.council_service.get_pool", lambda: pool)
 
     svc = CouncilService(gateway=gw, transfer_service=cast(TransferService, fake_transfer))
     await svc.set_config(guild_id=100, council_role_id=200)

@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 
 from src.bot.services.adjustment_service import AdjustmentService
 from src.bot.services.balance_service import BalanceService
-from src.bot.services.council_service import CouncilService
-from src.bot.services.council_service_result import CouncilServiceResult
+from src.bot.services.company_service import CompanyService
+from src.bot.services.council_service import CouncilService, CouncilServiceResult
 from src.bot.services.currency_config_service import CurrencyConfigService
 from src.bot.services.permission_service import PermissionService
 from src.bot.services.state_council_service import StateCouncilService
@@ -19,6 +19,7 @@ from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 from src.bot.services.supreme_assembly_service_result import SupremeAssemblyServiceResult
 from src.bot.services.transfer_service import TransferService
 from src.db import pool as db_pool
+from src.db.gateway.company import CompanyGateway
 from src.db.gateway.council_governance import CouncilGovernanceGateway
 from src.db.gateway.economy_adjustments import EconomyAdjustmentGateway
 from src.db.gateway.economy_configuration import EconomyConfigurationGateway
@@ -58,6 +59,8 @@ def bootstrap_container() -> DependencyContainer:
     container.register(StateCouncilGovernanceGateway, lifecycle=Lifecycle.SINGLETON)
     # Supreme Assembly governance (new)
     container.register(SupremeAssemblyGovernanceGateway, lifecycle=Lifecycle.SINGLETON)
+    # Company governance (business entity management)
+    container.register(CompanyGateway, lifecycle=Lifecycle.SINGLETON)
 
     # Register services with dependencies
     # TransferService needs pool and event_pool_enabled flag
@@ -97,6 +100,16 @@ def bootstrap_container() -> DependencyContainer:
 
     container.register(
         CurrencyConfigService, factory=create_currency_config_service, lifecycle=Lifecycle.SINGLETON
+    )
+
+    # CompanyService depends on pool and company gateway
+    def create_company_service() -> CompanyService:
+        pool = container.resolve(asyncpg.Pool)
+        gateway = container.resolve(CompanyGateway)
+        return CompanyService(pool, gateway=gateway)
+
+    container.register(
+        CompanyService, factory=create_company_service, lifecycle=Lifecycle.SINGLETON
     )
 
     # CouncilService depends on optional gateway and transfer_service

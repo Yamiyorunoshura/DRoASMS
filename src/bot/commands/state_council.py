@@ -15,7 +15,7 @@ from src.bot.interaction_compat import (
     send_message_compat,
     send_modal_compat,
 )
-from src.bot.services.council_service_result import CouncilServiceResult
+from src.bot.services.council_service import CouncilServiceResult
 from src.bot.services.currency_config_service import (
     CurrencyConfigResult,
     CurrencyConfigService,
@@ -35,6 +35,7 @@ from src.bot.services.state_council_service_result import StateCouncilServiceRes
 from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 from src.bot.ui.base import PersistentPanelView
 from src.bot.utils.error_templates import ErrorMessageTemplates
+from src.db.pool import get_pool
 from src.infra.di.container import DependencyContainer
 from src.infra.events.state_council_events import (
     StateCouncilEvent,
@@ -948,25 +949,16 @@ class StateCouncilPanelView(PersistentPanelView):
         return callback
 
     async def _add_overview_actions(self) -> None:
-        # Transfer between departments button
-        transfer_btn: discord.ui.Button[Any] = discord.ui.Button(
-            label="部門轉帳",
-            style=discord.ButtonStyle.primary,
-            custom_id="transfer_dept",
-            row=1,
-        )
-        transfer_btn.callback = self._transfer_callback
-        self.add_item(transfer_btn)
-
-        # 新增：部門 → 使用者 轉帳按鈕（所有部門頁皆顯示）
-        transfer_user_btn: discord.ui.Button[Any] = discord.ui.Button(
-            label="轉帳給使用者",
-            style=discord.ButtonStyle.secondary,
-            custom_id="transfer_user",
-            row=1,
-        )
-        transfer_user_btn.callback = self._transfer_to_user_callback
-        self.add_item(transfer_user_btn)
+        # 國務院帳戶轉帳按鈕（僅限國務院領袖，在總覽頁面顯示）
+        if self.is_leader:
+            transfer_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label="💸 轉帳",
+                style=discord.ButtonStyle.primary,
+                custom_id="transfer_state_council",
+                row=1,
+            )
+            transfer_btn.callback = self._transfer_state_council_callback
+            self.add_item(transfer_btn)
 
         # Export data button - only available to leaders
         if self.is_leader:
@@ -994,25 +986,20 @@ class StateCouncilPanelView(PersistentPanelView):
         if department not in self._last_allowed_departments:
             return
 
-        # 每個部門頁面均提供「部門轉帳」快捷鍵
-        transfer_btn: discord.ui.Button[Any] = discord.ui.Button(
-            label="部門轉帳",
-            style=discord.ButtonStyle.primary,
-            custom_id="transfer_dept",
-            row=1,
-        )
-        transfer_btn.callback = self._transfer_callback
-        self.add_item(transfer_btn)
-
-        # 部門 → 使用者 轉帳按鈕（所有部門頁皆顯示）
-        transfer_user_btn: discord.ui.Button[Any] = discord.ui.Button(
-            label="轉帳給使用者",
-            style=discord.ButtonStyle.secondary,
-            custom_id="transfer_user",
-            row=1,
-        )
-        transfer_user_btn.callback = self._transfer_to_user_callback
-        self.add_item(transfer_user_btn)
+        # 部門轉帳按鈕：部門首長或國務院領袖可代表部門對外轉帳
+        has_dept_permission = await self._has_department_permission(department)
+        if has_dept_permission or self.is_leader:
+            transfer_btn: discord.ui.Button[Any] = discord.ui.Button(
+                label="💸 轉帳",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"dept_transfer_{department}",
+                # 導航下拉選單佔滿第 0 列（寬度 5），避免溢出將按鈕移至下一列
+                row=1,
+            )
+            transfer_btn.callback = self._make_dept_transfer_callback(
+                department
+            )  # pyright: ignore[reportAttributeAccessIssue]
+            self.add_item(transfer_btn)
 
         if department == "內政部":
             # Welfare disbursement
@@ -1165,9 +1152,9 @@ class StateCouncilPanelView(PersistentPanelView):
             name="📋 功能總覽",
             value=(
                 "• **導航** — 上方選單可切換各部門頁面\n"
-                "• **部門轉帳** — 用於部門間資金撥補\n"
+                "• **國務院轉帳** — 從國務院帳戶轉帳至使用者、公司或政府部門（限領袖）\n"
                 "• **匯出資料** — 下載經濟報表（限領袖）\n"
-                "• **設定部門領導** — 指定部門管理員（限領袖）"
+                "• **行政管理** — 設定部門領導與身分組（限領袖）"
             ),
             inline=False,
         )
@@ -1213,9 +1200,7 @@ class StateCouncilPanelView(PersistentPanelView):
                 "• **福利設定** — 配置發放金額與間隔\n"
                 "• **發放許可** — 核發商業許可證\n"
                 "• **查看許可** — 瀏覽許可列表\n"
-                "• **申請管理** — 處理待審批申請\n"
-                "• **部門轉帳** — 跨部門資金調撥\n"
-                "• **轉帳給使用者** — 個人撥款"
+                "• **申請管理** — 處理待審批申請"
             ),
             inline=False,
         )
@@ -1694,54 +1679,64 @@ class StateCouncilPanelView(PersistentPanelView):
         return embed
 
     # Button callbacks
-    async def _transfer_callback(self, interaction: discord.Interaction) -> None:
+    async def _transfer_state_council_callback(self, interaction: discord.Interaction) -> None:
+        """國務院帳戶對外轉帳回調（僅限國務院領袖）。"""
         if interaction.user.id != self.author_id:
             await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
             return
 
-        # 新 UX：開啟「部門轉帳」嵌入式面板（以下拉式選單選擇目標部門、以 Modal 輸入金額與理由）。
-        preset_from: str | None = (
-            self.current_page if self.current_page in self.departments else None
-        )
-        view = InterdepartmentTransferPanelView(
-            service=self.service,
-            guild_id=self.guild_id,
-            author_id=self.author_id,
-            user_roles=self.user_roles,
-            source_department=preset_from,
-            departments=self.departments,
-        )
-        embed = view.build_embed()
-        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
-        try:
-            msg = await interaction.original_response()
-            view.set_message(msg)
-        except Exception:
-            pass
-
-    async def _transfer_to_user_callback(self, interaction: discord.Interaction) -> None:
-        if interaction.user.id != self.author_id:
-            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+        if not self.is_leader:
+            await send_message_compat(
+                interaction, content="僅國務院領袖可執行此操作。", ephemeral=True
+            )
             return
 
-        preset_from: str | None = (
-            self.current_page if self.current_page in self.departments else None
-        )
-        view = DepartmentUserTransferPanelView(
+        # 開啟轉帳類型選擇面板（使用者/公司/政府部門）
+        view = StateCouncilAccountTransferTypeView(
             service=self.service,
             guild_id=self.guild_id,
+            guild=self.guild,
             author_id=self.author_id,
             user_roles=self.user_roles,
-            source_department=preset_from,
-            departments=self.departments,
         )
-        embed = view.build_embed()
+        embed = discord.Embed(
+            title="💸 國務院帳戶轉帳",
+            description="請選擇轉帳目標類型：",
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(name="來源", value="🏛️ 國務院帳戶", inline=True)
         await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
-        try:
-            msg = await interaction.original_response()
-            view.set_message(msg)
-        except Exception:
-            pass
+
+    def _make_dept_transfer_callback(
+        self, department: str
+    ) -> Callable[[discord.Interaction[Any]], Awaitable[None]]:
+        """創建部門轉帳回調函數。"""
+
+        async def callback(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+
+            # 開啟部門轉帳類型選擇面板（使用者/公司/政府部門）
+            view = DepartmentTransferTypeView(
+                service=self.service,
+                guild_id=self.guild_id,
+                guild=self.guild,
+                author_id=self.author_id,
+                user_roles=self.user_roles,
+                source_department=department,
+            )
+            embed = discord.Embed(
+                title=f"💸 {department} 轉帳",
+                description="請選擇轉帳目標類型：",
+                color=discord.Color.blurple(),
+            )
+            embed.add_field(name="來源", value=f"🏛️ {department}", inline=True)
+            await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+
+        return callback
 
     async def _admin_panel_callback(self, interaction: discord.Interaction) -> None:
         """開啟行政管理面板。"""
@@ -2786,6 +2781,1638 @@ class RecipientInputModal(discord.ui.Modal, title="設定受款人"):
                 content=ErrorMessageTemplates.validation_failed("受款人", "格式錯誤，請輸入 @或ID"),
                 ephemeral=True,
             )
+
+
+class StateCouncilAccountTransferTypeView(discord.ui.View):
+    """國務院帳戶轉帳類型選擇視圖（使用者/公司/政府部門）。"""
+
+    def __init__(
+        self,
+        *,
+        service: Any,
+        guild_id: int,
+        guild: discord.Guild,
+        author_id: int,
+        user_roles: list[int],
+        timeout: float = 300.0,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.service = service
+        self.guild_id = guild_id
+        self.guild = guild
+        self.author_id = author_id
+        self.user_roles = user_roles
+
+        # 轉帳給使用者
+        user_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="👤 使用者",
+            style=discord.ButtonStyle.primary,
+            row=0,
+        )
+        user_btn.callback = self._on_user_type
+        self.add_item(user_btn)
+
+        # 轉帳給公司
+        company_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="🏢 公司",
+            style=discord.ButtonStyle.primary,
+            row=0,
+        )
+        company_btn.callback = self._on_company_type
+        self.add_item(company_btn)
+
+        # 轉帳給政府部門
+        dept_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="🏛️ 政府部門",
+            style=discord.ButtonStyle.primary,
+            row=0,
+        )
+        dept_btn.callback = self._on_department_type
+        self.add_item(dept_btn)
+
+    async def _check_author(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return False
+        return True
+
+    async def _on_user_type(self, interaction: discord.Interaction) -> None:
+        """選擇使用者類型後，開啟國務院→使用者轉帳面板。"""
+        if not await self._check_author(interaction):
+            return
+
+        view = StateCouncilToUserTransferView(
+            service=self.service,
+            guild_id=self.guild_id,
+            guild=self.guild,
+            author_id=self.author_id,
+            user_roles=self.user_roles,
+        )
+        embed = view.build_embed()
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        try:
+            msg = await interaction.original_response()
+            view.set_message(msg)
+        except Exception:
+            pass
+
+    async def _on_company_type(self, interaction: discord.Interaction) -> None:
+        """選擇公司類型後，開啟國務院→公司轉帳面板。"""
+        if not await self._check_author(interaction):
+            return
+
+        view = StateCouncilToCompanyTransferView(
+            service=self.service,
+            guild_id=self.guild_id,
+            guild=self.guild,
+            author_id=self.author_id,
+            user_roles=self.user_roles,
+        )
+        has_companies = await view.setup()
+        if not has_companies:
+            await send_message_compat(
+                interaction, content="❗ 此伺服器目前沒有已登記的公司。", ephemeral=True
+            )
+            return
+
+        embed = view.build_embed()
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        try:
+            msg = await interaction.original_response()
+            view.set_message(msg)
+        except Exception:
+            pass
+
+    async def _on_department_type(self, interaction: discord.Interaction) -> None:
+        """選擇政府部門類型後，開啟國務院→政府部門轉帳面板。"""
+        if not await self._check_author(interaction):
+            return
+
+        view = StateCouncilToGovernmentDeptTransferView(
+            service=self.service,
+            guild_id=self.guild_id,
+            guild=self.guild,
+            author_id=self.author_id,
+            user_roles=self.user_roles,
+        )
+        embed = view.build_embed()
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        try:
+            msg = await interaction.original_response()
+            view.set_message(msg)
+        except Exception:
+            pass
+
+
+class DepartmentTransferTypeView(discord.ui.View):
+    """部門帳戶轉帳類型選擇視圖（使用者/公司/政府部門）。"""
+
+    # 政府部門列表（部門ID → 顯示名稱, 中文名稱）- 用於轉帳目標選擇
+    GOVERNMENT_DEPARTMENTS: list[tuple[str, str, str]] = [
+        ("permanent_council", "👑 常任理事會", "常任理事會"),
+        ("supreme_assembly", "🏛️ 最高人民會議", "最高人民會議"),
+        ("interior_affairs", "🏘️ 內政部", "內政部"),
+        ("finance", "💰 財政部", "財政部"),
+        ("homeland_security", "🛡️ 國土安全部", "國土安全部"),
+        ("central_bank", "🏦 中央銀行", "中央銀行"),
+        ("justice_department", "⚖️ 法務部", "法務部"),
+    ]
+
+    def __init__(
+        self,
+        *,
+        service: Any,
+        guild_id: int,
+        guild: discord.Guild,
+        author_id: int,
+        user_roles: list[int],
+        source_department: str,
+        timeout: float = 300.0,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.service = service
+        self.guild_id = guild_id
+        self.guild = guild
+        self.author_id = author_id
+        self.user_roles = user_roles
+        self.source_department = source_department
+
+        # 轉帳給使用者
+        user_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="👤 使用者",
+            style=discord.ButtonStyle.primary,
+            row=0,
+        )
+        user_btn.callback = self._on_user_type
+        self.add_item(user_btn)
+
+        # 轉帳給公司
+        company_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="🏢 公司",
+            style=discord.ButtonStyle.primary,
+            row=0,
+        )
+        company_btn.callback = self._on_company_type
+        self.add_item(company_btn)
+
+        # 轉帳給政府部門
+        dept_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="🏛️ 政府部門",
+            style=discord.ButtonStyle.primary,
+            row=0,
+        )
+        dept_btn.callback = self._on_department_type
+        self.add_item(dept_btn)
+
+    async def _check_author(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return False
+        return True
+
+    async def _on_user_type(self, interaction: discord.Interaction) -> None:
+        """選擇使用者類型後，開啟部門→使用者轉帳面板。"""
+        if not await self._check_author(interaction):
+            return
+
+        view = DepartmentUserTransferPanelView(
+            service=self.service,
+            guild_id=self.guild_id,
+            author_id=self.author_id,
+            user_roles=self.user_roles,
+            source_department=self.source_department,
+            departments=[self.source_department],  # 來源已固定
+        )
+        embed = view.build_embed()
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        try:
+            msg = await interaction.original_response()
+            view.set_message(msg)
+        except Exception:
+            pass
+
+    async def _on_company_type(self, interaction: discord.Interaction) -> None:
+        """選擇公司類型後，開啟部門→公司轉帳面板。"""
+        if not await self._check_author(interaction):
+            return
+
+        view = DepartmentCompanyTransferPanelView(
+            service=self.service,
+            guild_id=self.guild_id,
+            author_id=self.author_id,
+            user_roles=self.user_roles,
+            source_department=self.source_department,
+            departments=[self.source_department],  # 來源已固定
+        )
+        has_companies = await view.setup()
+        if not has_companies:
+            await send_message_compat(
+                interaction, content="❗ 此伺服器目前沒有已登記的公司。", ephemeral=True
+            )
+            return
+
+        embed = view.build_embed()
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        try:
+            msg = await interaction.original_response()
+            view.set_message(msg)
+        except Exception:
+            pass
+
+    async def _on_department_type(self, interaction: discord.Interaction) -> None:
+        """選擇政府部門類型後，開啟部門→政府部門轉帳面板。"""
+        if not await self._check_author(interaction):
+            return
+
+        view = DepartmentToGovernmentDeptTransferView(
+            service=self.service,
+            guild_id=self.guild_id,
+            guild=self.guild,
+            author_id=self.author_id,
+            user_roles=self.user_roles,
+            source_department=self.source_department,
+        )
+        embed = view.build_embed()
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        try:
+            msg = await interaction.original_response()
+            view.set_message(msg)
+        except Exception:
+            pass
+
+
+class StateCouncilTransferTypeSelectionView(discord.ui.View):
+    """國務院轉帳類型選擇視圖（使用者/公司）- 已棄用，保留供舊代碼相容。"""
+
+    def __init__(
+        self,
+        *,
+        service: Any,
+        guild_id: int,
+        guild: discord.Guild,
+        author_id: int,
+        user_roles: list[int],
+        source_department: str | None,
+        departments: list[str],
+        timeout: float = 300.0,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.service = service
+        self.guild_id = guild_id
+        self.guild = guild
+        self.author_id = author_id
+        self.user_roles = user_roles
+        self.source_department = source_department
+        self.departments = departments
+
+        # 轉帳給使用者
+        user_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="👤 使用者",
+            style=discord.ButtonStyle.primary,
+            row=0,
+        )
+        user_btn.callback = self._on_user_type
+        self.add_item(user_btn)
+
+        # 轉帳給公司
+        company_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="🏢 公司",
+            style=discord.ButtonStyle.primary,
+            row=0,
+        )
+        company_btn.callback = self._on_company_type
+        self.add_item(company_btn)
+
+    async def _check_author(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
+            return False
+        return True
+
+    async def _on_user_type(self, interaction: discord.Interaction) -> None:
+        """選擇使用者類型後，開啟部門→使用者轉帳面板。"""
+        if not await self._check_author(interaction):
+            return
+
+        view = DepartmentUserTransferPanelView(
+            service=self.service,
+            guild_id=self.guild_id,
+            author_id=self.author_id,
+            user_roles=self.user_roles,
+            source_department=self.source_department,
+            departments=self.departments,
+        )
+        embed = view.build_embed()
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        try:
+            msg = await interaction.original_response()
+            view.set_message(msg)
+        except Exception:
+            pass
+
+    async def _on_company_type(self, interaction: discord.Interaction) -> None:
+        """選擇公司類型後，開啟部門→公司轉帳面板。"""
+        if not await self._check_author(interaction):
+            return
+
+        view = DepartmentCompanyTransferPanelView(
+            service=self.service,
+            guild_id=self.guild_id,
+            author_id=self.author_id,
+            user_roles=self.user_roles,
+            source_department=self.source_department,
+            departments=self.departments,
+        )
+        has_companies = await view.setup()
+        if not has_companies:
+            await send_message_compat(
+                interaction, content="❗ 此伺服器目前沒有已登記的公司。", ephemeral=True
+            )
+            return
+
+        embed = view.build_embed()
+        await send_message_compat(interaction, embed=embed, view=view, ephemeral=True)
+        try:
+            msg = await interaction.original_response()
+            view.set_message(msg)
+        except Exception:
+            pass
+
+
+class StateCouncilToUserTransferView(discord.ui.View):
+    """國務院帳戶→使用者轉帳面板。"""
+
+    def __init__(
+        self,
+        *,
+        service: Any,
+        guild_id: int,
+        guild: discord.Guild,
+        author_id: int,
+        user_roles: list[int],
+    ) -> None:
+        super().__init__(timeout=None)
+        self.service = service
+        self.guild_id = guild_id
+        self.guild = guild
+        self.author_id = author_id
+        self.user_roles = user_roles
+        self.recipient_id: int | None = None
+        self.amount: int | None = None
+        self.reason: str | None = None
+        self.message: discord.Message | None = None
+        self.currency_service = CurrencyConfigService(get_pool())
+        self.refresh_controls()
+
+    def set_message(self, message: discord.Message) -> None:
+        self.message = message
+
+    def build_embed(self) -> discord.Embed:
+        embed = discord.Embed(
+            title="🏛️ 國務院帳戶轉帳｜使用者",
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(name="來源", value="🏛️ 國務院帳戶", inline=True)
+        embed.add_field(
+            name="受款人",
+            value=(f"<@{self.recipient_id}>" if self.recipient_id else "—（請從下方選擇）"),
+            inline=True,
+        )
+        embed.add_field(
+            name="金額",
+            value=f"{self.amount:,}" if self.amount is not None else "—（選擇受款人後填寫）",
+            inline=False,
+        )
+        embed.add_field(
+            name="理由",
+            value=self.reason or "—（選擇受款人後填寫）",
+            inline=False,
+        )
+        embed.set_footer(text="提示：選擇受款人後，將彈出視窗輸入金額與理由。")
+        return embed
+
+    def _can_submit(self) -> bool:
+        return (
+            self.recipient_id is not None
+            and self.amount is not None
+            and self.amount > 0
+            and self.reason is not None
+            and len(self.reason.strip()) > 0
+        )
+
+    def refresh_controls(self) -> None:
+        self.clear_items()
+
+        # UserSelect for recipient
+        user_select: discord.ui.UserSelect[Any] = discord.ui.UserSelect(
+            placeholder="選擇受款使用者…",
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+
+        async def _on_user_select(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+            if not interaction.data:
+                return
+            values = interaction.data.get("values", [])
+            if values:
+                self.recipient_id = int(values[0])
+                # 選擇使用者後彈出金額 Modal
+                await send_modal_compat(interaction, StateCouncilTransferAmountModal(self))
+
+        user_select.callback = _on_user_select
+        self.add_item(user_select)
+
+        # 送出按鈕
+        submit_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="送出轉帳",
+            style=discord.ButtonStyle.primary,
+            disabled=not self._can_submit(),
+            row=1,
+        )
+
+        async def _on_submit(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+            if not self._can_submit():
+                await send_message_compat(interaction, content="請先完成所有欄位。", ephemeral=True)
+                return
+            await self._execute_transfer(interaction)
+
+        submit_btn.callback = _on_submit
+        self.add_item(submit_btn)
+
+        # 關閉按鈕
+        close_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="關閉",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+
+        async def _on_close(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+            try:
+                if self.message:
+                    await self.message.edit(view=None)
+                else:
+                    await edit_message_compat(interaction, view=None)
+            except Exception:
+                self.stop()
+
+        close_btn.callback = _on_close
+        self.add_item(close_btn)
+
+    async def _execute_transfer(self, interaction: discord.Interaction) -> None:
+        """執行國務院帳戶→使用者轉帳。"""
+        try:
+            currency_config = await self.currency_service.get_currency_config(
+                guild_id=self.guild_id
+            )
+            formatted_amount = _format_currency_display(currency_config, int(self.amount or 0))
+        except Exception:
+            formatted_amount = f"{int(self.amount or 0):,} 點"
+
+        try:
+            success, msg, deductions = await self.service.transfer_from_state_council_auto_deduct(
+                guild_id=self.guild_id,
+                user_id=self.author_id,
+                user_roles=self.user_roles,
+                target_id=int(self.recipient_id or 0),
+                target_type="user",
+                amount=int(self.amount or 0),
+                reason=str(self.reason or ""),
+            )
+            if not success:
+                await send_message_compat(
+                    interaction,
+                    content=f"❗ {msg}",
+                    ephemeral=True,
+                )
+                return
+
+            deduction_note = ""
+            if deductions:
+                parts = [f"{dept} {amt:,}" for dept, amt in deductions]
+                deduction_note = "\n扣款來源：" + "、".join(parts)
+
+            await send_message_compat(
+                interaction,
+                content=(
+                    f"✅ 轉帳成功！已從國務院帳戶轉帳 {formatted_amount} 給 <@{self.recipient_id}>。"
+                    f"{deduction_note}"
+                ),
+                ephemeral=True,
+            )
+            self.refresh_controls()
+            await self.apply_ui_update(interaction)
+        except (PermissionDeniedError, InsufficientFundsError, ValueError) as e:
+            await send_message_compat(
+                interaction, content=ErrorMessageTemplates.from_error(e), ephemeral=True
+            )
+        except Exception as e:
+            LOGGER.exception("state_council_to_user.transfer_failed", error=str(e))
+            await send_message_compat(
+                interaction,
+                content=ErrorMessageTemplates.system_error("轉帳失敗"),
+                ephemeral=True,
+            )
+
+    async def apply_ui_update(self, interaction: discord.Interaction) -> None:
+        self.refresh_controls()
+        embed = self.build_embed()
+        try:
+            await edit_message_compat(interaction, embed=embed, view=self)
+        except Exception:
+            if self.message:
+                try:
+                    await self.message.edit(embed=embed, view=self)
+                except Exception:
+                    pass
+
+
+class StateCouncilToCompanyTransferView(discord.ui.View):
+    """國務院帳戶→公司轉帳面板。"""
+
+    def __init__(
+        self,
+        *,
+        service: Any,
+        guild_id: int,
+        guild: discord.Guild,
+        author_id: int,
+        user_roles: list[int],
+    ) -> None:
+        super().__init__(timeout=None)
+        self.service = service
+        self.guild_id = guild_id
+        self.guild = guild
+        self.author_id = author_id
+        self.user_roles = user_roles
+        self.company_id: int | None = None
+        self.company_name: str | None = None
+        self.company_account_id: int | None = None
+        self.amount: int | None = None
+        self.reason: str | None = None
+        self.message: discord.Message | None = None
+        self._companies: dict[int, Any] = {}
+        self.currency_service = CurrencyConfigService(get_pool())
+
+    async def setup(self) -> bool:
+        """Fetch companies and setup the view."""
+        from src.bot.ui.company_select import get_active_companies
+
+        companies = await get_active_companies(self.guild_id)
+        if not companies:
+            return False
+
+        self._companies = {c.id: c for c in companies}
+        self.refresh_controls()
+        return True
+
+    def set_message(self, message: discord.Message) -> None:
+        self.message = message
+
+    def build_embed(self) -> discord.Embed:
+        embed = discord.Embed(
+            title="🏛️ 國務院帳戶轉帳｜公司",
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(name="來源", value="🏛️ 國務院帳戶", inline=True)
+        embed.add_field(
+            name="受款公司",
+            value=(f"🏢 {self.company_name}" if self.company_name else "—（請從下方選擇）"),
+            inline=True,
+        )
+        embed.add_field(
+            name="金額",
+            value=f"{self.amount:,}" if self.amount is not None else "—（選擇公司後填寫）",
+            inline=False,
+        )
+        embed.add_field(
+            name="理由",
+            value=self.reason or "—（選擇公司後填寫）",
+            inline=False,
+        )
+        embed.set_footer(text="提示：選擇公司後，將彈出視窗輸入金額與理由。")
+        return embed
+
+    def _can_submit(self) -> bool:
+        return (
+            self.company_account_id is not None
+            and self.amount is not None
+            and self.amount > 0
+            and self.reason is not None
+            and len(self.reason.strip()) > 0
+        )
+
+    def refresh_controls(self) -> None:
+        self.clear_items()
+
+        # 公司選擇下拉
+        if self._companies:
+            from src.bot.ui.company_select import build_company_select_options
+
+            options = build_company_select_options(list(self._companies.values()))
+            if options:
+                company_select: discord.ui.Select[Any] = discord.ui.Select(
+                    placeholder="🏢 選擇受款公司…",
+                    options=options,
+                    min_values=1,
+                    max_values=1,
+                    row=0,
+                )
+
+                async def _on_company(interaction: discord.Interaction) -> None:
+                    if interaction.user.id != self.author_id:
+                        await send_message_compat(
+                            interaction, content="僅限面板開啟者操作。", ephemeral=True
+                        )
+                        return
+                    try:
+                        company_id = (
+                            int(company_select.values[0]) if company_select.values else None
+                        )
+                    except ValueError:
+                        await send_message_compat(
+                            interaction, content="選項格式錯誤。", ephemeral=True
+                        )
+                        return
+                    if company_id and company_id in self._companies:
+                        company = self._companies[company_id]
+                        self.company_id = company.id
+                        self.company_name = company.name
+                        self.company_account_id = company.account_id
+                        # 選擇公司後彈出金額 Modal
+                        await send_modal_compat(interaction, StateCouncilTransferAmountModal(self))
+
+                company_select.callback = _on_company
+                self.add_item(company_select)
+
+        # 送出按鈕
+        submit_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="送出轉帳",
+            style=discord.ButtonStyle.primary,
+            disabled=not self._can_submit(),
+            row=1,
+        )
+
+        async def _on_submit(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+            if not self._can_submit():
+                await send_message_compat(interaction, content="請先完成所有欄位。", ephemeral=True)
+                return
+            await self._execute_transfer(interaction)
+
+        submit_btn.callback = _on_submit
+        self.add_item(submit_btn)
+
+        # 關閉按鈕
+        close_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="關閉",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+
+        async def _on_close(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+            try:
+                if self.message:
+                    await self.message.edit(view=None)
+                else:
+                    await edit_message_compat(interaction, view=None)
+            except Exception:
+                self.stop()
+
+        close_btn.callback = _on_close
+        self.add_item(close_btn)
+
+    async def _execute_transfer(self, interaction: discord.Interaction) -> None:
+        """執行國務院帳戶→公司轉帳。"""
+        try:
+            currency_config = await self.currency_service.get_currency_config(
+                guild_id=self.guild_id
+            )
+            formatted_amount = _format_currency_display(currency_config, int(self.amount or 0))
+        except Exception:
+            formatted_amount = f"{int(self.amount or 0):,} 點"
+
+        try:
+            success, msg, deductions = await self.service.transfer_from_state_council_auto_deduct(
+                guild_id=self.guild_id,
+                user_id=self.author_id,
+                user_roles=self.user_roles,
+                target_id=int(self.company_account_id or 0),
+                target_type="company",
+                amount=int(self.amount or 0),
+                reason=str(self.reason or ""),
+            )
+            if not success:
+                await send_message_compat(
+                    interaction,
+                    content=f"❗ {msg}",
+                    ephemeral=True,
+                )
+                return
+
+            deduction_note = ""
+            if deductions:
+                parts = [f"{dept} {amt:,}" for dept, amt in deductions]
+                deduction_note = "\n扣款來源：" + "、".join(parts)
+
+            await send_message_compat(
+                interaction,
+                content=(
+                    f"✅ 轉帳成功！已從國務院帳戶轉帳 {formatted_amount} 給 🏢 {self.company_name}。"
+                    f"{deduction_note}"
+                ),
+                ephemeral=True,
+            )
+            self.refresh_controls()
+            await self.apply_ui_update(interaction)
+        except (PermissionDeniedError, InsufficientFundsError, ValueError) as e:
+            await send_message_compat(
+                interaction, content=ErrorMessageTemplates.from_error(e), ephemeral=True
+            )
+        except Exception as e:
+            LOGGER.exception("state_council_to_company.transfer_failed", error=str(e))
+            await send_message_compat(
+                interaction,
+                content=ErrorMessageTemplates.system_error("轉帳失敗"),
+                ephemeral=True,
+            )
+
+    async def apply_ui_update(self, interaction: discord.Interaction) -> None:
+        self.refresh_controls()
+        embed = self.build_embed()
+        try:
+            await edit_message_compat(interaction, embed=embed, view=self)
+        except Exception:
+            if self.message:
+                try:
+                    await self.message.edit(embed=embed, view=self)
+                except Exception:
+                    pass
+
+
+class StateCouncilToGovernmentDeptTransferView(discord.ui.View):
+    """國務院帳戶→政府部門轉帳面板。"""
+
+    # 政府部門列表（部門ID → 顯示名稱）
+    GOVERNMENT_DEPARTMENTS: list[tuple[str, str, str]] = [
+        ("permanent_council", "👑 常任理事會", "常任理事會"),
+        ("interior_affairs", "🏘️ 內政部", "內政部"),
+        ("finance", "💰 財政部", "財政部"),
+        ("homeland_security", "🛡️ 國土安全部", "國土安全部"),
+        ("central_bank", "🏦 中央銀行", "中央銀行"),
+        ("justice_department", "⚖️ 法務部", "法務部"),
+        ("supreme_assembly", "🏛️ 最高人民會議", "最高人民會議"),
+    ]
+
+    def __init__(
+        self,
+        *,
+        service: Any,
+        guild_id: int,
+        guild: discord.Guild,
+        author_id: int,
+        user_roles: list[int],
+    ) -> None:
+        super().__init__(timeout=None)
+        self.service = service
+        self.guild_id = guild_id
+        self.guild = guild
+        self.author_id = author_id
+        self.user_roles = user_roles
+        self.target_dept_id: str | None = None
+        self.target_dept_name: str | None = None
+        self.amount: int | None = None
+        self.reason: str | None = None
+        self.message: discord.Message | None = None
+        self.currency_service = CurrencyConfigService(get_pool())
+        self.refresh_controls()
+
+    def set_message(self, message: discord.Message) -> None:
+        self.message = message
+
+    def build_embed(self) -> discord.Embed:
+        embed = discord.Embed(
+            title="🏛️ 國務院帳戶轉帳｜政府部門",
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(name="來源", value="🏛️ 國務院帳戶", inline=True)
+        embed.add_field(
+            name="目標部門",
+            value=(self.target_dept_name or "—（請從下方選擇）"),
+            inline=True,
+        )
+        embed.add_field(
+            name="金額",
+            value=f"{self.amount:,}" if self.amount is not None else "—（選擇部門後填寫）",
+            inline=False,
+        )
+        embed.add_field(
+            name="理由",
+            value=self.reason or "—（選擇部門後填寫）",
+            inline=False,
+        )
+        embed.set_footer(text="提示：選擇目標部門後，將彈出視窗輸入金額與理由。")
+        return embed
+
+    def _can_submit(self) -> bool:
+        return (
+            self.target_dept_id is not None
+            and self.amount is not None
+            and self.amount > 0
+            and self.reason is not None
+            and len(self.reason.strip()) > 0
+        )
+
+    def refresh_controls(self) -> None:
+        self.clear_items()
+
+        # 政府部門選擇下拉
+        options = [
+            discord.SelectOption(label=label, value=dept_id, description=name)
+            for dept_id, label, name in self.GOVERNMENT_DEPARTMENTS
+        ]
+        dept_select: discord.ui.Select[Any] = discord.ui.Select(
+            placeholder="🏛️ 選擇目標政府部門…",
+            options=options,
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+
+        async def _on_dept_select(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+            if dept_select.values:
+                selected_id = dept_select.values[0]
+                for dept_id, label, _ in self.GOVERNMENT_DEPARTMENTS:
+                    if dept_id == selected_id:
+                        self.target_dept_id = dept_id
+                        self.target_dept_name = label
+                        break
+                # 選擇部門後彈出金額 Modal
+                await send_modal_compat(interaction, StateCouncilTransferAmountModal(self))
+
+        dept_select.callback = _on_dept_select
+        self.add_item(dept_select)
+
+        # 送出按鈕
+        submit_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="送出轉帳",
+            style=discord.ButtonStyle.primary,
+            disabled=not self._can_submit(),
+            row=1,
+        )
+
+        async def _on_submit(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+            if not self._can_submit():
+                await send_message_compat(interaction, content="請先完成所有欄位。", ephemeral=True)
+                return
+            await self._execute_transfer(interaction)
+
+        submit_btn.callback = _on_submit
+        self.add_item(submit_btn)
+
+        # 關閉按鈕
+        close_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="關閉",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+
+        async def _on_close(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+            try:
+                if self.message:
+                    await self.message.edit(view=None)
+                else:
+                    await edit_message_compat(interaction, view=None)
+            except Exception:
+                self.stop()
+
+        close_btn.callback = _on_close
+        self.add_item(close_btn)
+
+    async def _execute_transfer(self, interaction: discord.Interaction) -> None:
+        """執行國務院帳戶→政府部門轉帳。"""
+        try:
+            currency_config = await self.currency_service.get_currency_config(
+                guild_id=self.guild_id
+            )
+            formatted_amount = _format_currency_display(currency_config, int(self.amount or 0))
+        except Exception:
+            formatted_amount = f"{int(self.amount or 0):,} 點"
+
+        # 將部門 ID 轉換為部門名稱
+        target_name = None
+        for dept_id, _, name in self.GOVERNMENT_DEPARTMENTS:
+            if dept_id == self.target_dept_id:
+                target_name = name
+                break
+        if not target_name:
+            await send_message_compat(interaction, content="無效的目標部門。", ephemeral=True)
+            return
+
+        try:
+            success, msg, deductions = await self.service.transfer_from_state_council_auto_deduct(
+                guild_id=self.guild_id,
+                user_id=self.author_id,
+                user_roles=self.user_roles,
+                target_id=None,
+                target_type="department",
+                target_department=target_name,
+                amount=int(self.amount or 0),
+                reason=str(self.reason or ""),
+            )
+            if not success:
+                await send_message_compat(
+                    interaction,
+                    content=f"❗ {msg}",
+                    ephemeral=True,
+                )
+                return
+
+            deduction_note = ""
+            if deductions:
+                parts = [f"{dept} {amt:,}" for dept, amt in deductions]
+                deduction_note = "\n扣款來源：" + "、".join(parts)
+
+            await send_message_compat(
+                interaction,
+                content=(
+                    f"✅ 轉帳成功！已從國務院帳戶轉帳 {formatted_amount} 到 {self.target_dept_name}。"
+                    f"{deduction_note}"
+                ),
+                ephemeral=True,
+            )
+            self.refresh_controls()
+            await self.apply_ui_update(interaction)
+        except (PermissionDeniedError, InsufficientFundsError, ValueError) as e:
+            await send_message_compat(
+                interaction, content=ErrorMessageTemplates.from_error(e), ephemeral=True
+            )
+        except Exception as e:
+            LOGGER.exception("state_council_to_dept.transfer_failed", error=str(e))
+            await send_message_compat(
+                interaction,
+                content=ErrorMessageTemplates.system_error("轉帳失敗"),
+                ephemeral=True,
+            )
+
+    async def apply_ui_update(self, interaction: discord.Interaction) -> None:
+        self.refresh_controls()
+        embed = self.build_embed()
+        try:
+            await edit_message_compat(interaction, embed=embed, view=self)
+        except Exception:
+            if self.message:
+                try:
+                    await self.message.edit(embed=embed, view=self)
+                except Exception:
+                    pass
+
+
+class DepartmentToGovernmentDeptTransferView(discord.ui.View):
+    """部門帳戶→政府部門轉帳面板（包含其他部門、常任理事會、最高人民會議）。"""
+
+    # 政府部門列表（部門ID → 顯示名稱, 中文名稱）
+    GOVERNMENT_DEPARTMENTS: list[tuple[str, str, str]] = [
+        ("permanent_council", "👑 常任理事會", "常任理事會"),
+        ("supreme_assembly", "🏛️ 最高人民會議", "最高人民會議"),
+        ("interior_affairs", "🏘️ 內政部", "內政部"),
+        ("finance", "💰 財政部", "財政部"),
+        ("homeland_security", "🛡️ 國土安全部", "國土安全部"),
+        ("central_bank", "🏦 中央銀行", "中央銀行"),
+        ("justice_department", "⚖️ 法務部", "法務部"),
+    ]
+
+    # 部門名稱到 ID 的映射
+    DEPT_NAME_TO_ID: dict[str, str] = {
+        "常任理事會": "permanent_council",
+        "最高人民會議": "supreme_assembly",
+        "內政部": "interior_affairs",
+        "財政部": "finance",
+        "國土安全部": "homeland_security",
+        "中央銀行": "central_bank",
+        "法務部": "justice_department",
+    }
+
+    def __init__(
+        self,
+        *,
+        service: Any,
+        guild_id: int,
+        guild: discord.Guild,
+        author_id: int,
+        user_roles: list[int],
+        source_department: str,
+    ) -> None:
+        super().__init__(timeout=None)
+        self.service = service
+        self.guild_id = guild_id
+        self.guild = guild
+        self.author_id = author_id
+        self.user_roles = user_roles
+        self.source_department = source_department
+        self.target_dept_id: str | None = None
+        self.target_dept_name: str | None = None
+        self.amount: int | None = None
+        self.reason: str | None = None
+        self.message: discord.Message | None = None
+        self.currency_service = CurrencyConfigService(get_pool())
+        self.refresh_controls()
+
+    def set_message(self, message: discord.Message) -> None:
+        self.message = message
+
+    def build_embed(self) -> discord.Embed:
+        embed = discord.Embed(
+            title=f"🏛️ {self.source_department} 轉帳｜政府部門",
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(name="來源", value=f"🏛️ {self.source_department}", inline=True)
+        embed.add_field(
+            name="目標部門",
+            value=(self.target_dept_name or "—（請從下方選擇）"),
+            inline=True,
+        )
+        embed.add_field(
+            name="金額",
+            value=f"{self.amount:,}" if self.amount is not None else "—（選擇部門後填寫）",
+            inline=False,
+        )
+        embed.add_field(
+            name="理由",
+            value=self.reason or "—（選擇部門後填寫）",
+            inline=False,
+        )
+        embed.set_footer(text="提示：選擇目標部門後，將彈出視窗輸入金額與理由。")
+        return embed
+
+    def _can_submit(self) -> bool:
+        return (
+            self.target_dept_id is not None
+            and self.amount is not None
+            and self.amount > 0
+            and self.reason is not None
+            and len(self.reason.strip()) > 0
+        )
+
+    def _get_available_departments(self) -> list[tuple[str, str, str]]:
+        """取得可用的目標部門列表（排除來源部門自身）。"""
+        source_id = self.DEPT_NAME_TO_ID.get(self.source_department)
+        return [
+            (dept_id, label, name)
+            for dept_id, label, name in self.GOVERNMENT_DEPARTMENTS
+            if dept_id != source_id
+        ]
+
+    def refresh_controls(self) -> None:
+        self.clear_items()
+
+        # 政府部門選擇下拉（排除來源部門自身）
+        available_depts = self._get_available_departments()
+        options = [
+            discord.SelectOption(label=label, value=dept_id, description=name)
+            for dept_id, label, name in available_depts
+        ]
+        dept_select: discord.ui.Select[Any] = discord.ui.Select(
+            placeholder="🏛️ 選擇目標政府部門…",
+            options=options,
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+
+        async def _on_dept_select(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+            if dept_select.values:
+                selected_id = dept_select.values[0]
+                for dept_id, label, _ in self.GOVERNMENT_DEPARTMENTS:
+                    if dept_id == selected_id:
+                        self.target_dept_id = dept_id
+                        self.target_dept_name = label
+                        break
+                # 選擇部門後彈出金額 Modal
+                await send_modal_compat(interaction, DepartmentTransferAmountModal(self))
+
+        dept_select.callback = _on_dept_select
+        self.add_item(dept_select)
+
+        # 送出按鈕
+        submit_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="送出轉帳",
+            style=discord.ButtonStyle.primary,
+            disabled=not self._can_submit(),
+            row=1,
+        )
+
+        async def _on_submit(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+            if not self._can_submit():
+                await send_message_compat(interaction, content="請先完成所有欄位。", ephemeral=True)
+                return
+            await self._execute_transfer(interaction)
+
+        submit_btn.callback = _on_submit
+        self.add_item(submit_btn)
+
+        # 關閉按鈕
+        close_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="關閉",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+
+        async def _on_close(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+            try:
+                if self.message:
+                    await self.message.edit(view=None)
+                else:
+                    await edit_message_compat(interaction, view=None)
+            except Exception:
+                self.stop()
+
+        close_btn.callback = _on_close
+        self.add_item(close_btn)
+
+    async def _execute_transfer(self, interaction: discord.Interaction) -> None:
+        """執行部門帳戶→政府部門轉帳。"""
+        try:
+            currency_config = await self.currency_service.get_currency_config(
+                guild_id=self.guild_id
+            )
+            formatted_amount = _format_currency_display(currency_config, int(self.amount or 0))
+        except Exception:
+            formatted_amount = f"{int(self.amount or 0):,} 點"
+
+        # 將部門 ID 轉換為部門名稱
+        target_name = None
+        for dept_id, _, name in self.GOVERNMENT_DEPARTMENTS:
+            if dept_id == self.target_dept_id:
+                target_name = name
+                break
+        if not target_name:
+            await send_message_compat(interaction, content="無效的目標部門。", ephemeral=True)
+            return
+
+        try:
+            # 使用 transfer_between_departments，從來源部門到目標部門
+            await self.service.transfer_between_departments(
+                guild_id=self.guild_id,
+                user_id=self.author_id,
+                user_roles=self.user_roles,
+                from_department=self.source_department,
+                to_department=target_name,
+                amount=int(self.amount or 0),
+                reason=str(self.reason or ""),
+            )
+            await send_message_compat(
+                interaction,
+                content=f"✅ 轉帳成功！已從 {self.source_department} 轉帳 {formatted_amount} 到 {self.target_dept_name}。",
+                ephemeral=True,
+            )
+            self.refresh_controls()
+            await self.apply_ui_update(interaction)
+        except (PermissionDeniedError, InsufficientFundsError, ValueError) as e:
+            await send_message_compat(
+                interaction, content=ErrorMessageTemplates.from_error(e), ephemeral=True
+            )
+        except Exception as e:
+            LOGGER.exception("dept_to_govt_dept.transfer_failed", error=str(e))
+            await send_message_compat(
+                interaction,
+                content=ErrorMessageTemplates.system_error("轉帳失敗"),
+                ephemeral=True,
+            )
+
+    async def apply_ui_update(self, interaction: discord.Interaction) -> None:
+        self.refresh_controls()
+        embed = self.build_embed()
+        try:
+            await edit_message_compat(interaction, embed=embed, view=self)
+        except Exception:
+            try:
+                if self.message:
+                    await self.message.edit(embed=embed, view=self)
+            except Exception:
+                pass
+
+
+class DepartmentTransferAmountModal(discord.ui.Modal, title="填寫金額與理由"):
+    """部門轉帳金額與理由輸入 Modal。"""
+
+    def __init__(self, parent_view: Any) -> None:
+        super().__init__()
+        self.parent_view = parent_view
+
+        self.amount_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="金額",
+            placeholder="輸入轉帳金額（正整數）",
+            required=True,
+            style=discord.TextStyle.short,
+        )
+        self.reason_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="理由",
+            placeholder="輸入轉帳理由",
+            required=True,
+            style=discord.TextStyle.paragraph,
+        )
+
+        self.add_item(self.amount_input)
+        self.add_item(self.reason_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            amount = int(str(self.amount_input.value).strip())
+            if amount <= 0:
+                raise ValueError("金額需為正整數")
+            reason = str(self.reason_input.value).strip()
+            if not reason:
+                raise ValueError("請輸入理由")
+
+            self.parent_view.amount = amount
+            self.parent_view.reason = reason
+            await send_message_compat(interaction, content="已更新金額與理由。", ephemeral=True)
+
+            # 更新原面板
+            await self.parent_view.apply_ui_update(interaction)
+        except ValueError as e:
+            await send_message_compat(
+                interaction,
+                content=ErrorMessageTemplates.validation_failed("輸入值", str(e)),
+                ephemeral=True,
+            )
+
+
+class StateCouncilTransferAmountModal(discord.ui.Modal, title="填寫金額與理由"):
+    """國務院轉帳金額與理由輸入 Modal。"""
+
+    def __init__(self, parent_view: Any) -> None:
+        super().__init__()
+        self.parent_view = parent_view
+
+        self.amount_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="金額",
+            placeholder="輸入轉帳金額（正整數）",
+            required=True,
+            style=discord.TextStyle.short,
+        )
+        self.reason_input: discord.ui.TextInput[Any] = discord.ui.TextInput(
+            label="理由",
+            placeholder="輸入轉帳理由",
+            required=True,
+            style=discord.TextStyle.paragraph,
+        )
+
+        self.add_item(self.amount_input)
+        self.add_item(self.reason_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            amount = int(str(self.amount_input.value).strip())
+            if amount <= 0:
+                raise ValueError("金額需為正整數")
+            reason = str(self.reason_input.value).strip()
+            if not reason:
+                raise ValueError("請輸入理由")
+
+            self.parent_view.amount = amount
+            self.parent_view.reason = reason
+            await send_message_compat(interaction, content="已更新金額與理由。", ephemeral=True)
+
+            # 更新原面板
+            await self.parent_view.apply_ui_update(interaction)
+        except ValueError as e:
+            await send_message_compat(
+                interaction,
+                content=ErrorMessageTemplates.validation_failed("輸入值", str(e)),
+                ephemeral=True,
+            )
+
+
+class DepartmentCompanyTransferPanelView(discord.ui.View):
+    """部門→公司 轉帳面板。"""
+
+    def __init__(
+        self,
+        *,
+        service: Any,
+        guild_id: int,
+        author_id: int,
+        user_roles: list[int],
+        source_department: str | None,
+        departments: list[str],
+    ) -> None:
+        super().__init__(timeout=None)
+        self.service = service
+        self.guild_id = guild_id
+        self.author_id = author_id
+        self.user_roles = user_roles
+        self.departments = departments
+        self.source_department: str | None = source_department
+        self.company_id: int | None = None
+        self.company_name: str | None = None
+        self.company_account_id: int | None = None
+        self.amount: int | None = None
+        self.reason: str | None = None
+        self.message: discord.Message | None = None
+        self._companies: dict[int, Any] = {}
+
+    async def setup(self) -> bool:
+        """Fetch companies and setup the view.
+
+        Returns:
+            True if companies are available, False otherwise
+        """
+        from src.bot.ui.company_select import get_active_companies
+
+        companies = await get_active_companies(self.guild_id)
+        if not companies:
+            return False
+
+        self._companies = {c.id: c for c in companies}
+        self.refresh_controls()
+        return True
+
+    def set_message(self, message: discord.Message) -> None:
+        self.message = message
+
+    def build_embed(self) -> discord.Embed:
+        title = "🏛️ 部門→公司 轉帳"
+        if self.source_department:
+            title += f"｜自 {self.source_department} 轉出"
+        embed = discord.Embed(title=title, color=discord.Color.blurple())
+        embed.add_field(
+            name="來源部門",
+            value=self.source_department or "—（總覽中，請先選擇）",
+            inline=True,
+        )
+        embed.add_field(
+            name="受款公司",
+            value=(f"🏢 {self.company_name}" if self.company_name else "—（請從下方選擇）"),
+            inline=True,
+        )
+        embed.add_field(
+            name="金額",
+            value=f"{self.amount:,}" if self.amount is not None else "—（按下方按鈕填寫）",
+            inline=False,
+        )
+        embed.add_field(
+            name="理由",
+            value=self.reason or "—（按下方按鈕填寫）",
+            inline=False,
+        )
+        embed.set_footer(text="提示：送出前需先選定來源部門、受款公司並填寫金額與理由。")
+        return embed
+
+    def _can_submit(self) -> bool:
+        return (
+            self.source_department is not None
+            and self.company_account_id is not None
+            and self.amount is not None
+            and self.amount > 0
+            and self.reason is not None
+            and len(self.reason.strip()) > 0
+        )
+
+    def refresh_controls(self) -> None:
+        self.clear_items()
+
+        # 來源部門下拉（僅在總覽時顯示）
+        if self.source_department is None:
+
+            class _FromSelect(discord.ui.Select[Any]):
+                pass
+
+            from_options = [discord.SelectOption(label=d, value=d) for d in self.departments]
+            from_select = _FromSelect(
+                placeholder="選擇來源部門…",
+                options=from_options,
+                min_values=1,
+                max_values=1,
+                row=0,
+            )
+
+            async def _on_from(interaction: discord.Interaction) -> None:
+                if interaction.user.id != self.author_id:
+                    await send_message_compat(
+                        interaction, content="僅限面板開啟者操作。", ephemeral=True
+                    )
+                    return
+                self.source_department = from_select.values[0] if from_select.values else None
+                await self.apply_ui_update(interaction)
+
+            from_select.callback = _on_from
+            self.add_item(from_select)
+
+        # 公司選擇下拉
+        if self.company_account_id is None and self._companies:
+            from src.bot.ui.company_select import build_company_select_options
+
+            options = build_company_select_options(list(self._companies.values()))
+            if options:
+                company_select: discord.ui.Select[Any] = discord.ui.Select(
+                    placeholder="🏢 選擇受款公司…",
+                    options=options,
+                    min_values=1,
+                    max_values=1,
+                    row=1 if self.source_department is None else 0,
+                )
+
+                async def _on_company(interaction: discord.Interaction) -> None:
+                    if interaction.user.id != self.author_id:
+                        await send_message_compat(
+                            interaction, content="僅限面板開啟者操作。", ephemeral=True
+                        )
+                        return
+                    try:
+                        company_id = (
+                            int(company_select.values[0]) if company_select.values else None
+                        )
+                    except ValueError:
+                        await send_message_compat(
+                            interaction, content="選項格式錯誤。", ephemeral=True
+                        )
+                        return
+                    if company_id and company_id in self._companies:
+                        company = self._companies[company_id]
+                        self.company_id = company.id
+                        self.company_name = company.name
+                        self.company_account_id = company.account_id
+                    await self.apply_ui_update(interaction)
+
+                company_select.callback = _on_company
+                self.add_item(company_select)
+
+        # 金額與理由
+        fill_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="填寫金額與理由",
+            style=discord.ButtonStyle.secondary,
+            row=2,
+        )
+
+        async def _on_fill(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+            if self.source_department is None:
+                await send_message_compat(interaction, content="請先選擇來源部門。", ephemeral=True)
+                return
+            if self.company_account_id is None:
+                await send_message_compat(interaction, content="請先選擇受款公司。", ephemeral=True)
+                return
+            await send_modal_compat(interaction, TransferAmountReasonModal(self))
+
+        fill_btn.callback = _on_fill
+        self.add_item(fill_btn)
+
+        # 送出
+        submit_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="送出轉帳",
+            style=discord.ButtonStyle.primary,
+            disabled=not self._can_submit(),
+            row=2,
+        )
+
+        async def _on_submit(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+            if not self._can_submit():
+                await send_message_compat(interaction, content="請先完成所有欄位。", ephemeral=True)
+                return
+            try:
+                from src.db import pool as db_pool
+
+                currency_service = CurrencyConfigService(db_pool.get_pool())
+                currency_config = await currency_service.get_currency_config(guild_id=self.guild_id)
+                formatted_amount = _format_currency_display(currency_config, int(self.amount or 0))
+            except Exception:
+                formatted_amount = f"{int(self.amount or 0):,} 點"
+
+            try:
+                # Use same transfer method but target is company account ID
+                await self.service.transfer_department_to_user(
+                    guild_id=self.guild_id,
+                    user_id=self.author_id,
+                    user_roles=self.user_roles,
+                    from_department=str(self.source_department),
+                    recipient_id=int(self.company_account_id or 0),
+                    amount=int(self.amount or 0),
+                    reason=str(self.reason or ""),
+                )
+                await send_message_compat(
+                    interaction,
+                    content=(
+                        f"✅ 轉帳成功！從 {self.source_department} 轉 {formatted_amount} 給 🏢 {self.company_name}。"
+                    ),
+                    ephemeral=True,
+                )
+                self.refresh_controls()
+                await self.apply_ui_update(interaction)
+            except (PermissionDeniedError, InsufficientFundsError, ValueError) as e:
+                await send_message_compat(
+                    interaction, content=ErrorMessageTemplates.from_error(e), ephemeral=True
+                )
+            except Exception as e:
+                LOGGER.exception("dept_to_company.transfer_panel.submit_failed", error=str(e))
+                await send_message_compat(
+                    interaction,
+                    content=ErrorMessageTemplates.system_error("轉帳失敗"),
+                    ephemeral=True,
+                )
+
+        submit_btn.callback = _on_submit
+        self.add_item(submit_btn)
+
+        # 取消/關閉
+        cancel_btn: discord.ui.Button[Any] = discord.ui.Button(
+            label="關閉",
+            style=discord.ButtonStyle.secondary,
+            row=2,
+        )
+
+        async def _on_cancel(interaction: discord.Interaction) -> None:
+            if interaction.user.id != self.author_id:
+                await send_message_compat(
+                    interaction, content="僅限面板開啟者操作。", ephemeral=True
+                )
+                return
+            try:
+                if self.message is not None:
+                    await self.message.edit(view=None)
+                else:
+                    await edit_message_compat(interaction, view=None)
+            except Exception:
+                self.stop()
+
+        cancel_btn.callback = _on_cancel
+        self.add_item(cancel_btn)
+
+    async def apply_ui_update(self, interaction: discord.Interaction) -> None:
+        self.refresh_controls()
+        embed = self.build_embed()
+        try:
+            await edit_message_compat(interaction, embed=embed, view=self)
+        except Exception:
+            if self.message is not None:
+                try:
+                    await self.message.edit(embed=embed, view=self)
+                except Exception:
+                    pass
 
 
 class DepartmentUserTransferPanelView(discord.ui.View):
