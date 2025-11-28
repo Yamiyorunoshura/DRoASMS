@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import inspect
 from datetime import datetime, timezone
-from types import TracebackType
 from typing import Any, Sequence, cast
 from unittest.mock import AsyncMock
 from uuid import UUID
@@ -40,6 +39,7 @@ from src.db.gateway.state_council_governance import (
     WelfareDisbursement,
 )
 from src.db.pool import get_pool
+from src.infra.db.connection_context import AcquireConnectionContext
 from src.infra.events.state_council_events import StateCouncilEvent
 from src.infra.events.state_council_events import publish as publish_state_council_event
 from src.infra.result import Err, Ok, Result
@@ -47,66 +47,8 @@ from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
 
-
-class _AcquireConnectionContext:
-    """Async context manager wrapper for pool.acquire() results."""
-
-    def __init__(self, pool_obj: Any, acq_obj: Any) -> None:
-        self._pool = pool_obj
-        self._acq = acq_obj
-        self._conn: Any | None = None
-
-    async def __aenter__(self) -> Any:
-        aenter = getattr(self._acq, "__aenter__", None)
-        if aenter is not None:
-            try:
-                LOGGER.debug(
-                    "acquire_cm_aenter",
-                    aenter_type=type(aenter).__name__,
-                    has_rv=hasattr(aenter, "return_value"),
-                )
-            except Exception:
-                pass
-            rv = getattr(aenter, "return_value", None)
-            if rv is not None:
-                try:
-                    LOGGER.debug(
-                        "acquire_cm_aenter_rv",
-                        rv_type=type(rv).__name__,
-                    )
-                except Exception:
-                    pass
-                self._conn = rv
-                return rv
-            self._conn = await aenter()
-            return self._conn
-        conn = self._acq
-        if inspect.isawaitable(conn):
-            conn = await conn
-        self._conn = conn
-        return conn
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        aexit = getattr(self._acq, "__aexit__", None)
-        if aexit is not None:
-            await aexit(exc_type, exc, tb)
-            return None
-        if self._conn is not None:
-            release = getattr(self._pool, "release", None)
-            if release is not None:
-                try:
-                    if inspect.iscoroutinefunction(release):
-                        await release(self._conn)
-                    else:
-                        release(self._conn)
-                except Exception:
-                    LOGGER.debug("acquire_cm_release_failed", exc_info=True)
-        return None
+# Use shared AcquireConnectionContext from infra, with local alias for compatibility
+_AcquireConnectionContext = AcquireConnectionContext
 
 
 class StateCouncilNotConfiguredError(RuntimeError):
@@ -548,23 +490,12 @@ class StateCouncilService:
         時才使用此導出法，因此不會變更既有部署的鍵值。
         """
         base = 9_500_000_000_000_000
-        # Use department registry if available, fallback to hardcoded mapping
-        try:
-            from src.bot.services.department_registry import get_registry
+        # Use DepartmentRegistry - no fallback to hardcoded mapping
+        from src.bot.services.department_registry import get_registry
 
-            registry = get_registry()
-            dept = registry.get_by_name(department)
-            code = dept.code if dept else 0
-        except Exception:
-            # Fallback to hardcoded mapping for backward compatibility
-            codes = {
-                "內政部": 1,
-                "財政部": 2,
-                "國土安全部": 3,
-                "中央銀行": 4,
-                "法務部": 5,
-            }
-            code = codes.get(department, 0)
+        registry = get_registry()
+        dept = registry.get_by_name(department)
+        code = dept.code if dept else 0
         # 重要：避免乘以 10 造成 int64 溢位
         return int(base + int(guild_id) + code)
 

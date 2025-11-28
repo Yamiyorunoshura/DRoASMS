@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from src.bot.services.state_council_service_result import StateCouncilServiceResult
 from src.bot.services.supreme_assembly_service_result import SupremeAssemblyServiceResult
 from src.bot.services.transfer_service import TransferService
-from src.db.gateway.state_council_governance import StateCouncilGovernanceGateway
 from src.db.gateway.supreme_assembly_governance import (
     SupremeAssemblyGovernanceGateway,
 )
@@ -25,17 +23,8 @@ class ResultContainer:
 
         Note: CouncilServiceResult is an alias for CouncilService which is already
         registered in bootstrap_container(), so we do NOT register it here.
+        StateCouncilService is now unified and registered in bootstrap_container().
         """
-        # StateCouncilServiceResult - depends on StateCouncilGovernanceGateway and other services
-        self._base.register(
-            StateCouncilServiceResult,
-            factory=lambda: StateCouncilServiceResult(
-                gateway=self._base.resolve(StateCouncilGovernanceGateway),
-                transfer_service=self._base.resolve(TransferService),
-            ),
-            lifecycle=Lifecycle.SINGLETON,
-        )
-
         # SupremeAssemblyServiceResult - depends on SupremeAssemblyGovernanceGateway
         # and TransferService
         self._base.register(

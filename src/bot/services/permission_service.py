@@ -8,14 +8,12 @@ from typing import TYPE_CHECKING, Any, Awaitable, Sequence, TypeVar, cast
 
 import structlog
 
-from src.bot.services.state_council_service_result import StateCouncilServiceResult
 from src.infra.result import Err, Error, Ok, Result
 from src.infra.result_compat import mark_migrated
 
 if TYPE_CHECKING:
     from src.bot.services.council_service import CouncilService, CouncilServiceResult
     from src.bot.services.state_council_service import StateCouncilService
-    from src.bot.services.state_council_service_result import StateCouncilServiceResult
     from src.bot.services.supreme_assembly_service import SupremeAssemblyService
     from src.bot.services.supreme_assembly_service_result import SupremeAssemblyServiceResult
     from src.db.gateway.council_governance import CouncilConfig
@@ -147,7 +145,7 @@ class StateCouncilPermissionChecker(PermissionChecker):
 
     def __init__(
         self,
-        state_council_service: "StateCouncilServiceResult | StateCouncilService",
+        state_council_service: "StateCouncilService",
     ) -> None:
         self._state_council = state_council_service
 
@@ -181,21 +179,12 @@ class StateCouncilPermissionChecker(PermissionChecker):
     ) -> Result[bool, Error]:
         if department is None:
             return Ok(False)
-        state_service = self._state_council
-        awaitable: Awaitable[object]
-        if isinstance(state_service, StateCouncilServiceResult):
-            awaitable = state_service.check_department_permission(
-                guild_id=guild_id,
-                user_id=user_id,
-                department_id=department,
-            )
-        else:
-            awaitable = state_service.check_department_permission(
-                guild_id=guild_id,
-                user_id=user_id,
-                department=department,
-                user_roles=user_roles,
-            )
+        awaitable = self._state_council.check_department_permission(
+            guild_id=guild_id,
+            user_id=user_id,
+            department=department,
+            user_roles=user_roles,
+        )
         dept_result: Result[bool, Error] = await _await_result(
             awaitable,
             failure_message="國務院部門權限檢查失敗",
@@ -322,7 +311,7 @@ class HomelandSecurityPermissionChecker(PermissionChecker):
 
     def __init__(
         self,
-        state_council_service: "StateCouncilServiceResult | StateCouncilService",
+        state_council_service: "StateCouncilService",
     ) -> None:
         self._state_council = state_council_service
         self._delegate = StateCouncilPermissionChecker(state_council_service)
@@ -455,7 +444,7 @@ class PermissionService:
         self,
         *,
         council_service: "CouncilServiceResult | CouncilService",
-        state_council_service: "StateCouncilServiceResult | StateCouncilService",
+        state_council_service: "StateCouncilService",
         supreme_assembly_service: "SupremeAssemblyService | SupremeAssemblyServiceResult",
     ) -> None:
         council_checker = CouncilPermissionChecker(council_service)

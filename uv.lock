@@ -374,7 +374,7 @@ source = { git = "https://github.com/Seniatical/dpy-paginator/#fbba1f3ca5141b827
 
 [[package]]
 name = "droasms-bot"
-version = "3.3.0"
+version = "3.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },

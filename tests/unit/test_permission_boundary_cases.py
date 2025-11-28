@@ -22,7 +22,7 @@ from src.bot.services.permission_service import (
     StateCouncilPermissionChecker,
     SupremePeoplesAssemblyPermissionChecker,
 )
-from src.bot.services.state_council_service_result import StateCouncilServiceResult
+from src.bot.services.state_council_service import StateCouncilService
 from src.bot.services.supreme_assembly_service import (
     GovernanceNotConfiguredError,
     SupremeAssemblyService,
@@ -49,8 +49,8 @@ class TestPermissionBoundaryCases:
 
     @pytest.fixture
     def mock_state_council_service(self) -> MagicMock:
-        """創建模擬的 StateCouncilService（Result 版）。"""
-        service = MagicMock(spec=StateCouncilServiceResult)
+        """創建模擬的 StateCouncilService。"""
+        service = MagicMock(spec=StateCouncilService)
         service.check_leader_permission = AsyncMock()
         service.check_department_permission = AsyncMock()
         return service
@@ -75,7 +75,10 @@ class TestPermissionBoundaryCases:
         mock_council_service.get_council_role_ids.return_value = Ok([456, 789])
 
         result = await checker.check_permission(
-            guild_id=12345, user_id=67890, user_roles=[], operation="panel_access"  # 空身分組列表
+            guild_id=12345,
+            user_id=67890,
+            user_roles=[],
+            operation="panel_access",  # 空身分組列表
         )
 
         assert isinstance(result, Ok)
@@ -97,7 +100,10 @@ class TestPermissionBoundaryCases:
         mock_supreme_assembly_service.get_config.return_value = mock_config
 
         result = await checker.check_permission(
-            guild_id=12345, user_id=67890, user_roles=[], operation="panel_access"  # 空身分組列表
+            guild_id=12345,
+            user_id=67890,
+            user_roles=[],
+            operation="panel_access",  # 空身分組列表
         )
 
         assert isinstance(result, Ok)

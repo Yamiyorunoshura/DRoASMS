@@ -480,22 +480,21 @@ class TestStateCouncilCommandLogic:
         mock_service = MagicMock(spec=StateCouncilService)
         mock_service.update_citizen_role_config = AsyncMock()
 
-        # Create command with patches
-        with patch("src.bot.commands.state_council.StateCouncilService", return_value=mock_service):
-            with patch("src.bot.commands.state_council._install_background_scheduler"):
-                group = build_state_council_group(MagicMock())
+        # Create command with mock service passed directly
+        with patch("src.bot.commands.state_council._install_background_scheduler"):
+            group = build_state_council_group(mock_service)
 
-                # Get config_citizen_role command
-                config_cmd = None
-                for child in group.commands:
-                    if child.name == "config_citizen_role":
-                        config_cmd = child
-                        break
+            # Get config_citizen_role command
+            config_cmd = None
+            for child in group.commands:
+                if child.name == "config_citizen_role":
+                    config_cmd = child
+                    break
 
-                assert config_cmd is not None
+            assert config_cmd is not None
 
-                # Execute command
-                await config_cmd.callback(fake_interaction, role=fake_role)
+            # Execute command
+            await config_cmd.callback(fake_interaction, role=fake_role)
 
         mock_service.update_citizen_role_config.assert_called_once_with(
             guild_id=fake_interaction.guild_id, citizen_role_id=fake_role.id
@@ -520,22 +519,21 @@ class TestStateCouncilCommandLogic:
             side_effect=StateCouncilNotConfiguredError("Not configured")
         )
 
-        # Create command with patches
-        with patch("src.bot.commands.state_council.StateCouncilService", return_value=mock_service):
-            with patch("src.bot.commands.state_council._install_background_scheduler"):
-                group = build_state_council_group(MagicMock())
+        # Create command with mock service passed directly
+        with patch("src.bot.commands.state_council._install_background_scheduler"):
+            group = build_state_council_group(mock_service)
 
-                # Get config_citizen_role command
-                config_cmd = None
-                for child in group.commands:
-                    if child.name == "config_citizen_role":
-                        config_cmd = child
-                        break
+            # Get config_citizen_role command
+            config_cmd = None
+            for child in group.commands:
+                if child.name == "config_citizen_role":
+                    config_cmd = child
+                    break
 
-                assert config_cmd is not None
+            assert config_cmd is not None
 
-                # Execute command
-                await config_cmd.callback(fake_interaction, role=fake_role)
+            # Execute command
+            await config_cmd.callback(fake_interaction, role=fake_role)
 
         fake_interaction.response.send_message.assert_called_with(
             "尚未完成國務院設定，請先執行 /state_council config_leader。", ephemeral=True
@@ -557,22 +555,21 @@ class TestStateCouncilCommandLogic:
         mock_service = MagicMock(spec=StateCouncilService)
         mock_service.update_suspect_role_config = AsyncMock()
 
-        # Create command with patches
-        with patch("src.bot.commands.state_council.StateCouncilService", return_value=mock_service):
-            with patch("src.bot.commands.state_council._install_background_scheduler"):
-                group = build_state_council_group(MagicMock())
+        # Create command with mock service passed directly
+        with patch("src.bot.commands.state_council._install_background_scheduler"):
+            group = build_state_council_group(mock_service)
 
-                # Get config_suspect_role command
-                config_cmd = None
-                for child in group.commands:
-                    if child.name == "config_suspect_role":
-                        config_cmd = child
-                        break
+            # Get config_suspect_role command
+            config_cmd = None
+            for child in group.commands:
+                if child.name == "config_suspect_role":
+                    config_cmd = child
+                    break
 
-                assert config_cmd is not None
+            assert config_cmd is not None
 
-                # Execute command
-                await config_cmd.callback(fake_interaction, role=fake_role)
+            # Execute command
+            await config_cmd.callback(fake_interaction, role=fake_role)
 
         mock_service.update_suspect_role_config.assert_called_once_with(
             guild_id=fake_interaction.guild_id, suspect_role_id=fake_role.id

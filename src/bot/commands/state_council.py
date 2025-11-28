@@ -25,13 +25,11 @@ from src.bot.services.state_council_service import (
     InsufficientFundsError,
     MonthlyIssuanceLimitExceededError,
     PermissionDeniedError,
-    StateCouncilConfig,
     StateCouncilNotConfiguredError,
     StateCouncilService,
     SuspectProfile,
     SuspectReleaseResult,
 )
-from src.bot.services.state_council_service_result import StateCouncilServiceResult
 from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 from src.bot.ui.base import PersistentPanelView
 from src.bot.utils.error_templates import ErrorMessageTemplates
@@ -46,7 +44,6 @@ from src.infra.events.state_council_events import (
 from src.infra.result import (
     Err,
     Error,
-    Ok,
     Result,
 )
 
@@ -156,14 +153,12 @@ def register(
     if container is None:
         # Fallback to old behavior for backward compatibility during migration
         service = StateCouncilService()
-        service_result: StateCouncilServiceResult | None = None
         currency_service = None
         try:
             council_result = CouncilServiceResult()
-            state_council_result = StateCouncilServiceResult()
             permission_service = PermissionService(
                 council_service=council_result,
-                state_council_service=state_council_result,
+                state_council_service=service,
                 supreme_assembly_service=SupremeAssemblyService(),
             )
         except RuntimeError as exc:
@@ -175,38 +170,26 @@ def register(
             permission_service = None
     else:
         service = container.resolve(StateCouncilService)
-        service_result = container.resolve(StateCouncilServiceResult)
         currency_service = container.resolve(CurrencyConfigService)
         permission_service = container.resolve(PermissionService)
 
     tree.add_command(
-        build_state_council_group(
-            service, service_result, currency_service, permission_service=permission_service
-        )
+        build_state_council_group(service, currency_service, permission_service=permission_service)
     )
-    # 背景排程目前不直接依賴 service 實作；在無 DI 容器時以 StateCouncilService 實例作為佔位即可。
-    scheduler_service: StateCouncilServiceResult = (
-        service_result if service_result is not None else cast(StateCouncilServiceResult, service)
-    )
-    _install_background_scheduler(tree.client, scheduler_service)
+    _install_background_scheduler(tree.client, service)
     LOGGER.debug("bot.command.state_council.registered")
 
 
 def build_state_council_group(
     service: StateCouncilService,
-    service_result: StateCouncilServiceResult | None = None,
     currency_service: CurrencyConfigService | None = None,
     permission_service: PermissionService | None = None,
 ) -> app_commands.Group:
     """建立 /state_council 指令群組。
 
-    - service_result 為 None 時，視為使用舊版 StateCouncilService（直接回傳或丟例外），
-      以保持對既有測試與程式的相容性。
-    - 提供 StateCouncilServiceResult 時，使用 Result 型服務以符合 openspec 規格。
+    使用統一的 StateCouncilService 實作。
     """
-    legacy_mode = service_result is None
-    if service_result is None:
-        service_result = cast(StateCouncilServiceResult, service)
+    # legacy_mode removed - now uses unified StateCouncilService
 
     state_council = app_commands.Group(name="state_council", description="國務院治理指令")
 
@@ -248,70 +231,21 @@ def build_state_council_group(
         leader_id = leader.id if leader else None
         leader_role_id = leader_role.id if leader_role else None
 
-        # 依模式選擇使用舊版 service 或 Result 型 service_result
-        if legacy_mode:
-            # 舊版 StateCouncilService：直接回傳 StateCouncilConfig 或丟出例外
-            try:
-                cfg = await service.set_config(
-                    guild_id=interaction.guild_id,
-                    leader_id=leader_id,
-                    leader_role_id=leader_role_id,
-                )
-            except Exception as exc:
-                LOGGER.error("state_council.config_leader.error", error=str(exc))
-                await send_message_compat(
-                    interaction,
-                    content="設定失敗，請稍後再試",
-                    ephemeral=True,
-                )
-                return
-        else:
-            # Result 型 StateCouncilServiceResult：需要傳入部門帳戶 ID
-            internal_affairs_account_id: int = (
-                StateCouncilServiceResult.derive_department_account_id(
-                    interaction.guild_id, "內政部"
-                )
+        # 使用統一的 StateCouncilService
+        try:
+            cfg = await service.set_config(
+                guild_id=interaction.guild_id,
+                leader_id=leader_id,
+                leader_role_id=leader_role_id,
             )
-            treasury_account_id: int = StateCouncilServiceResult.derive_department_account_id(
-                interaction.guild_id, "財政部"
+        except Exception as exc:
+            LOGGER.error("state_council.config_leader.error", error=str(exc))
+            await send_message_compat(
+                interaction,
+                content="設定失敗，請稍後再試",
+                ephemeral=True,
             )
-            welfare_account_id: int = StateCouncilServiceResult.derive_department_account_id(
-                interaction.guild_id, "福利部"
-            )
-
-            try:
-                result: Any = await service_result.set_config(
-                    guild_id=interaction.guild_id,
-                    leader_id=leader_id,
-                    leader_role_id=leader_role_id,
-                    internal_affairs_account_id=internal_affairs_account_id,
-                    treasury_account_id=treasury_account_id,
-                    welfare_account_id=welfare_account_id,
-                )
-            except Exception as exc:
-                LOGGER.error("state_council.config_leader.error", error=str(exc))
-                await send_message_compat(
-                    interaction,
-                    content="設定失敗，請稍後再試",
-                    ephemeral=True,
-                )
-                return
-
-            if isinstance(result, Ok):
-                ok_result = cast(Ok[StateCouncilConfig, Any], result)
-                cfg = ok_result.value
-            elif isinstance(result, Err):
-                err_result = cast(Err[StateCouncilConfig, Exception], result)
-                error = err_result.error
-                LOGGER.error("state_council.config_leader.error", error=str(error))
-                await send_message_compat(
-                    interaction,
-                    content="設定失敗，請稍後再試",
-                    ephemeral=True,
-                )
-                return
-            else:
-                cfg = cast(StateCouncilConfig, result)
+            return
 
         # Build response message
         response_parts = ["已設定國務院領袖："]
@@ -353,10 +287,8 @@ def build_state_council_group(
                 interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
             )
             return
-        # 使用傳統服務更新設定（以例外作為錯誤訊號）
-        # - 新版註冊（有 service_result）時，使用 DI 注入的 service；
-        # - legacy 模式下，建立新的 StateCouncilService 實例（供測試 patch）。
-        svc: StateCouncilService = service if not legacy_mode else StateCouncilService()
+        # 使用統一的 StateCouncilService
+        svc: StateCouncilService = service
         try:
             await svc.update_citizen_role_config(
                 guild_id=interaction.guild_id,
@@ -409,8 +341,8 @@ def build_state_council_group(
                 interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
             )
             return
-        # 使用傳統服務更新設定（以例外作為錯誤訊號）
-        svc: StateCouncilService = service if not legacy_mode else StateCouncilService()
+        # 使用統一的 StateCouncilService
+        svc: StateCouncilService = service
         try:
             await svc.update_suspect_role_config(
                 guild_id=interaction.guild_id,
@@ -452,9 +384,9 @@ def build_state_council_group(
             )
             return
 
-        # Check if state council is configured using Result pattern（兼容舊版直接丟例外）
+        # Check if state council is configured
         try:
-            config_result: Any = await service_result.get_config(guild_id=interaction.guild_id)
+            cfg = await service.get_config(guild_id=interaction.guild_id)
         except StateCouncilNotConfiguredError:
             await send_message_compat(
                 interaction,
@@ -470,21 +402,6 @@ def build_state_council_group(
                 ephemeral=True,
             )
             return
-
-        if isinstance(config_result, Err):
-            err_result = cast(Err[StateCouncilConfig, Exception], config_result)
-            error = err_result.error
-            # 不論詳細錯誤類型，一律視為未完成設定以避免洩漏細節
-            if not isinstance(error, StateCouncilNotConfiguredError):
-                LOGGER.error("state_council.panel.config_error", error=str(error))
-            await send_message_compat(
-                interaction,
-                content="尚未完成國務院設定，請先執行 /state_council config_leader。",
-                ephemeral=True,
-            )
-            return
-
-        cfg = cast(StateCouncilConfig, getattr(config_result, "value", config_result))
 
         # 避免首次啟動或同步時處理較久導致 Interaction 逾時（Unknown interaction）
         try:
@@ -503,24 +420,14 @@ def build_state_council_group(
 
         user_roles = [role.id for role in getattr(interaction.user, "roles", [])]
 
-        # Check leader permission（Result 模式 + 舊版直接回傳模式兼容）
+        # Check leader permission using unified StateCouncilService
         is_leader: bool = False
         try:
-            leader_raw: Any = await service_result.check_leader_permission(
+            is_leader = await service.check_leader_permission(
                 guild_id=interaction.guild_id, user_id=interaction.user.id, user_roles=user_roles
             )
         except Exception as exc:
             LOGGER.error("state_council.panel.leader_check_failed", error=str(exc))
-        else:
-            if isinstance(leader_raw, Ok):
-                ok_leader = cast(Ok[bool, Any], leader_raw)
-                is_leader = bool(ok_leader.value)
-            elif isinstance(leader_raw, Err):
-                err_leader = cast(Err[bool, Exception], leader_raw)
-                LOGGER.error("state_council.panel.leader_check_failed", error=str(err_leader.error))
-            else:
-                # 舊版服務：直接回傳 bool
-                is_leader = bool(leader_raw)
 
         has_dept_permission = False
         departments = ["內政部", "財政部", "國土安全部", "中央銀行"]
@@ -547,12 +454,13 @@ def build_state_council_group(
                     break
         elif not is_leader:
             for dept in departments:
-                # Use Result pattern for department permission check（兼容舊版直接回傳模式）
+                # Check department permission using unified StateCouncilService
                 try:
-                    dept_raw: Any = await service_result.check_department_permission(
+                    allowed = await service.check_department_permission(
                         guild_id=interaction.guild_id,
                         user_id=interaction.user.id,
-                        department_id=dept,
+                        department=dept,
+                        user_roles=user_roles,
                     )
                 except Exception as exc:
                     LOGGER.error(
@@ -560,21 +468,7 @@ def build_state_council_group(
                         error=str(exc),
                         extra={"department": dept},
                     )
-                    continue
-
-                if isinstance(dept_raw, Ok):
-                    ok_dept = cast(Ok[bool, Any], dept_raw)
-                    allowed = bool(ok_dept.value)
-                elif isinstance(dept_raw, Err):
-                    err_dept = cast(Err[bool, Exception], dept_raw)
-                    LOGGER.error(
-                        "state_council.panel.department_check_failed",
-                        error=str(err_dept.error),
-                        extra={"department": dept},
-                    )
                     allowed = False
-                else:
-                    allowed = bool(dept_raw)
 
                 if allowed:
                     has_dept_permission = True
@@ -7801,9 +7695,7 @@ class BusinessLicenseListView(discord.ui.View):
 # --- Background Scheduler Integration ---
 
 
-def _install_background_scheduler(
-    client: discord.Client, service: StateCouncilServiceResult
-) -> None:
+def _install_background_scheduler(client: discord.Client, service: StateCouncilService) -> None:
     """Install background scheduler for State Council operations."""
     try:
         import asyncio

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.bot.services.permission_service import HomelandSecurityPermissionChecker
-from src.bot.services.state_council_service_result import StateCouncilServiceResult
+from src.bot.services.state_council_service import StateCouncilService
 from src.infra.result import DatabaseError, Err, Ok
 
 
@@ -32,9 +32,9 @@ async def test_homeland_security_permission_with_department_role(
     assert permission.permission_level == "department_head"
     assert permission.reason == "具備國土安全部權限"
 
-    # 驗證調用（StateCouncilServiceResult 介面）
+    # 驗證調用（StateCouncilService 介面）
     mock_state_council_service.check_department_permission.assert_called_once_with(
-        guild_id=12345, user_id=67890, department_id="國土安全部"
+        guild_id=12345, user_id=67890, department="國土安全部", user_roles=[11111, 22222]
     )
 
 
@@ -148,7 +148,7 @@ async def test_homeland_security_permission_error_handling(
 @pytest.fixture
 def mock_state_council_service() -> MagicMock:
     """模擬國務院 Result 版服務"""
-    service = MagicMock(spec=StateCouncilServiceResult)
+    service = MagicMock(spec=StateCouncilService)
     service.check_leader_permission = AsyncMock()
     service.check_department_permission = AsyncMock()
     return service

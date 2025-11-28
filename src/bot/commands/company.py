@@ -767,9 +767,9 @@ class CompanyTransferModal(discord.ui.Modal):
         actual_target_id = self.target_id
         if self.target_type == "department" and self.department:
             # Import here to avoid circular dependency
-            from src.bot.services.state_council_service_result import StateCouncilServiceResult
+            from src.bot.services.state_council_service import StateCouncilService
 
-            actual_target_id = StateCouncilServiceResult.derive_department_account_id(
+            actual_target_id = StateCouncilService.derive_department_account_id(
                 self.panel.guild_id, self._get_department_name(self.department)
             )
 

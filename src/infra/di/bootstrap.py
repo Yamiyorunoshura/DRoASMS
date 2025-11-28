@@ -14,7 +14,6 @@ from src.bot.services.council_service import CouncilService, CouncilServiceResul
 from src.bot.services.currency_config_service import CurrencyConfigService
 from src.bot.services.permission_service import PermissionService
 from src.bot.services.state_council_service import StateCouncilService
-from src.bot.services.state_council_service_result import StateCouncilServiceResult
 from src.bot.services.supreme_assembly_service import SupremeAssemblyService
 from src.bot.services.supreme_assembly_service_result import SupremeAssemblyServiceResult
 from src.bot.services.transfer_service import TransferService
@@ -159,14 +158,14 @@ def bootstrap_result_container() -> tuple[DependencyContainer, ResultContainer]:
     # Register Result-based services
     result_container.register_result_services()
 
-    # PermissionService depends on Result 版 service；需在 ResultContainer 註冊後再註冊。
+    # PermissionService uses unified StateCouncilService
     def create_result_permission_service() -> PermissionService:
         council_result = base_container.resolve(CouncilServiceResult)
-        state_council_result = base_container.resolve(StateCouncilServiceResult)
+        state_council_service = base_container.resolve(StateCouncilService)
         supreme_assembly_service = base_container.resolve(SupremeAssemblyServiceResult)
         return PermissionService(
             council_service=council_result,
-            state_council_service=state_council_result,
+            state_council_service=state_council_service,
             supreme_assembly_service=supreme_assembly_service,
         )
 
