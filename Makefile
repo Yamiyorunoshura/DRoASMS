@@ -17,16 +17,19 @@ help: ## 顯示此幫助訊息
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 start-dev: ## 啟動機器人（開發環境，包含完整開發工具和 pgadmin）
-	$(DOCKER_COMPOSE) --profile dev up --build --force-recreate
+	$(DOCKER_COMPOSE) --profile dev up -d --build --force-recreate
 
 start-prod: ## 啟動機器人（生產環境，僅啟動 bot 和 postgres，後台執行）
-	$(DOCKER_COMPOSE) --profile prod up -d --build --force-recreate
+	$(DOCKER_COMPOSE) --profile prod up -d
 
 restart: ## 重啟機器人
 	docker compose down && make start-prod
 
 restart-in-dev-mode: ## 重啟機器人（開發環境）
 	docker compose down && make start-dev
+
+update: ## 更新專案
+	docker compose down && $(DOCKER_COMPOSE) --profile prod up -d --build --force-recreate
 
 install: ## 安裝專案依賴
 	uv sync --group dev

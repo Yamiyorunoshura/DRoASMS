@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.1] - 2025-11-28
+
+### Changed
+
+- **Makefile 改進**：
+  - `start-dev` 新增 `-d` 旗標以背景執行開發環境
+  - `start-prod` 簡化指令，移除不必要的 `--build --force-recreate` 旗標
+  - 新增 `update` 目標用於完整重建和更新專案
+
+[Compare changes](https://github.com/Yamiyorunoshura/DRoASMS/compare/v3.3.0...v3.3.1)
+
 ## [3.3.0] - 2025-11-28
 
 ### Added
