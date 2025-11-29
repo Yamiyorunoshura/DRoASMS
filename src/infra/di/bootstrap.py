@@ -16,7 +16,6 @@ from src.bot.services.department_registry import DepartmentRegistry
 from src.bot.services.permission_service import PermissionService
 from src.bot.services.state_council_service import StateCouncilService
 from src.bot.services.supreme_assembly_service import SupremeAssemblyService
-from src.bot.services.supreme_assembly_service_result import SupremeAssemblyServiceResult
 from src.bot.services.transfer_service import TransferService
 from src.db import pool as db_pool
 from src.db.gateway.business_license import BusinessLicenseGateway
@@ -186,7 +185,7 @@ def bootstrap_result_container() -> tuple[DependencyContainer, ResultContainer]:
     def create_result_permission_service() -> PermissionService:
         council_result = base_container.resolve(CouncilServiceResult)
         state_council_service = base_container.resolve(StateCouncilService)
-        supreme_assembly_service = base_container.resolve(SupremeAssemblyServiceResult)
+        supreme_assembly_service = base_container.resolve(SupremeAssemblyService)
         return PermissionService(
             council_service=council_result,
             state_council_service=state_council_service,

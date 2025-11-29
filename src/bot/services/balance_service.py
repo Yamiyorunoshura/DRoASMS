@@ -77,14 +77,7 @@ class BalanceService:
                     member_id=target_id,
                 )
                 if result.is_err():
-                    error = result.unwrap_err()
-                    if isinstance(error, DatabaseError):
-                        raise error
-                    raise DatabaseError(
-                        message=getattr(error, "message", str(error)),
-                        context={"original_exception": type(error).__name__},
-                        cause=error,
-                    )
+                    raise result.unwrap_err()
                 record = result.unwrap()
                 return self._to_snapshot(record)
 
@@ -117,17 +110,7 @@ class BalanceService:
                 member_id=target_id,
             )
             if result.is_err():
-                error = result.unwrap_err()
-                # Convert Error to DatabaseError if needed
-                if isinstance(error, DatabaseError):
-                    return Err(error)
-                return Err(
-                    DatabaseError(
-                        message=getattr(error, "message", str(error)),
-                        context={"original_exception": type(error).__name__},
-                        cause=error,
-                    )
-                )
+                return Err(result.unwrap_err())
             record = result.unwrap()
             return Ok(self._to_snapshot(record))
 
@@ -173,14 +156,7 @@ class BalanceService:
                 # 同時支援 Result[Sequence[HistoryRecord], Error] 與舊版直接回傳 list[HistoryRecord]
                 if hasattr(result, "is_err") and callable(cast(Any, result).is_err):
                     if result.is_err():
-                        error = result.unwrap_err()
-                        if isinstance(error, DatabaseError):
-                            raise error
-                        raise DatabaseError(
-                            message=getattr(error, "message", str(error)),
-                            context={"original_error": type(error).__name__},
-                            cause=error,
-                        )
+                        raise result.unwrap_err()
                     records = result.unwrap()
                 else:
                     records = cast(list[HistoryRecord], result)
@@ -236,16 +212,7 @@ class BalanceService:
             # 同時支援 Result[Sequence[HistoryRecord], Error] 與舊版直接回傳 list[HistoryRecord]
             if hasattr(result, "is_err") and callable(cast(Any, result).is_err):
                 if result.is_err():
-                    error = result.unwrap_err()
-                    if isinstance(error, DatabaseError):
-                        return Err(error)
-                    return Err(
-                        DatabaseError(
-                            message=getattr(error, "message", str(error)),
-                            context={"original_error": type(error).__name__},
-                            cause=error,
-                        )
-                    )
+                    return Err(result.unwrap_err())
                 records = result.unwrap()
             else:
                 records = cast(list[HistoryRecord], result)

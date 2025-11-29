@@ -14,7 +14,7 @@ from src.bot.interaction_compat import (
     send_modal_compat,
 )
 from src.bot.services.balance_service import BalanceService
-from src.bot.services.council_service import CouncilServiceResult
+from src.bot.services.council_service import CouncilService, CouncilServiceResult
 from src.bot.services.department_registry import get_registry
 from src.bot.services.permission_service import PermissionService
 from src.bot.services.state_council_service import StateCouncilService
@@ -24,7 +24,6 @@ from src.bot.services.supreme_assembly_service import (
     SupremeAssemblyService,
     VoteAlreadyExistsError,
 )
-from src.bot.services.supreme_assembly_service_result import SupremeAssemblyServiceResult
 from src.bot.services.transfer_service import TransferService, TransferValidationError
 from src.bot.ui.base import PersistentPanelView
 from src.bot.utils.error_templates import ErrorMessageTemplates
@@ -36,7 +35,7 @@ from src.infra.events.supreme_assembly_events import (
 from src.infra.events.supreme_assembly_events import (
     subscribe as subscribe_supreme_assembly_events,
 )
-from src.infra.result import Err, Error, Result
+from src.infra.result import Err, Error, Ok, Result
 from src.infra.types.db import ConnectionProtocol, PoolProtocol
 
 LOGGER = structlog.get_logger(__name__)
@@ -178,9 +177,7 @@ def register(
 ) -> None:
     """Register the /supreme_assembly slash command group with the provided command tree."""
     if container is None:
-        # Fallback to old behavior for backward compatibility during migration
         service = SupremeAssemblyService()
-        service_result = SupremeAssemblyServiceResult(legacy_service=service)
         council_service = CouncilServiceResult()
         state_council_service = StateCouncilService()
         permission_service = PermissionService(
@@ -190,14 +187,12 @@ def register(
         )
     else:
         service = container.resolve(SupremeAssemblyService)
-        service_result = container.resolve(SupremeAssemblyServiceResult)
         permission_service = container.resolve(PermissionService)
 
     tree.add_command(
         build_supreme_assembly_group(
             service,
             permission_service=permission_service,
-            service_result=service_result,
         )
     )
     # Install background scheduler if client is available
@@ -211,7 +206,6 @@ def build_supreme_assembly_group(
     service: SupremeAssemblyService,
     *,
     permission_service: PermissionService | None = None,
-    service_result: SupremeAssemblyServiceResult | None = None,
 ) -> app_commands.Group:
     """Build the /supreme_assembly command group."""
     supreme_assembly = app_commands.Group(
@@ -221,13 +215,6 @@ def build_supreme_assembly_group(
     async def _invoke_supreme(
         method: str, **kwargs: Any
     ) -> tuple[Any | None, Error | Exception | None]:
-        if service_result is not None:
-            raw = await getattr(service_result, method)(**kwargs)
-            result = cast(Result[Any, Error], raw)
-            if isinstance(result, Err):
-                return None, result.error
-            value = getattr(result, "value", result)
-            return cast(Any, value), None
         try:
             value = await getattr(service, method)(**kwargs)
             return value, None
@@ -426,7 +413,7 @@ def build_supreme_assembly_group(
             return
         # 檢查是否完成治理設定
         try:
-            cfg = await service.get_config(guild_id=interaction.guild_id)
+            cfg_res = await service.get_config(guild_id=interaction.guild_id)
         except GovernanceNotConfiguredError:
             await send_message_compat(
                 interaction,
@@ -438,6 +425,12 @@ def build_supreme_assembly_group(
             )
             return
 
+        if isinstance(cfg_res, Err):
+            error_message = ErrorMessageTemplates.from_error(cfg_res.error)
+            await send_message_compat(interaction, content=error_message, ephemeral=True)
+            return
+
+        cfg = cfg_res.value
         user_roles = [role.id for role in getattr(interaction.user, "roles", [])]
         if permission_service is not None:
             # 使用最高人民議會權限檢查器以支援人民代表身分組
@@ -754,10 +747,11 @@ class SupremeAssemblyPanelView(PersistentPanelView):
     async def refresh_options(self) -> None:
         """以最近進行中提案刷新選單（使用新的分頁系統）。"""
         try:
-            active = await self.service.list_active_proposals(guild_id=self.guild.id)
-            # 僅顯示本 guild 的進行中提案（依 created_at 降冪）
-            items = [p for p in active if p.status == "進行中"]
-            items.sort(key=lambda p: p.created_at, reverse=True)
+            active_res = await self.service.list_active_proposals(guild_id=self.guild.id)
+            items = []
+            if isinstance(active_res, Ok):
+                items = [p for p in active_res.value if p.status == "進行中"]
+                items.sort(key=lambda p: p.created_at, reverse=True)
 
             # 更新分頁器
             if hasattr(self, "_paginator") and self._paginator:
@@ -823,10 +817,17 @@ class SupremeAssemblyPanelView(PersistentPanelView):
             )
             return
         try:
-            cfg = await self.service.get_config(guild_id=self.guild.id)
+            cfg_res = await self.service.get_config(guild_id=self.guild.id)
         except GovernanceNotConfiguredError:
             await send_message_compat(interaction, content="尚未完成治理設定。", ephemeral=True)
             return
+
+        if isinstance(cfg_res, Err):
+            error_message = ErrorMessageTemplates.from_error(cfg_res.error)
+            await send_message_compat(interaction, content=error_message, ephemeral=True)
+            return
+
+        cfg = cfg_res.value
         role = self.guild.get_role(cfg.member_role_id)
         if role is None or len(role.members) == 0:
             await send_message_compat(
@@ -861,45 +862,48 @@ class SupremeAssemblyPanelView(PersistentPanelView):
         except Exception:
             await send_message_compat(interaction, content="選項格式錯誤。", ephemeral=True)
             return
-        proposal = await self.service.get_proposal(proposal_id=pid)
-        if proposal is None or proposal.guild_id != self.guild.id:
+        proposal_res = await self.service.get_proposal(proposal_id=pid)
+        proposal_obj = proposal_res.value if isinstance(proposal_res, Ok) else None
+        if proposal_obj is None or proposal_obj.guild_id != self.guild.id:
             await send_message_compat(
                 interaction, content="提案不存在或不屬於此伺服器。", ephemeral=True
             )
             return
 
         embed = discord.Embed(title="表決提案詳情", color=0x3498DB)
-        embed.add_field(name="提案編號", value=str(proposal.proposal_id), inline=False)
-        if proposal.title:
-            embed.add_field(name="標題", value=proposal.title, inline=False)
-        if proposal.description:
-            embed.add_field(name="內容", value=proposal.description, inline=False)
+        embed.add_field(name="提案編號", value=str(proposal_obj.proposal_id), inline=False)
+        if proposal_obj.title:
+            embed.add_field(name="標題", value=proposal_obj.title, inline=False)
+        if proposal_obj.description:
+            embed.add_field(name="內容", value=proposal_obj.description, inline=False)
         embed.add_field(
             name="狀態",
-            value=proposal.status,
+            value=proposal_obj.status,
             inline=False,
         )
         embed.add_field(
             name="截止時間",
-            value=proposal.deadline_at.strftime("%Y-%m-%d %H:%M UTC"),
+            value=proposal_obj.deadline_at.strftime("%Y-%m-%d %H:%M UTC"),
             inline=False,
         )
 
         # 獲取投票統計
         try:
-            totals = await self.service.get_vote_totals(proposal_id=proposal.proposal_id)
-            embed.add_field(
-                name="合計票數",
-                value=f"同意 {totals.approve} / 反對 {totals.reject} / 棄權 {totals.abstain}",
-                inline=False,
-            )
-            embed.add_field(name="門檻 T", value=str(totals.threshold_t), inline=False)
+            totals_res = await self.service.get_vote_totals(proposal_id=proposal_obj.proposal_id)
+            if isinstance(totals_res, Ok):
+                totals = totals_res.value
+                embed.add_field(
+                    name="合計票數",
+                    value=f"同意 {totals.approve} / 反對 {totals.reject} / 棄權 {totals.abstain}",
+                    inline=False,
+                )
+                embed.add_field(name="門檻 T", value=str(totals.threshold_t), inline=False)
         except Exception:
             pass
 
         view = ProposalDetailView(
             service=self.service,
-            proposal_id=proposal.proposal_id,
+            proposal_id=proposal_obj.proposal_id,
             guild=self.guild,
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
@@ -1350,7 +1354,7 @@ class SupremeAssemblyTransferModal(discord.ui.Modal, title="轉帳"):
             target_id = self.target_user_id
         elif self.target_type == "council":
             target_id = await _resolve_institution_account(
-                "常任理事會", CouncilServiceResult.derive_council_account_id
+                "常任理事會", CouncilService.derive_council_account_id
             )
         elif self.target_type == "company" and self.target_company_account_id:
             target_id = self.target_company_account_id
@@ -1430,11 +1434,17 @@ class CreateProposalModal(discord.ui.Modal, title="發起表決"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:  # noqa: D401
         try:
-            cfg = await self.service.get_config(guild_id=self.guild.id)
+            cfg_res = await self.service.get_config(guild_id=self.guild.id)
         except GovernanceNotConfiguredError:
             await interaction.response.send_message("尚未完成治理設定。", ephemeral=True)
             return
 
+        if isinstance(cfg_res, Err):
+            error_message = ErrorMessageTemplates.from_error(cfg_res.error)
+            await interaction.response.send_message(error_message, ephemeral=True)
+            return
+
+        cfg = cfg_res.value
         role = self.guild.get_role(cfg.member_role_id)
         snapshot_ids = [m.id for m in role.members] if role is not None else []
         if not snapshot_ids:
@@ -1447,7 +1457,7 @@ class CreateProposalModal(discord.ui.Modal, title="發起表決"):
         description = str(self.description.value or "").strip() or None
 
         try:
-            proposal = await self.service.create_proposal(
+            proposal_res = await self.service.create_proposal(
                 guild_id=self.guild.id,
                 proposer_id=interaction.user.id,
                 title=title,
@@ -1455,6 +1465,10 @@ class CreateProposalModal(discord.ui.Modal, title="發起表決"):
                 snapshot_member_ids=snapshot_ids,
                 deadline_hours=72,
             )
+            proposal = proposal_res.value if isinstance(proposal_res, Ok) else None
+            if proposal is None:
+                await interaction.response.send_message("建案失敗。", ephemeral=True)
+                return
             await interaction.response.send_message(
                 f"已建立表決提案 {proposal.proposal_id}，並將以 DM 通知議員。",
                 ephemeral=True,
@@ -1566,17 +1580,21 @@ async def _handle_vote(
     choice: str,
 ) -> None:
     try:
-        totals, status = await service.vote(
+        vote_res = await service.vote(
             proposal_id=proposal_id,
             voter_id=interaction.user.id,
             choice=choice,
         )
-    except VoteAlreadyExistsError:
-        await send_message_compat(interaction, content="已投票，無法改選。", ephemeral=True)
-        return
-    except PermissionDeniedError as exc:
-        await send_message_compat(interaction, content=str(exc), ephemeral=True)
-        return
+        if isinstance(vote_res, Err):
+            if isinstance(vote_res.error, VoteAlreadyExistsError):
+                await send_message_compat(interaction, content="已投票，無法改選。", ephemeral=True)
+                return
+            if isinstance(vote_res.error, PermissionDeniedError):
+                await send_message_compat(interaction, content=str(vote_res.error), ephemeral=True)
+                return
+            await send_message_compat(interaction, content="投票失敗。", ephemeral=True)
+            return
+        totals, status = vote_res.value
     except Exception as exc:  # pragma: no cover
         LOGGER.exception("supreme_assembly.vote.error", error=str(exc))
         await send_message_compat(interaction, content="投票失敗。", ephemeral=True)
@@ -1616,10 +1634,11 @@ async def _dm_members_for_voting(
     """Send DM to members with voting buttons."""
     service = SupremeAssemblyService()
     view = SupremeAssemblyVotingView(proposal_id=proposal.proposal_id, service=service)
-    try:
-        cfg = await service.get_config(guild_id=guild.id)
-    except GovernanceNotConfiguredError:
+    cfg_result = await service.get_config(guild_id=guild.id)
+    # 若尚未設定治理配置，直接返回
+    if cfg_result.is_err():
         return
+    cfg = cfg_result.unwrap()
     role = guild.get_role(cfg.member_role_id)
     members: list[discord.Member] = list(role.members) if role is not None else []
 
@@ -1648,9 +1667,11 @@ async def _broadcast_result(
     status: str,
 ) -> None:
     """向提案人與全體議員廣播最終結果（揭露個別票）。"""
-    snapshot = await service.get_snapshot(proposal_id=proposal_id)
-    votes = await service.get_votes_detail(proposal_id=proposal_id)
-    vote_map = dict(votes)
+    snapshot_result = await service.get_snapshot(proposal_id=proposal_id)
+    snapshot = list(snapshot_result.unwrap_or_else(lambda: []))
+    votes_result = await service.get_votes_detail(proposal_id=proposal_id)
+    votes = votes_result.unwrap_or_else(lambda: [])
+    vote_map: dict[int, str] = dict(votes)
     lines: list[str] = []
     for uid in snapshot:
         choice_str = vote_map.get(uid, "未投")
@@ -1667,16 +1688,21 @@ async def _broadcast_result(
     result_embed.add_field(name="最終狀態", value=status, inline=False)
     result_embed.add_field(name="個別投票", value=text or "(無)", inline=False)
 
-    cfg = await service.get_config(guild_id=guild.id)
-    role = guild.get_role(cfg.member_role_id)
+    cfg_result = await service.get_config(guild_id=guild.id)
+    if cfg_result.is_err():
+        role = None
+    else:
+        cfg = cfg_result.unwrap()
+        role = guild.get_role(cfg.member_role_id)
     members = role.members if role is not None else []
 
     # 確認提案人
-    proposal = await service.get_proposal(proposal_id=proposal_id)
+    proposal_result = await service.get_proposal(proposal_id=proposal_id)
     proposer_user: discord.User | discord.Member | None = None
-    if proposal is not None:
-        proposer_user = guild.get_member(proposal.proposer_id) or await _safe_fetch_user(
-            client, proposal.proposer_id
+    proposal_val = proposal_result.unwrap_or(None)
+    if proposal_val is not None:
+        proposer_user = guild.get_member(proposal_val.proposer_id) or await _safe_fetch_user(
+            client, proposal_val.proposer_id
         )
 
     recipients: list[discord.abc.Messageable] = []
@@ -1742,7 +1768,10 @@ class SummonMemberSelectView(discord.ui.View):
         """Async builder that preloads member options so the select shows immediately."""
         self = cls(service=service, guild=guild)
         try:
-            cfg_obj = await service.get_config(guild_id=guild.id)
+            cfg_res = await service.get_config(guild_id=guild.id)
+            if isinstance(cfg_res, Err):
+                return self
+            cfg_obj = cfg_res.unwrap()
             role = guild.get_role(cfg_obj.member_role_id)
             if role:
                 members = role.members
@@ -1793,13 +1822,19 @@ class SummonMemberSelectView(discord.ui.View):
             return
 
         try:
-            summon = await self.service.create_summon(
+            summon_res = await self.service.create_summon(
                 guild_id=self.guild.id,
                 invoked_by=interaction.user.id,
                 target_id=int(selected_id),
                 target_kind="member",
                 note=None,
             )
+            if isinstance(summon_res, Err):
+                await send_message_compat(
+                    interaction, content="傳召失敗，請稍後再試。", ephemeral=True
+                )
+                return
+            summon = summon_res.unwrap()
             member = self.guild.get_member(int(selected_id))
             if member:
                 try:
@@ -1975,13 +2010,19 @@ class SummonOfficialSelectView(discord.ui.View):
                 return
 
             # 建立 summon 紀錄
-            summon = await self.service.create_summon(
+            summon_res = await self.service.create_summon(
                 guild_id=self.guild.id,
                 invoked_by=interaction.user.id,
                 target_id=target_id,
                 target_kind="official",
                 note=f"傳召 {target_name}",
             )
+            if isinstance(summon_res, Err):
+                await send_message_compat(
+                    interaction, content="傳召失敗，請稍後再試。", ephemeral=True
+                )
+                return
+            summon = summon_res.unwrap()
 
             # 準備 DM 內容
             embed = discord.Embed(
@@ -2126,9 +2167,9 @@ class SummonPermanentCouncilView(discord.ui.View):
 
         try:
             # Create summon records for each selected member
-            from src.bot.services.council_service import CouncilServiceResult
+            from src.bot.services.council_service import CouncilService
 
-            target_id = CouncilServiceResult.derive_council_account_id(self.guild.id)
+            target_id = CouncilService.derive_council_account_id(self.guild.id)
             target_name = "常任理事會成員"
 
             # Prepare DM content
@@ -2155,13 +2196,19 @@ class SummonPermanentCouncilView(discord.ui.View):
                         summoned_members.append(f"<@{member_id}>")
 
             # Create summon record (using the council account ID as target)
-            summon = await self.service.create_summon(
+            summon_res = await self.service.create_summon(
                 guild_id=self.guild.id,
                 invoked_by=interaction.user.id,
                 target_id=target_id,
                 target_kind="official",
                 note=f"傳召常任理事會成員：{', '.join([str(mid) for mid in selected_ids])}",
             )
+            if isinstance(summon_res, Err):
+                await send_message_compat(
+                    interaction, content="傳召失敗，請稍後再試。", ephemeral=True
+                )
+                return
+            summon = summon_res.unwrap()
 
             if sent > 0:
                 try:
@@ -2285,7 +2332,10 @@ def _install_background_scheduler(client: discord.Client, service: SupremeAssemb
                         from datetime import datetime, timezone
 
                         if (p.deadline_at - datetime.now(timezone.utc)).total_seconds() < 86400:
-                            unvoted = await service.list_unvoted_members(proposal_id=p.proposal_id)
+                            unvoted_res = await service.list_unvoted_members(
+                                proposal_id=p.proposal_id
+                            )
+                            unvoted = unvoted_res.unwrap_or_else(lambda: [])
                             guild = client.get_guild(p.guild_id)
                             if guild is not None:
                                 for uid in unvoted:
@@ -2317,7 +2367,8 @@ def _install_background_scheduler(client: discord.Client, service: SupremeAssemb
                     if pid in broadcasted:
                         continue
                     try:
-                        proposal = await service.get_proposal(proposal_id=pid)
+                        proposal_res = await service.get_proposal(proposal_id=pid)
+                        proposal = proposal_res.unwrap_or(None)
                         if proposal is None:
                             continue
                         if proposal.status != "進行中":

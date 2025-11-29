@@ -190,7 +190,7 @@ def register(
 
 def build_council_group(
     service: CouncilService,
-    service_result: CouncilServiceResult | None = None,
+    service_result: CouncilService | None = None,
     permission_service: PermissionService | None = None,
 ) -> app_commands.Group:
     """建立 /council 指令群組。
@@ -203,7 +203,7 @@ def build_council_group(
     if service_result is None:
         # 在舊版模式下，commands 會直接呼叫 CouncilService（或其 MagicMock）。
         # 這裡僅為型別提示，實際上透過 _unwrap_result 與 try/except 處理回傳值與例外。
-        service_result = cast(CouncilServiceResult, service)  # type: ignore[assignment]
+        service_result = cast(CouncilService, service)  # type: ignore[assignment]
 
     council = app_commands.Group(name="council", description="理事會治理指令群組")
 
@@ -551,7 +551,7 @@ def build_council_group(
 
 
 class VotingView(discord.ui.View):
-    def __init__(self, *, proposal_id: UUID, service: CouncilServiceResult) -> None:
+    def __init__(self, *, proposal_id: UUID, service: CouncilService) -> None:
         super().__init__(timeout=None)
         self.proposal_id = proposal_id
         self.service = service
@@ -595,7 +595,7 @@ class VotingView(discord.ui.View):
 
 async def _handle_vote(
     interaction: discord.Interaction,
-    service: CouncilServiceResult,
+    service: CouncilService,
     proposal_id: UUID,
     choice: str,
 ) -> None:
@@ -659,7 +659,7 @@ async def _handle_vote(
 async def _dm_council_for_voting(
     client: discord.Client,
     guild: discord.Guild,
-    service: CouncilServiceResult,
+    service: CouncilService,
     proposal: Any,
 ) -> None:
     # 直接使用傳入的 Result 服務，移除 DI 回退與臨時新建
@@ -728,7 +728,7 @@ async def _dm_council_for_voting(
 _scheduler_task: asyncio.Task[None] | None = None
 
 
-def _install_background_scheduler(client: discord.Client, service: CouncilServiceResult) -> None:
+def _install_background_scheduler(client: discord.Client, service: CouncilService) -> None:
     global _scheduler_task
     if _scheduler_task is not None:
         return
@@ -850,7 +850,7 @@ class CouncilPanelView(PersistentPanelView):
     def __init__(
         self,
         *,
-        service: CouncilServiceResult,
+        service: CouncilService,
         guild: discord.Guild,
         author_id: int,
         council_role_id: int,
@@ -1343,7 +1343,7 @@ class CouncilPanelView(PersistentPanelView):
 class TransferTypeSelectionView(discord.ui.View):
     """View for selecting transfer type (user, department, or company)."""
 
-    def __init__(self, *, service: CouncilServiceResult, guild: discord.Guild) -> None:
+    def __init__(self, *, service: CouncilService, guild: discord.Guild) -> None:
         super().__init__(timeout=300)
         self.service = service
         self.guild = guild
@@ -1394,7 +1394,7 @@ class TransferTypeSelectionView(discord.ui.View):
 class DepartmentSelectView(discord.ui.View):
     """View for selecting a government department."""
 
-    def __init__(self, *, service: CouncilServiceResult, guild: discord.Guild) -> None:
+    def __init__(self, *, service: CouncilService, guild: discord.Guild) -> None:
         super().__init__(timeout=300)
         self.service = service
         self.guild = guild
@@ -1458,7 +1458,7 @@ class DepartmentSelectView(discord.ui.View):
 class UserSelectView(discord.ui.View):
     """View for selecting a user (using Discord User Select component)."""
 
-    def __init__(self, *, service: CouncilServiceResult, guild: discord.Guild) -> None:
+    def __init__(self, *, service: CouncilService, guild: discord.Guild) -> None:
         super().__init__(timeout=300)
         self.service = service
         self.guild = guild
@@ -1504,7 +1504,7 @@ class UserSelectView(discord.ui.View):
 class CouncilCompanySelectView(discord.ui.View):
     """View for selecting a company (for council transfer proposals)."""
 
-    def __init__(self, *, service: CouncilServiceResult, guild: discord.Guild) -> None:
+    def __init__(self, *, service: CouncilService, guild: discord.Guild) -> None:
         super().__init__(timeout=300)
         self.service = service
         self.guild = guild
@@ -1573,7 +1573,7 @@ class TransferProposalModal(discord.ui.Modal, title="建立轉帳提案"):
     def __init__(
         self,
         *,
-        service: CouncilServiceResult,
+        service: CouncilService,
         guild: discord.Guild,
         target_user_id: int | None = None,
         target_user_name: str | None = None,
@@ -1744,7 +1744,7 @@ class TransferProposalModal(discord.ui.Modal, title="建立轉帳提案"):
 
 
 class ProposeTransferModal(discord.ui.Modal, title="建立轉帳提案"):
-    def __init__(self, *, service: CouncilServiceResult, guild: discord.Guild) -> None:
+    def __init__(self, *, service: CouncilService, guild: discord.Guild) -> None:
         super().__init__()
         self.service = service
         self.guild = guild
@@ -2040,9 +2040,7 @@ class ExportModal(discord.ui.Modal, title="匯出治理資料"):
 
 
 class ProposalActionView(discord.ui.View):
-    def __init__(
-        self, *, service: CouncilServiceResult, proposal_id: UUID, can_cancel: bool
-    ) -> None:
+    def __init__(self, *, service: CouncilService, proposal_id: UUID, can_cancel: bool) -> None:
         super().__init__(timeout=300)
         self.service = service
         self.proposal_id = proposal_id
@@ -2173,7 +2171,7 @@ def _format_proposal_desc(p: Any) -> str:
 async def _broadcast_result(
     client: discord.Client,
     guild: discord.Guild,
-    service: CouncilServiceResult,
+    service: CouncilService,
     proposal_id: UUID,
     status: str,
 ) -> None:
@@ -2233,7 +2231,7 @@ async def _broadcast_result(
             pass
 
 
-async def _register_persistent_views(client: discord.Client, service: CouncilServiceResult) -> None:
+async def _register_persistent_views(client: discord.Client, service: CouncilService) -> None:
     """在啟動後註冊所有進行中提案的 persistent VotingView。"""
     from src.infra.types.db import ConnectionProtocol, PoolProtocol
 

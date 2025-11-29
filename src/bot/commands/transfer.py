@@ -171,8 +171,13 @@ def build_transfer_command(
             else:
                 # 嘗試最高人民會議議長身分組
                 sa_service = SupremeAssemblyService()
+                sa_cfg = None
                 try:
-                    sa_cfg = await sa_service.get_config(guild_id=guild_id)
+                    sa_cfg_raw = await sa_service.get_config(guild_id=guild_id)
+                    if isinstance(sa_cfg_raw, Ok):
+                        sa_cfg = cast(Any, sa_cfg_raw.value)
+                    else:
+                        sa_cfg = None
                 except SAGovernanceNotConfiguredError:
                     sa_cfg = None
                 except Exception as exc:  # 防禦性：單元測試環境可能未初始化資料庫

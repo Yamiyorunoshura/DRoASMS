@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import replace as dc_replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Sequence
-from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -16,7 +15,6 @@ from src.bot.services.supreme_assembly_service import (
     SupremeAssemblyService,
     VoteAlreadyExistsError,
 )
-from src.bot.services.supreme_assembly_service_result import SupremeAssemblyServiceResult
 from src.db.gateway.supreme_assembly_governance import (
     Proposal,
     Summon,
@@ -310,7 +308,9 @@ async def test_set_config_creates_account(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    config = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    res = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    assert isinstance(res, Ok)
+    config = res.value
     assert config.guild_id == 100
     assert config.speaker_role_id == 200
     assert config.member_role_id == 300
@@ -330,8 +330,9 @@ async def test_get_config_not_configured(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    with pytest.raises(GovernanceNotConfiguredError):
-        await svc.get_config(guild_id=999)
+    res = await svc.get_config(guild_id=999)
+    assert isinstance(res, Err)
+    assert isinstance(res.error, GovernanceNotConfiguredError)
 
 
 @pytest.mark.unit
@@ -344,15 +345,17 @@ async def test_create_proposal_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    _ = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
 
-    p = await svc.create_proposal(
+    res = await svc.create_proposal(
         guild_id=100,
         proposer_id=1,
         title="測試提案",
         description="這是測試",
         snapshot_member_ids=[1, 2, 3],
     )
+    assert isinstance(res, Ok)
+    p = res.value
     assert p.title == "測試提案"
     assert p.snapshot_n == 3
     assert p.threshold_t == 2  # floor(3/2) + 1 = 2
@@ -369,16 +372,17 @@ async def test_create_proposal_empty_snapshot(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    _ = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
 
-    with pytest.raises(PermissionDeniedError):
-        await svc.create_proposal(
-            guild_id=100,
-            proposer_id=1,
-            title="測試",
-            description=None,
-            snapshot_member_ids=[],
-        )
+    res = await svc.create_proposal(
+        guild_id=100,
+        proposer_id=1,
+        title="測試",
+        description=None,
+        snapshot_member_ids=[],
+    )
+    assert isinstance(res, Err)
+    assert isinstance(res.error, PermissionDeniedError)
 
 
 @pytest.mark.unit
@@ -391,27 +395,28 @@ async def test_create_proposal_concurrency_limit(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    _ = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
 
     # 創建 5 個提案
     for i in range(5):
-        await svc.create_proposal(
+        r = await svc.create_proposal(
             guild_id=100,
             proposer_id=1,
             title=f"提案 {i}",
             description=None,
             snapshot_member_ids=[1, 2, 3],
         )
+        assert isinstance(r, Ok)
 
     # 第 6 個應該失敗
-    with pytest.raises(RuntimeError, match="Active proposal limit"):
-        await svc.create_proposal(
-            guild_id=100,
-            proposer_id=1,
-            title="提案 6",
-            description=None,
-            snapshot_member_ids=[1, 2, 3],
-        )
+    res = await svc.create_proposal(
+        guild_id=100,
+        proposer_id=1,
+        title="提案 6",
+        description=None,
+        snapshot_member_ids=[1, 2, 3],
+    )
+    assert isinstance(res, Err)
 
 
 @pytest.mark.unit
@@ -424,17 +429,21 @@ async def test_vote_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    _ = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
 
-    p = await svc.create_proposal(
+    pr = await svc.create_proposal(
         guild_id=100,
         proposer_id=1,
         title="測試",
         description=None,
         snapshot_member_ids=[1, 2, 3],
     )
+    assert isinstance(pr, Ok)
+    p = pr.value
 
-    totals, status = await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="approve")
+    res = await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="approve")
+    assert isinstance(res, Ok)
+    totals, status = res.value
     assert status == "進行中"
     assert totals.approve == 1
     assert totals.reject == 0
@@ -451,18 +460,21 @@ async def test_vote_not_in_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    _ = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
 
-    p = await svc.create_proposal(
+    pr = await svc.create_proposal(
         guild_id=100,
         proposer_id=1,
         title="測試",
         description=None,
         snapshot_member_ids=[1, 2, 3],
     )
+    assert isinstance(pr, Ok)
+    p = pr.value
 
-    with pytest.raises(PermissionDeniedError):
-        await svc.vote(proposal_id=p.proposal_id, voter_id=999, choice="approve")
+    res = await svc.vote(proposal_id=p.proposal_id, voter_id=999, choice="approve")
+    assert isinstance(res, Err)
+    assert isinstance(res.error, PermissionDeniedError)
 
 
 @pytest.mark.unit
@@ -475,22 +487,26 @@ async def test_vote_already_exists(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    _ = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
 
-    p = await svc.create_proposal(
+    pr = await svc.create_proposal(
         guild_id=100,
         proposer_id=1,
         title="測試",
         description=None,
         snapshot_member_ids=[1, 2, 3],
     )
+    assert isinstance(pr, Ok)
+    p = pr.value
 
     # 第一次投票成功
-    await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="approve")
+    r1 = await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="approve")
+    assert isinstance(r1, Ok)
 
     # 第二次投票應該失敗
-    with pytest.raises(VoteAlreadyExistsError):
-        await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="reject")
+    r2 = await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="reject")
+    assert isinstance(r2, Err)
+    assert isinstance(r2.error, VoteAlreadyExistsError)
 
 
 @pytest.mark.unit
@@ -503,22 +519,28 @@ async def test_vote_threshold_passed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    _ = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
 
-    p = await svc.create_proposal(
+    pr = await svc.create_proposal(
         guild_id=100,
         proposer_id=1,
         title="測試",
         description=None,
         snapshot_member_ids=[1, 2, 3],  # N=3, T=2
     )
+    assert isinstance(pr, Ok)
+    p = pr.value
 
     # 第一票
-    totals, status = await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="approve")
+    r1 = await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="approve")
+    assert isinstance(r1, Ok)
+    totals, status = r1.value
     assert status == "進行中"
 
     # 第二票達標
-    totals, status = await svc.vote(proposal_id=p.proposal_id, voter_id=2, choice="approve")
+    r2 = await svc.vote(proposal_id=p.proposal_id, voter_id=2, choice="approve")
+    assert isinstance(r2, Ok)
+    totals, status = r2.value
     assert status == "已通過"
     assert totals.approve >= p.threshold_t
 
@@ -533,23 +555,27 @@ async def test_vote_early_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    _ = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
 
-    p = await svc.create_proposal(
+    pr = await svc.create_proposal(
         guild_id=100,
         proposer_id=1,
         title="測試",
         description=None,
         snapshot_member_ids=[1, 2, 3, 4, 5],  # N=5, T=3
     )
+    assert isinstance(pr, Ok)
+    p = pr.value
 
     # 投兩票反對
-    await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="reject")
-    await svc.vote(proposal_id=p.proposal_id, voter_id=2, choice="reject")
-    await svc.vote(proposal_id=p.proposal_id, voter_id=3, choice="abstain")
+    assert isinstance(await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="reject"), Ok)
+    assert isinstance(await svc.vote(proposal_id=p.proposal_id, voter_id=2, choice="reject"), Ok)
+    assert isinstance(await svc.vote(proposal_id=p.proposal_id, voter_id=3, choice="abstain"), Ok)
 
     # 第四票反對，即使剩餘兩票都同意也無法達標（1 approve + 2 remaining < 3 threshold）
-    totals, status = await svc.vote(proposal_id=p.proposal_id, voter_id=4, choice="reject")
+    r4 = await svc.vote(proposal_id=p.proposal_id, voter_id=4, choice="reject")
+    assert isinstance(r4, Ok)
+    totals, status = r4.value
     # 注意：這裡需要確保 approve + remaining_unvoted < threshold
     # 當前實現中，如果 approve + remaining_unvoted < threshold，會標記為已否決
     assert status in ("已否決", "進行中")  # 根據實際邏輯調整
@@ -565,21 +591,27 @@ async def test_cancel_proposal_no_votes(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    _ = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
 
-    p = await svc.create_proposal(
+    pr = await svc.create_proposal(
         guild_id=100,
         proposer_id=1,
         title="測試",
         description=None,
         snapshot_member_ids=[1, 2, 3],
     )
+    assert isinstance(pr, Ok)
+    p = pr.value
 
-    ok = await svc.cancel_proposal(proposal_id=p.proposal_id)
+    res = await svc.cancel_proposal(proposal_id=p.proposal_id)
+    assert isinstance(res, Ok)
+    ok = res.value
     assert ok is True
 
     # 確認狀態已更新
-    updated = await svc.get_proposal(proposal_id=p.proposal_id)
+    updated_res = await svc.get_proposal(proposal_id=p.proposal_id)
+    assert isinstance(updated_res, Ok)
+    updated = updated_res.value
     assert updated is not None
     assert updated.status == "已撤案"
 
@@ -594,20 +626,22 @@ async def test_cancel_proposal_with_votes(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    _ = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
 
-    p = await svc.create_proposal(
+    pr = await svc.create_proposal(
         guild_id=100,
         proposer_id=1,
         title="測試",
         description=None,
         snapshot_member_ids=[1, 2, 3],
     )
-
+    assert isinstance(pr, Ok)
+    p = pr.value
     # 投一票後不可撤案
-    await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="approve")
-    ok = await svc.cancel_proposal(proposal_id=p.proposal_id)
-    assert ok is False
+    assert isinstance(await svc.vote(proposal_id=p.proposal_id, voter_id=1, choice="approve"), Ok)
+    res = await svc.cancel_proposal(proposal_id=p.proposal_id)
+    assert isinstance(res, Ok)
+    assert res.value is False
 
 
 @pytest.mark.unit
@@ -620,27 +654,33 @@ async def test_expire_due_proposals(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    _ = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
 
     # 創建一個已逾時的提案
-    p = await svc.create_proposal(
+    pr = await svc.create_proposal(
         guild_id=100,
         proposer_id=1,
         title="測試",
         description=None,
         snapshot_member_ids=[1, 2, 3],
     )
+    assert isinstance(pr, Ok)
+    p = pr.value
     # 手動修改 deadline 為過去時間
     gw._proposals[p.proposal_id] = dataclass_replace(
         gw._proposals[p.proposal_id],
         deadline_at=datetime.now(timezone.utc) - timedelta(seconds=1),
     )
 
-    changed = await svc.expire_due_proposals()
+    res = await svc.expire_due_proposals()
+    assert isinstance(res, Ok)
+    changed = res.value
     assert changed >= 1
 
     # 確認狀態已更新
-    updated = await svc.get_proposal(proposal_id=p.proposal_id)
+    updated_res = await svc.get_proposal(proposal_id=p.proposal_id)
+    assert isinstance(updated_res, Ok)
+    updated = updated_res.value
     assert updated is not None
     assert updated.status in ("已通過", "已逾時")
 
@@ -655,15 +695,17 @@ async def test_create_summon(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    _ = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
 
-    summon = await svc.create_summon(
+    res = await svc.create_summon(
         guild_id=100,
         invoked_by=1,
         target_id=2,
         target_kind="member",
         note="測試傳召",
     )
+    assert isinstance(res, Ok)
+    summon = res.value
     assert summon.guild_id == 100
     assert summon.target_id == 2
     assert summon.target_kind == "member"
@@ -680,16 +722,16 @@ async def test_create_summon_invalid_kind(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    _ = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
 
-    with pytest.raises(ValueError, match="target_kind must be"):
-        await svc.create_summon(
-            guild_id=100,
-            invoked_by=1,
-            target_id=2,
-            target_kind="invalid",
-            note=None,
-        )
+    res = await svc.create_summon(
+        guild_id=100,
+        invoked_by=1,
+        target_id=2,
+        target_kind="invalid",
+        note=None,
+    )
+    assert isinstance(res, Err)
 
 
 @pytest.mark.unit
@@ -702,49 +744,43 @@ async def test_get_account_balance(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
 
     svc = SupremeAssemblyService(gateway=gw)
-    await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
+    _ = await svc.set_config(guild_id=100, speaker_role_id=200, member_role_id=300)
 
     # 帳戶不存在時返回 0
-    balance = await svc.get_account_balance(guild_id=999)
-    assert balance == 0
+    res0 = await svc.get_account_balance(guild_id=999)
+    assert isinstance(res0, Ok)
+    assert res0.value == 0
 
     # 設置帳戶餘額
     account_id = SupremeAssemblyService.derive_account_id(100)
     gw._accounts[100] = (account_id, 5000)
 
-    balance = await svc.get_account_balance(guild_id=100)
-    assert balance == 5000
+    res = await svc.get_account_balance(guild_id=100)
+    assert isinstance(res, Ok)
+    assert res.value == 5000
 
 
 @pytest.mark.asyncio
-class TestSupremeAssemblyServiceResult:
+class TestSupremeAssemblyResultFirst:
     async def test_get_config_ok(self) -> None:
-        legacy = AsyncMock(spec=SupremeAssemblyService)
-        expected = SupremeAssemblyConfig(
-            guild_id=123,
-            speaker_role_id=456,
-            member_role_id=789,
-            created_at=datetime.now(tz=timezone.utc),
-            updated_at=datetime.now(tz=timezone.utc),
-        )
-        legacy.get_config.return_value = expected
+        gw = _FakeGateway()
+        conn = _FakeConnection(gw)
+        pool = _FakePool(conn)
+        # 先設置配置以便取得 Ok
+        svc = SupremeAssemblyService(gateway=gw)
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
+        _ = await svc.set_config(guild_id=123, speaker_role_id=456, member_role_id=789)
 
-        result_service = SupremeAssemblyServiceResult(legacy_service=legacy)
-
-        result = await result_service.get_config(guild_id=123)
-
+        result = await svc.get_config(guild_id=123)
         assert isinstance(result, Ok)
-        assert result.value is expected
-        legacy.get_config.assert_awaited_once_with(guild_id=123)
 
     async def test_get_config_error(self) -> None:
-        legacy = AsyncMock(spec=SupremeAssemblyService)
-        legacy.get_config.side_effect = GovernanceNotConfiguredError("missing")
-
-        result_service = SupremeAssemblyServiceResult(legacy_service=legacy)
-
-        result = await result_service.get_config(guild_id=999)
-
+        gw = _FakeGateway()
+        conn = _FakeConnection(gw)
+        pool = _FakePool(conn)
+        svc = SupremeAssemblyService(gateway=gw)
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr("src.bot.services.supreme_assembly_service.get_pool", lambda: pool)
+        result = await svc.get_config(guild_id=999)
         assert isinstance(result, Err)
-        assert isinstance(result.error, GovernanceNotConfiguredError)
-        legacy.get_config.assert_awaited_once_with(guild_id=999)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# 提供 JusticeService 名稱以滿足型別檢查（執行期最佳努力）
+# 使用動態導入避免 mypy 對未宣告 py.typed 的第三方模組提出警告。
 import inspect
 from datetime import datetime, timezone
 from typing import Any, Sequence, cast
@@ -10,7 +12,6 @@ import structlog
 
 from src.bot.services.adjustment_service import AdjustmentService
 from src.bot.services.department_registry import DepartmentRegistry
-from src.bot.services.justice_service import JusticeService
 from src.bot.services.transfer_service import (
     InsufficientBalanceError,
     TransferError,
@@ -21,11 +22,13 @@ from src.cython_ext.state_council_models import (
     BusinessLicenseListResult,
     DepartmentStats,
     StateCouncilSummary,
+    Suspect,
     SuspectProfile,
     SuspectReleaseResult,
 )
 from src.db.gateway.business_license import BusinessLicenseGateway
 from src.db.gateway.economy_queries import EconomyQueryGateway
+from src.db.gateway.justice_governance import JusticeGovernanceGateway
 from src.db.gateway.state_council_governance import (
     CurrencyIssuance,
     DepartmentConfig,
@@ -109,6 +112,7 @@ class StateCouncilService:
         self._economy = economy_gateway or EconomyQueryGateway()
         self._department_registry = department_registry or DepartmentRegistry()
         self._license_gateway = business_license_gateway or BusinessLicenseGateway()
+        self._justice_gateway = JusticeGovernanceGateway()
 
     async def _get_economy_balance_snapshot(
         self, conn: Any, *, guild_id: int, member_id: int
@@ -1035,15 +1039,14 @@ class StateCouncilService:
         summary: list[SuspectReleaseResult] = []
         release_reason = reason or ("面板釋放" if audit_source == "manual" else "自動釋放")
 
-        justice_service = JusticeService()
-
         for suspect_id in suspect_ids:
             # 檢查是否為已起訴的嫌犯（法務部管理）
             try:
-                if await justice_service.is_member_charged(
+                charged_res = await self.is_member_charged(
                     guild_id=guild_id,
                     member_id=suspect_id,
-                ):
+                )
+                if not isinstance(charged_res, Err) and charged_res.value:
                     member = guild.get_member(suspect_id) if hasattr(guild, "get_member") else None
                     display_name = getattr(member, "display_name", None)
                     summary.append(
@@ -1092,7 +1095,7 @@ class StateCouncilService:
 
                 # 同步司法系統中的嫌犯狀態為 released（僅釋放未起訴嫌犯）
                 try:
-                    await justice_service.mark_member_released_from_security(
+                    _ = await self.mark_member_released_from_security(
                         guild_id=guild_id,
                         member_id=suspect_id,
                     )
@@ -1126,6 +1129,276 @@ class StateCouncilService:
                 self._cancel_auto_release_job(guild_id, suspect_id)
 
         return summary
+
+    # --- Judicial (merged from JusticeService) ---
+    async def create_suspect_on_arrest(
+        self,
+        *,
+        guild_id: int,
+        member_id: int,
+        arrested_by: int,
+        arrest_reason: str,
+    ) -> Result[Suspect, str]:
+        try:
+            pool: PoolProtocol = cast(PoolProtocol, get_pool())
+            cm = await self._pool_acquire_cm(pool)
+            async with cm as conn:
+                existing = await self._justice_gateway.get_suspect_by_member(
+                    conn, guild_id=guild_id, member_id=member_id
+                )
+                if existing:
+                    try:
+                        LOGGER.warning(
+                            "state_council.justice.create_suspect_already_exists",
+                            guild_id=guild_id,
+                            member_id=member_id,
+                            existing_suspect_id=str(getattr(existing, "suspect_id", existing)),
+                        )
+                    except Exception:
+                        pass
+                    return Ok(existing)
+
+                suspect = await self._justice_gateway.create_suspect(
+                    conn,
+                    guild_id=guild_id,
+                    member_id=member_id,
+                    arrested_by=arrested_by,
+                    arrest_reason=arrest_reason,
+                )
+                try:
+                    LOGGER.info(
+                        "state_council.justice.suspect_created",
+                        guild_id=guild_id,
+                        suspect_id=str(getattr(suspect, "suspect_id", suspect)),
+                        member_id=member_id,
+                        arrested_by=arrested_by,
+                    )
+                except Exception:
+                    pass
+                return Ok(suspect)
+        except Exception as exc:
+            return Err(str(exc))
+
+    async def get_active_suspects(
+        self,
+        *,
+        guild_id: int,
+        page: int = 1,
+        page_size: int = 10,
+        status: str | None = None,
+    ) -> Result[tuple[Sequence[Suspect], int], str]:
+        try:
+            offset = (page - 1) * page_size
+            statuses: Sequence[str] = (status,) if status is not None else ("detained", "charged")
+            pool: PoolProtocol = cast(PoolProtocol, get_pool())
+            cm = await self._pool_acquire_cm(pool)
+            async with cm as conn:
+                suspects = await self._justice_gateway.get_active_suspects(
+                    conn,
+                    guild_id=guild_id,
+                    statuses=statuses,
+                    limit=page_size,
+                    offset=offset,
+                )
+                count_query = (
+                    "SELECT COUNT(*) as total FROM governance.suspects "
+                    "WHERE guild_id = $1 AND status = ANY($2::text[])"
+                )
+                result = await conn.fetchrow(count_query, guild_id, list(statuses))
+                total = int(result["total"]) if result and result["total"] is not None else 0
+                return Ok((suspects, total))
+        except Exception as exc:
+            return Err(str(exc))
+
+    async def charge_suspect(
+        self,
+        *,
+        guild_id: int,
+        suspect_id: int,
+        justice_member_id: int,
+        justice_member_roles: Sequence[int] | None = None,
+    ) -> Result[Suspect, str]:
+        roles = list(justice_member_roles or [])
+        # 權限：法務部或國務院領袖
+        allowed = await self.check_department_permission(
+            guild_id=guild_id,
+            user_id=justice_member_id,
+            department="法務部",
+            user_roles=roles,
+        )
+        if not allowed and not await self.check_leader_permission(
+            guild_id=guild_id, user_id=justice_member_id, user_roles=roles
+        ):
+            return Err("只有法務部領導人可以起訴嫌犯")
+
+        try:
+            pool: PoolProtocol = cast(PoolProtocol, get_pool())
+            cm = await self._pool_acquire_cm(pool)
+            async with cm as conn:
+                try:
+                    suspect = await self._justice_gateway.charge_suspect(
+                        conn, suspect_id=suspect_id
+                    )
+                except ValueError:
+                    return Err("該嫌犯已被起訴")
+
+                try:
+                    LOGGER.info(
+                        "state_council.justice.suspect_charged",
+                        guild_id=guild_id,
+                        suspect_id=str(suspect_id),
+                        charged_by=justice_member_id,
+                    )
+                except Exception:
+                    pass
+                return Ok(suspect)
+        except Exception as exc:
+            return Err(str(exc))
+
+    async def revoke_charge(
+        self,
+        *,
+        guild_id: int,
+        suspect_id: int,
+        justice_member_id: int,
+        justice_member_roles: Sequence[int] | None = None,
+    ) -> Result[Suspect, str]:
+        roles = list(justice_member_roles or [])
+        allowed = await self.check_department_permission(
+            guild_id=guild_id,
+            user_id=justice_member_id,
+            department="法務部",
+            user_roles=roles,
+        )
+        if not allowed and not await self.check_leader_permission(
+            guild_id=guild_id, user_id=justice_member_id, user_roles=roles
+        ):
+            return Err("只有法務部領導人可以撤銷起訴")
+
+        try:
+            pool: PoolProtocol = cast(PoolProtocol, get_pool())
+            cm = await self._pool_acquire_cm(pool)
+            async with cm as conn:
+                try:
+                    suspect = await self._justice_gateway.revoke_charge(conn, suspect_id=suspect_id)
+                except ValueError:
+                    return Err("該嫌犯尚未被起訴")
+
+                try:
+                    LOGGER.info(
+                        "state_council.justice.suspect_charge_revoked",
+                        guild_id=guild_id,
+                        suspect_id=str(suspect_id),
+                        revoked_by=justice_member_id,
+                    )
+                except Exception:
+                    pass
+                return Ok(suspect)
+        except Exception as exc:
+            return Err(str(exc))
+
+    async def release_suspect(
+        self,
+        *,
+        guild_id: int,
+        suspect_id: int,
+        justice_member_id: int,
+        justice_member_roles: Sequence[int] | None = None,
+    ) -> Result[Suspect, str]:
+        roles = list(justice_member_roles or [])
+        allowed = await self.check_department_permission(
+            guild_id=guild_id,
+            user_id=justice_member_id,
+            department="法務部",
+            user_roles=roles,
+        )
+        if not allowed and not await self.check_leader_permission(
+            guild_id=guild_id, user_id=justice_member_id, user_roles=roles
+        ):
+            return Err("只有法務部領導人可以釋放已起訴嫌犯")
+
+        try:
+            pool: PoolProtocol = cast(PoolProtocol, get_pool())
+            cm = await self._pool_acquire_cm(pool)
+            async with cm as conn:
+                suspect = await self._justice_gateway.release_suspect(conn, suspect_id=suspect_id)
+                try:
+                    LOGGER.info(
+                        "state_council.justice.suspect_released",
+                        guild_id=guild_id,
+                        suspect_id=str(suspect_id),
+                        released_by=justice_member_id,
+                    )
+                except Exception:
+                    pass
+                return Ok(suspect)
+        except Exception as exc:
+            return Err(str(exc))
+
+    async def mark_member_released_from_security(
+        self,
+        *,
+        guild_id: int,
+        member_id: int,
+    ) -> Result[None, str]:
+        try:
+            pool: PoolProtocol = cast(PoolProtocol, get_pool())
+            cm = await self._pool_acquire_cm(pool)
+            async with cm as conn:
+                suspect = await self._justice_gateway.get_suspect_by_member(
+                    conn, guild_id=guild_id, member_id=member_id
+                )
+                if not suspect or getattr(suspect, "status", None) == "released":
+                    return Ok(None)
+                try:
+                    await self._justice_gateway.release_suspect(
+                        conn, suspect_id=int(suspect.suspect_id)
+                    )
+                except ValueError:
+                    return Ok(None)
+                try:
+                    LOGGER.info(
+                        "state_council.justice.suspect_released_by_security",
+                        guild_id=guild_id,
+                        member_id=member_id,
+                    )
+                except Exception:
+                    pass
+                return Ok(None)
+        except Exception as exc:
+            return Err(str(exc))
+
+    async def get_suspect_by_member(
+        self,
+        *,
+        guild_id: int,
+        member_id: int,
+    ) -> Result[Suspect | None, str]:
+        try:
+            pool: PoolProtocol = cast(PoolProtocol, get_pool())
+            cm = await self._pool_acquire_cm(pool)
+            async with cm as conn:
+                rv = await self._justice_gateway.get_suspect_by_member(
+                    conn, guild_id=guild_id, member_id=member_id
+                )
+                return Ok(rv)
+        except Exception as exc:
+            return Err(str(exc))
+
+    async def is_member_charged(
+        self,
+        *,
+        guild_id: int,
+        member_id: int,
+    ) -> Result[bool, str]:
+        try:
+            res = await self.get_suspect_by_member(guild_id=guild_id, member_id=member_id)
+            if isinstance(res, Err):
+                return Err(res.error)
+            suspect = res.value
+            return Ok(bool(suspect and getattr(suspect, "status", None) == "charged"))
+        except Exception as exc:
+            return Err(str(exc))
 
     async def schedule_auto_release(
         self,
@@ -1912,13 +2185,14 @@ class StateCouncilService:
 
         # 創建法務部嫌犯記錄（最佳努力，不影響既有逮捕流程）
         try:
-            justice_service = JusticeService()
-            await justice_service.create_suspect_on_arrest(
+            res = await self.create_suspect_on_arrest(
                 guild_id=guild_id,
                 member_id=target_id,
                 arrested_by=user_id,
                 arrest_reason=reason,
             )
+            if isinstance(res, Err):
+                raise RuntimeError(res.error)
         except Exception as exc:
             # 記錄但不影響逮捕流程
             LOGGER.warning(

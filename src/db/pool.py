@@ -15,47 +15,50 @@ from src.config.db_settings import PoolConfig
 LOGGER = structlog.get_logger(__name__)
 
 if TYPE_CHECKING:
-    # 僅供型別檢查使用；避免 AsyncPG 沒有完整型別時回退為 Any
-    from asyncpg.connection import Connection as _AsyncpgConnection
+
+    class _PatchedConnection:
+        async def execute(
+            self,
+            query: str,
+            *args: object,
+            timeout: float | None = None,  # noqa: ASYNC109
+        ) -> str: ...
+
 else:  # pragma: no cover - runtime 分支
     from asyncpg import connection as _asyncpg_connection
 
     _AsyncpgConnection = _asyncpg_connection.Connection
 
+    class _PatchedConnection(_AsyncpgConnection):
+        """Work around asyncpg restriction: prepared statements cannot contain multiple
+        commands separated by semicolons. Some tests issue a single execute() call with
+        multiple `SELECT ...; SELECT ...;` statements and one parameter list.
 
-class _PatchedConnection(_AsyncpgConnection):  # type: ignore[misc]
-    """Work around asyncpg restriction: prepared statements cannot contain multiple
-    commands separated by semicolons. Some tests issue a single execute() call with
-    multiple `SELECT ...; SELECT ...;` statements and one parameter list.
+        We split such multi-statements and execute them sequentially with the same
+        arguments. Return the last statement's status to preserve execute() contract.
+        """
 
-    We split such multi-statements and execute them sequentially with the same
-    arguments. Return the last statement's status to preserve execute() contract.
-    """
-
-    async def execute(
-        self,
-        query: str,
-        *args: object,
-        timeout: float | None = None,  # noqa: ASYNC109
-    ) -> str:
-        q = query.strip()
-        # Heuristic: treat as multi-statement if contains a semicolon and positional
-        # parameters (e.g. $1). Avoid splitting when no semicolon or it's a single stmt.
-        if ";" in q and "$" in q:
-            statements = [s.strip() for s in q.split(";") if s.strip()]
-            status: str | None = None
-            for stmt in statements:
-                # 以 Any 呼叫父類別 execute，避免第三方型別資訊不完整導致 Unknown 診斷
-                _super: Any = super()
-                if timeout is None:
-                    status = await _super.execute(stmt, *args)
-                else:
-                    status = await _super.execute(stmt, *args, timeout=timeout)
-            return status or ""
-        _super2: Any = super()
-        if timeout is None:
-            return cast(str, await _super2.execute(query, *args))
-        return cast(str, await _super2.execute(query, *args, timeout=timeout))
+        async def execute(
+            self,
+            query: str,
+            *args: object,
+            timeout: float | None = None,  # noqa: ASYNC109
+        ) -> str:
+            q = query.strip()
+            if ";" in q and "$" in q:
+                statements = [s.strip() for s in q.split(";") if s.strip()]
+                status: str | None = None
+                for stmt in statements:
+                    _super: Any = super()
+                    if timeout is None:
+                        status = await _super.execute(stmt, *args)
+                    else:
+                        status = await _super.execute(stmt, *args, timeout=timeout)
+                return status or ""
+            _super2: Any = super()
+            if timeout is None:
+                return cast(str, await _super2.execute(query, *args))
+            return cast(str, await _super2.execute(query, *args, timeout=timeout))
 
 
 _POOL_LOCKS: "WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = WeakKeyDictionary()

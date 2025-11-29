@@ -191,10 +191,12 @@ async def resolve_target_account_id(
 
     # 嘗試最高人民會議議長身分組
     try:
-        sa_cfg = await supreme_assembly_service.get_config(guild_id=guild_id)
-        if sa_cfg and target.id == sa_cfg.speaker_role_id:
-            account_id = await supreme_assembly_service.get_or_create_account_id(guild_id)
-            return Ok(account_id)
+        sa_res = await supreme_assembly_service.get_config(guild_id=guild_id)
+        if isinstance(sa_res, Ok):
+            sa_cfg = sa_res.value
+            if target.id == sa_cfg.speaker_role_id:
+                account_id = await supreme_assembly_service.get_or_create_account_id(guild_id)
+                return Ok(account_id)
     except SAGovernanceNotConfiguredError:
         pass
     except Exception:

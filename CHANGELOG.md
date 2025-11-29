@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2025-11-29
+
+### Added
+
+- **測試套件擴充**：
+  - 新增 `tests/infra/test_result_container_registration.py`：驗證依賴注入容器的註冊邏輯。
+  - 新增 `tests/commands/test_supreme_assembly_signature.py`：確保最高議會服務的方法簽章符合預期。
+  - 新增 `tests/config/test_settings.py`：增強設定檔載入與環境變數解析的測試覆蓋。
+  - 新增 `tests/performance/test_supreme_assembly_group_perf.py`：針對最高議會功能進行效能基準測試。
+
+### Changed
+
+- **核心架構重構 (Result Pattern)**：
+  - 全面導入 `Result[T, E]` 模式於服務層 (`Service Layer`)，取代傳統的例外拋出機制，提升錯誤處理的顯式性與安全性。
+  - 重構 `SupremeAssemblyService`、`CouncilService`、`TransferService` 等核心服務以回傳 `Result` 型別。
+  - 更新所有相關 Command Handler (`adjust`, `council`, `transfer`, `supreme_assembly`) 以適配新的 `Result` 回傳值。
+- **基礎建設更新**：
+  - 更新 `src/infra/result.py`：引入 `E_Error` 泛型變數，支援更精確的錯誤型別推導與裝飾器應用。
+  - 強化 `src/infra/di` 依賴注入系統以支援新的服務架構。
+
+### Removed
+
+- **代碼清理**：
+  - 移除 `JusticeService` (`src/bot/services/justice_service.py`) 及其相關測試與結果定義檔案，簡化系統複雜度。
+  - 移除過時的服務結果定義檔案 (`permission_service_result.py`, `supreme_assembly_service_result.py`)。
+
 ## [3.4.0] - 2025-11-28
 
 ### Added

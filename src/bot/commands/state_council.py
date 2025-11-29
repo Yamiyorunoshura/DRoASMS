@@ -44,6 +44,7 @@ from src.infra.events.state_council_events import (
 from src.infra.result import (
     Err,
     Error,
+    Ok,
     Result,
 )
 
@@ -1917,7 +1918,7 @@ class StateCouncilPanelView(PersistentPanelView):
             pass
 
     async def _justice_suspects_callback(self, interaction: discord.Interaction) -> None:
-        from src.bot.services.justice_service import JusticeService
+        # 使用 StateCouncilService 內併入的司法方法
 
         if interaction.user.id != self.author_id:
             await send_message_compat(interaction, content="僅限面板開啟者操作。", ephemeral=True)
@@ -1938,9 +1939,8 @@ class StateCouncilPanelView(PersistentPanelView):
             )
             return
 
-        justice_service = JusticeService()
         view = JusticeSuspectsPanelView(
-            justice_service=justice_service,
+            state_council_service=self.service,
             guild=self.guild,
             guild_id=self.guild_id,
             author_id=self.author_id,
@@ -6296,7 +6296,7 @@ class JusticeSuspectsPanelView(discord.ui.View):
     def __init__(
         self,
         *,
-        justice_service: Any,  # JusticeService
+        state_council_service: Any,  # StateCouncilService
         guild: discord.Guild,
         guild_id: int,
         author_id: int,
@@ -6304,7 +6304,7 @@ class JusticeSuspectsPanelView(discord.ui.View):
         page_size: int = 10,
     ) -> None:
         super().__init__(timeout=600)
-        self.justice_service = justice_service
+        self.state_council_service = state_council_service
         self.guild = guild
         self.guild_id = guild_id
         self.author_id = author_id
@@ -6312,7 +6312,7 @@ class JusticeSuspectsPanelView(discord.ui.View):
         self.page_size = max(5, page_size)
         self.current_page = 0
         self._suspects: list[Any] = []  # list[Suspect]
-        self._total_count = 0
+        self._total_count: int = 0
         self._message: discord.Message | None = None
         self._error_message: str | None = None
         # 以 suspect_id（UUID 字串）追蹤目前選取的嫌犯
@@ -6325,13 +6325,25 @@ class JusticeSuspectsPanelView(discord.ui.View):
 
     async def reload(self) -> None:
         try:
-            self._suspects, self._total_count = await self.justice_service.get_active_suspects(
+            res = await self.state_council_service.get_active_suspects(
                 guild_id=self.guild_id,
                 page=self.current_page + 1,
                 page_size=self.page_size,
                 status=self._status_filter,
             )
-            self._error_message = None
+            if isinstance(res, Err):
+                self._suspects = []
+                self._total_count = 0
+                # Cast to access error attribute
+                err_res = cast(Err[Any, str], res)
+                self._error_message = str(err_res.error)
+            else:
+                # Cast to access value attribute
+                ok_res = cast(Ok[Any, Any], res)
+                suspects_data: tuple[Sequence[Any], int] = ok_res.value
+                self._suspects = list(suspects_data[0])  # Convert Sequence to list
+                self._total_count = suspects_data[1]
+                self._error_message = None
         except Exception as exc:
             self._suspects = []
             self._total_count = 0
@@ -6748,12 +6760,15 @@ class JusticeSuspectsPanelView(discord.ui.View):
             member = self.guild.get_member(suspect.member_id)
             member_name = getattr(member, "display_name", f"用戶 ID: {suspect.member_id}")
             try:
-                await self.justice_service.charge_suspect(
+                r = await self.state_council_service.charge_suspect(
                     guild_id=self.guild_id,
                     suspect_id=int(suspect_id_str),
                     justice_member_id=self.author_id,
                     justice_member_roles=self.user_roles,
                 )
+                if hasattr(r, "is_err") and r.is_err():
+                    failures.append(f"{member_name}：{getattr(r, 'error', '起訴失敗')}")
+                    continue
                 # 記錄審計軌跡（最佳努力）
                 try:
                     service = StateCouncilService()
@@ -6817,12 +6832,15 @@ class JusticeSuspectsPanelView(discord.ui.View):
             member = self.guild.get_member(suspect.member_id)
             member_name = getattr(member, "display_name", f"用戶 ID: {suspect.member_id}")
             try:
-                await self.justice_service.revoke_charge(
+                r = await self.state_council_service.revoke_charge(
                     guild_id=self.guild_id,
                     suspect_id=int(suspect_id_str),
                     justice_member_id=self.author_id,
                     justice_member_roles=self.user_roles,
                 )
+                if hasattr(r, "is_err") and r.is_err():
+                    failures.append(f"{member_name}：{getattr(r, 'error', '撤銷失敗')}")
+                    continue
                 # 審計紀錄：撤銷起訴
                 try:
                     service = StateCouncilService()
@@ -6885,12 +6903,15 @@ class JusticeSuspectsPanelView(discord.ui.View):
             member = self.guild.get_member(suspect.member_id)
             member_name = getattr(member, "display_name", f"用戶 ID: {suspect.member_id}")
             try:
-                await self.justice_service.release_suspect(
+                r = await self.state_council_service.release_suspect(
                     guild_id=self.guild_id,
                     suspect_id=int(suspect_id_str),
                     justice_member_id=self.author_id,
                     justice_member_roles=self.user_roles,
                 )
+                if hasattr(r, "is_err") and r.is_err():
+                    failures.append(f"{member_name}：{getattr(r, 'error', '釋放失敗')}")
+                    continue
                 member_ids.append(int(suspect.member_id))
             except PermissionError as exc:
                 failures.append(f"{member_name}：{exc}")

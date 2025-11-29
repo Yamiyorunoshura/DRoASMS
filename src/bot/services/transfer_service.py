@@ -214,13 +214,8 @@ class TransferService:
                     return Err(mapped_error)
 
                 # Otherwise propagate DatabaseError as-is when possible.
-                if isinstance(error, DatabaseError):
-                    await tx.rollback()
-                    return Err(error)
-
-                # Fallback: wrap unknown Error into DatabaseError while preserving message.
                 await tx.rollback()
-                return Err(DatabaseError(f"Unexpected database error: {error}"))
+                return Err(error)
 
             db_result = gateway_result.unwrap()
             await tx.commit()

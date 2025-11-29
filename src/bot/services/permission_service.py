@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from src.bot.services.council_service import CouncilService, CouncilServiceResult
     from src.bot.services.state_council_service import StateCouncilService
     from src.bot.services.supreme_assembly_service import SupremeAssemblyService
-    from src.bot.services.supreme_assembly_service_result import SupremeAssemblyServiceResult
     from src.db.gateway.council_governance import CouncilConfig
     from src.db.gateway.supreme_assembly_governance import SupremeAssemblyConfig
 
@@ -248,7 +247,7 @@ class SupremeAssemblyPermissionChecker(PermissionChecker):
 
     def __init__(
         self,
-        supreme_assembly_service: "SupremeAssemblyService | SupremeAssemblyServiceResult",
+        supreme_assembly_service: "SupremeAssemblyService",
     ) -> None:
         self._supreme_assembly_service = supreme_assembly_service
 
@@ -368,7 +367,7 @@ class SupremePeoplesAssemblyPermissionChecker(PermissionChecker):
 
     def __init__(
         self,
-        supreme_assembly_service: "SupremeAssemblyService | SupremeAssemblyServiceResult",
+        supreme_assembly_service: "SupremeAssemblyService",
     ) -> None:
         self._supreme_assembly_service = supreme_assembly_service
 
@@ -445,7 +444,7 @@ class PermissionService:
         *,
         council_service: "CouncilServiceResult | CouncilService",
         state_council_service: "StateCouncilService",
-        supreme_assembly_service: "SupremeAssemblyService | SupremeAssemblyServiceResult",
+        supreme_assembly_service: "SupremeAssemblyService",
     ) -> None:
         council_checker = CouncilPermissionChecker(council_service)
         state_council_checker = StateCouncilPermissionChecker(state_council_service)

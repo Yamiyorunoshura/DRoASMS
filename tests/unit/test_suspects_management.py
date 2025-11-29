@@ -12,6 +12,7 @@ from src.bot.services.state_council_service import (
     StateCouncilService,
 )
 from src.db.gateway.state_council_governance import IdentityRecord
+from src.infra.result import Err, Ok
 
 
 class _DummyAcquire:
@@ -117,20 +118,9 @@ async def test_release_suspects_updates_roles(monkeypatch: pytest.MonkeyPatch) -
     guild.get_role.side_effect = lambda rid: suspect_role if rid == 11 else citizen_role
     guild.get_member.return_value = member
 
-    # JusticeService 替身：視所有嫌疑人為未起訴，並避免觸發真實資料庫
-    class _FakeJusticeService:
-        async def is_member_charged(self, *, guild_id: int, member_id: int) -> bool:  # noqa: D401
-            return False
-
-        async def mark_member_released_from_security(
-            self, *, guild_id: int, member_id: int
-        ) -> None:
-            return None
-
-    monkeypatch.setattr(
-        "src.bot.services.state_council_service.JusticeService",
-        _FakeJusticeService,
-    )
+    # 司法檢查改由 StateCouncilService 方法：未起訴，標記釋放成功
+    service.is_member_charged = AsyncMock(return_value=Ok(False))  # type: ignore[assignment]
+    service.mark_member_released_from_security = AsyncMock(return_value=Ok(None))  # type: ignore[assignment]
 
     results = await service.release_suspects(
         guild=guild,
@@ -220,21 +210,12 @@ async def test_release_suspects_blocks_charged_suspects(monkeypatch: pytest.Monk
     monkeypatch.setattr(service, "_cancel_auto_release_job", MagicMock())
     service.check_department_permission = AsyncMock(return_value=True)
 
-    # JusticeService 檢查時一律視為已起訴
-    class _FakeJusticeService:
-        async def is_member_charged(self, *, guild_id: int, member_id: int) -> bool:  # noqa: D401
-            assert guild_id == 999
-            return True
+    # 司法檢查改由 StateCouncilService 方法：視為已起訴
+    async def _is_member_charged(*, guild_id: int, member_id: int) -> Ok | Err:
+        assert guild_id == 999
+        return Ok(True)
 
-        async def mark_member_released_from_security(
-            self, *, guild_id: int, member_id: int
-        ) -> None:
-            return None
-
-    monkeypatch.setattr(
-        "src.bot.services.state_council_service.JusticeService",
-        _FakeJusticeService,
-    )
+    service.is_member_charged = AsyncMock(side_effect=_is_member_charged)  # type: ignore[assignment]
 
     suspect_role = MagicMock()
     suspect_role.id = 11

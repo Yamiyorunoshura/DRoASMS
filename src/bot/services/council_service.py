@@ -88,7 +88,7 @@ class CouncilService:
         CouncilError,
         exception_map={
             RuntimeError: CouncilError,
-            Exception: DatabaseError,
+            Exception: CouncilError,
         },
     )
     async def set_config(
@@ -121,7 +121,7 @@ class CouncilService:
         exception_map={
             GovernanceNotConfiguredError: GovernanceNotConfiguredError,
             RuntimeError: CouncilError,
-            Exception: DatabaseError,
+            Exception: CouncilError,
         },
     )
     async def get_config(self, *, guild_id: int) -> Result[CouncilConfig, CouncilError]:
@@ -146,7 +146,7 @@ class CouncilService:
             ValueError: CouncilValidationError,
             CouncilPermissionDeniedError: CouncilPermissionDeniedError,
             RuntimeError: ProposalLimitExceededError,
-            Exception: DatabaseError,
+            Exception: CouncilError,
         },
     )
     async def create_transfer_proposal(
@@ -266,7 +266,7 @@ class CouncilService:
             ValueError: CouncilValidationError,
             RuntimeError: InvalidProposalStatusError,
             CouncilPermissionDeniedError: VotingNotAllowedError,
-            Exception: DatabaseError,
+            Exception: CouncilError,
         },
     )
     async def vote(

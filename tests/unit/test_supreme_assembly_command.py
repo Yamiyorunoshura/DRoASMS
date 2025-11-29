@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime, timezone
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -108,7 +109,8 @@ class TestSupremeAssemblyCommand:
         assert group.name == "supreme_assembly"
         assert group.description == "最高人民會議治理指令群組"
         # 檢查是否包含基本指令
-        command_names = [cmd.name for cmd in group._children.values()]
+        # type: ignore[protected-access]
+        command_names = [cmd.name for cmd in cast(Any, group)._children.values()]
         expected_commands = ["config_speaker_role", "config_member_role", "panel"]
         for cmd in expected_commands:
             assert cmd in command_names, f"缺少指令: {cmd}"
@@ -146,7 +148,7 @@ class TestSupremeAssemblyCommand:
 
         # 獲取配置議長角色指令
         config_cmd = None
-        for cmd in group._children.values():
+        for cmd in cast(Any, group)._children.values():
             if hasattr(cmd, "name") and cmd.name == "config_speaker_role":
                 config_cmd = cmd
                 break
@@ -162,7 +164,7 @@ class TestSupremeAssemblyCommand:
 
         # 獲取配置議員角色指令
         config_cmd = None
-        for cmd in group._children.values():
+        for cmd in cast(Any, group)._children.values():
             if hasattr(cmd, "name") and cmd.name == "config_member_role":
                 config_cmd = cmd
                 break
@@ -176,7 +178,7 @@ class TestSupremeAssemblyCommand:
 
         # 獲取面板指令
         panel_cmd = None
-        for cmd in group._children.values():
+        for cmd in cast(Any, group)._children.values():
             if hasattr(cmd, "name") and cmd.name == "panel":
                 panel_cmd = cmd
                 break
@@ -345,6 +347,7 @@ class TestSupremeAssemblyPanelView:
                 # 檢查欄位中的餘額和議員信息
                 assert len(embed.fields) > 0
                 summary_field = embed.fields[0]
+                assert summary_field.value is not None
                 assert "餘額：" in summary_field.value
                 assert "議員" in summary_field.value
 
@@ -361,7 +364,7 @@ class TestSupremeAssemblyPanelView:
                 is_member=True,
             )
 
-            embed = view._build_help_embed()
+            embed = view._build_help_embed()  # type: ignore[protected-access]
 
             # 驗證說明嵌入內容
             assert embed.title == "ℹ️ 使用指引｜最高人民會議面板"
@@ -401,7 +404,7 @@ class TestSupremeAssemblyPanelView:
 
             # 驗證選單選項已更新
             assert hasattr(view, "_select")
-            assert len(view._select.options) > 0
+            assert len(view._select.options) > 0  # type: ignore[protected-access]
 
 
 @pytest.mark.asyncio
@@ -455,9 +458,9 @@ class TestSupremeAssemblyCommandIntegration:
         # 建立指令群組
         group = build_supreme_assembly_group(mock_service)
 
-        # 獲取配置指令
+        # 獲取配置議長角色指令
         config_cmd = None
-        for cmd in group._children.values():
+        for cmd in cast(Any, group)._children.values():
             if hasattr(cmd, "name") and cmd.name == "config_speaker_role":
                 config_cmd = cmd
                 break
@@ -500,9 +503,9 @@ class TestSupremeAssemblyCommandIntegration:
         # 建立指令群組
         group = build_supreme_assembly_group(mock_service)
 
-        # 獲取配置指令
+        # 獲取配置議員角色指令
         config_cmd = None
-        for cmd in group._children.values():
+        for cmd in cast(Any, group)._children.values():
             if hasattr(cmd, "name") and cmd.name == "config_member_role":
                 config_cmd = cmd
                 break
@@ -529,7 +532,7 @@ class TestSupremeAssemblyCommandIntegration:
 
         # 獲取配置指令
         config_cmd = None
-        for cmd in group._children.values():
+        for cmd in cast(Any, group)._children.values():
             if hasattr(cmd, "name") and cmd.name == "config_speaker_role":
                 config_cmd = cmd
                 break
@@ -557,7 +560,7 @@ class TestSupremeAssemblyCommandIntegration:
 
         # 獲取面板指令
         panel_cmd = None
-        for cmd in group._children.values():
+        for cmd in cast(Any, group)._children.values():
             if hasattr(cmd, "name") and cmd.name == "panel":
                 panel_cmd = cmd
                 break
@@ -1005,7 +1008,7 @@ class TestSupremeAssemblyBoundaryConditions:
             mock_service.list_active_proposals.assert_called_once()
 
             # 驗證選單不會過度增長（可能有限制）
-            assert len(view._select.options) <= 25  # Discord 選單選項限制
+            assert len(view._select.options) <= 25  # type: ignore[protected-access] # pyright: ignore[reportProtectedAccess]
 
 
 @pytest.mark.unit
@@ -1112,6 +1115,7 @@ class TestSupremePeoplesAssemblyPermissions:
         permission = result.value
         assert permission.allowed is False
         assert permission.permission_level is None
+        assert isinstance(permission.reason, str)
         assert "不具備" in permission.reason
 
     def test_peoples_assembly_permission_checker_create_proposal(
@@ -1360,10 +1364,10 @@ class TestSummonMemberSelectView:
         from src.bot.commands.supreme_assembly import SummonMemberSelectView
 
         # 設定模擬配置和成員
-        mock_service.get_config.return_value = sample_config
+        mock_service.get_config.return_value = Ok(sample_config)
 
         # 創建模擬成員列表
-        mock_members = []
+        mock_members: list[MagicMock] = []
         for i in range(5):
             member = MagicMock()
             member.id = _snowflake()
@@ -1396,7 +1400,7 @@ class TestSummonMemberSelectView:
         from src.bot.commands.supreme_assembly import SummonMemberSelectView
 
         # 設定模擬配置和空成員列表
-        mock_service.get_config.return_value = sample_config
+        mock_service.get_config.return_value = Ok(sample_config)
 
         mock_role = MagicMock()
         mock_role.members = []
@@ -1490,7 +1494,7 @@ class TestSummonOfficialSelectView:
         ):
             # 設定多個部門
             mock_registry = MagicMock()
-            mock_depts = []
+            mock_depts: list[MagicMock] = []
             for i, name in enumerate(["財政部", "國防部", "外交部"]):
                 dept = MagicMock()
                 dept.id = f"dept_{i}"
@@ -1541,8 +1545,8 @@ class TestSummonPermanentCouncilView:
         from src.bot.commands.supreme_assembly import SummonPermanentCouncilView
 
         # 創建模擬成員列表
-        mock_members = []
-        for i in range(3):
+        mock_members: list[MagicMock] = []
+        for i in range(5):
             member = MagicMock()
             member.id = _snowflake()
             member.display_name = f"Council Member {i}"

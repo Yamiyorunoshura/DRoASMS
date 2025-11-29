@@ -85,16 +85,7 @@ class AdjustmentService:
                     if mapped.is_err():
                         return Err(mapped.unwrap_err())
 
-                if isinstance(error, DatabaseError):
-                    return Err(error)
-
-                return Err(
-                    DatabaseError(
-                        message=getattr(error, "message", str(error)),
-                        context={"original_error": type(error).__name__},
-                        cause=error,
-                    )
-                )
+                return Err(error)
 
             record = result.unwrap()
             return Ok(self._to_result(record))

@@ -2,13 +2,7 @@
 
 from __future__ import annotations
 
-from src.bot.services.supreme_assembly_service_result import SupremeAssemblyServiceResult
-from src.bot.services.transfer_service import TransferService
-from src.db.gateway.supreme_assembly_governance import (
-    SupremeAssemblyGovernanceGateway,
-)
 from src.infra.di.container import DependencyContainer
-from src.infra.di.lifecycle import Lifecycle
 
 
 class ResultContainer:
@@ -25,16 +19,8 @@ class ResultContainer:
         registered in bootstrap_container(), so we do NOT register it here.
         StateCouncilService is now unified and registered in bootstrap_container().
         """
-        # SupremeAssemblyServiceResult - depends on SupremeAssemblyGovernanceGateway
-        # and TransferService
-        self._base.register(
-            SupremeAssemblyServiceResult,
-            factory=lambda: SupremeAssemblyServiceResult(
-                gateway=self._base.resolve(SupremeAssemblyGovernanceGateway),
-                transfer_service=self._base.resolve(TransferService),
-            ),
-            lifecycle=Lifecycle.SINGLETON,
-        )
+        # 已整併：不再註冊 SupremeAssemblyServiceResult（改以 SupremeAssemblyService 單一路徑）
+        # 本方法保留以維持相容 API，但不做任何註冊。
 
 
 __all__ = ["ResultContainer"]

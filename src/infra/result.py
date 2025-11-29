@@ -23,6 +23,7 @@ from typing import (
     TypeVar,
     Union,
     cast,
+    overload,
 )
 
 import structlog
@@ -33,6 +34,7 @@ T = TypeVar("T")
 E = TypeVar("E")
 U = TypeVar("U")
 F = TypeVar("F")
+E_Error = TypeVar("E_Error", bound="Error")
 
 P = ParamSpec("P")
 
@@ -376,9 +378,9 @@ async def _wrap_result(value: Result[T, E]) -> Result[T, E]:
 
 def _select_error_type(
     exc: Exception,
-    default_error_type: type[Error],
-    exception_map: Mapping[type[Exception], type[Error]] | None,
-) -> type[Error]:
+    default_error_type: type[E_Error],
+    exception_map: Mapping[type[Exception], type[E_Error]] | None,
+) -> type[E_Error]:
     """根據 exception_map 選擇適用的錯誤型別。"""
     if exception_map:
         for exc_type, err_type in exception_map.items():
@@ -387,11 +389,26 @@ def _select_error_type(
     return default_error_type
 
 
+@overload
+def returns_result(
+    *,
+    exception_map: Mapping[type[Exception], type[Error]] | None = None,
+) -> Callable[[Callable[P, T]], Callable[P, Result[T, Error]]]: ...
+
+
+@overload
+def returns_result(
+    error_type: type[E_Error],
+    *,
+    exception_map: Mapping[type[Exception], type[E_Error]] | None = None,
+) -> Callable[[Callable[P, T]], Callable[P, Result[T, E_Error]]]: ...
+
+
 def returns_result(
     error_type: type[Error] = Error,
     *,
     exception_map: Mapping[type[Exception], type[Error]] | None = None,
-) -> Callable[[Callable[P, T]], Callable[P, Result[T, Error]]]:
+) -> Any:
     """將可能丟出例外的同步函數包裝為回傳 Result。"""
 
     def decorator(func: Callable[P, T]) -> Callable[P, Result[T, Error]]:
@@ -415,11 +432,26 @@ def returns_result(
     return decorator
 
 
+@overload
+def async_returns_result(
+    *,
+    exception_map: Mapping[type[Exception], type[Error]] | None = None,
+) -> Callable[[Callable[P, Awaitable[T]]], Callable[P, Awaitable[Result[T, Error]]]]: ...
+
+
+@overload
+def async_returns_result(
+    error_type: type[E_Error],
+    *,
+    exception_map: Mapping[type[Exception], type[E_Error]] | None = None,
+) -> Callable[[Callable[P, Awaitable[T]]], Callable[P, Awaitable[Result[T, E_Error]]]]: ...
+
+
 def async_returns_result(
     error_type: type[Error] = Error,
     *,
     exception_map: Mapping[type[Exception], type[Error]] | None = None,
-) -> Callable[[Callable[P, Awaitable[T]]], Callable[P, Awaitable[Result[T, Error]]]]:
+) -> Any:
     """將可能丟出例外的非同步函數包裝為回傳 Result。
 
     設計細節：
@@ -437,7 +469,7 @@ def async_returns_result(
                 value = await func(*args, **kwargs)
                 # 若被包裝函式本身已採用 Result 型別，避免再次以 Ok 包起來
                 if isinstance(value, (Ok, Err)):
-                    return cast(Result[T, Error], value)
+                    return cast(Any, value)  # type: ignore[no-any-return]
                 return Ok(value)
             except Exception as exc:
                 selected_error_type = _select_error_type(exc, error_type, exception_map)
@@ -450,7 +482,7 @@ def async_returns_result(
                     error=str(error_obj),
                     context=error_obj.log_safe_context(),
                 )
-                return cast(Result[T, Error], Err(error_obj))
+                return Err(error_obj)
 
         return wrapper
 
