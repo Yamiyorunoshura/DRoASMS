@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.2] - 2025-12-04
+
+### Changed
+- **CI 工作流程優化**：移除容器配置，添加 uv 快取和 python-version 設定
+- **資料庫連接**：將服務主機名稱從 `postgres` 更新為 `localhost` 以適應 GitHub Actions 服務
+- **安裝指令**：在需要時使用 `sudo apt-get` 以適應 runner 環境兼容性
+
+### Removed
+- **冗餘工作流程**：移除獨立的 `cython-compile.yml` 和 `tests-matrix.yml` 工作流程
+
 ## [3.5.1] - 2025-11-29
 
 ### Added
