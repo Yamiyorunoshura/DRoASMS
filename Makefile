@@ -29,7 +29,8 @@ restart-in-dev-mode: ## 重啟機器人（開發環境）
 	docker compose down && make start-dev
 
 update: ## 更新專案
-	docker compose down && $(DOCKER_COMPOSE) --profile prod up -d --build --force-recreate
+	git pull origin main
+	docker compose build
 
 install: ## 安裝專案依賴
 	uv sync --group dev
@@ -58,14 +59,10 @@ format-check: ## 檢查程式碼格式是否正確（black --check）
 pre-commit-all: ## 對所有檔案執行 pre-commit 檢查
 	uv run pre-commit run --all-files
 
-compile-check: ## 執行 Cython 編譯檢查（增量編譯，錯誤不阻止執行）
-	@echo "🔍 執行 Cython 編譯檢查..."
-	@uv run python scripts/compile_modules.py compile --incremental; \
-	if [ $$? -eq 0 ]; then \
-		echo "✅ Cython 編譯檢查通過"; \
-	else \
-		echo "⚠️  Cython 編譯檢查發現錯誤，但不阻止 CI 繼續執行"; \
-	fi
+coverage:
+	uv run pytest --cov=src tests/
+	uv run coverage html
+	open htmlcov/index.html
 
 ci: ## 執行完整的 CI 檢查（包含所有測試與整合測試）
 	$(TEST_RUN) ci

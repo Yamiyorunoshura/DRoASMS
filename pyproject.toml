@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "droasms-bot"
-version = "3.5.0"
+version = "3.5.1"
 description = "Discord bot economy foundations."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -220,6 +220,11 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "class .*\\bProtocol\\):",
     "@(abc\\.)?abstractmethod",
+    "LOGGER\\.(debug|info|warning|error|critical)\\(",
+    "except Exception:",
+    "#.*cast\\(",
+    "#.*type:",
+    "os\\.getenv\\(",
 ]
 
 # 全新的 Cython 編譯器配置

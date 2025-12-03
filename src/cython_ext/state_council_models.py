@@ -85,7 +85,7 @@ class GovernmentAccount:
     updated_at: datetime
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(slots=True, frozen=True, init=False)
 class IdentityRecord:
     record_id: UUID | int
     guild_id: int
@@ -94,6 +94,47 @@ class IdentityRecord:
     reason: str | None
     performed_by: int
     performed_at: datetime
+
+    def __init__(
+        self,
+        *,
+        guild_id: int,
+        target_id: int,
+        action: str,
+        reason: str | None = None,
+        record_id: UUID | int | None = None,
+        id: UUID | int | None = None,
+        performed_by: int | None = None,
+        operator_id: int | None = None,
+        performed_at: datetime | None = None,
+        created_at: datetime | None = None,
+    ) -> None:
+        """身分操作紀錄模型。
+
+        - `record_id` 與 `id` 互為別名（以 `record_id` 為主）
+        - `performed_by` 與 `operator_id` 互為別名（以 `performed_by` 為主）
+        - `performed_at` 與 `created_at` 互為別名（以 `performed_at` 為主）
+
+        這讓 gateway / 測試可以使用較接近資料表欄位名稱的參數，同時保持服務層型別穩定。
+        """
+
+        # 主鍵與欄位歸一化
+        rid: UUID | int = record_id if record_id is not None else (id if id is not None else 0)
+        actor_raw: int | None = performed_by if performed_by is not None else operator_id
+        actor = int(actor_raw) if actor_raw is not None else 0
+        ts: datetime = (
+            performed_at
+            if performed_at is not None
+            else (created_at if created_at is not None else datetime.now())
+        )
+
+        object.__setattr__(self, "record_id", rid)
+        object.__setattr__(self, "guild_id", int(guild_id))
+        object.__setattr__(self, "target_id", int(target_id))
+        object.__setattr__(self, "action", str(action))
+        object.__setattr__(self, "reason", reason)
+        object.__setattr__(self, "performed_by", actor)
+        object.__setattr__(self, "performed_at", ts)
 
 
 @dataclass(slots=True, frozen=True)

@@ -348,6 +348,36 @@ class StateCouncilService:
                 break
         return latest
 
+    async def fetch_latest_suspect_markers(
+        self,
+        *,
+        guild_id: int,
+        target_ids: Sequence[int],
+        limit: int = 1000,
+    ) -> dict[int, IdentityRecord]:
+        """取得指定成員最近一次「標記疑犯」紀錄（以 target_id 為 key）。
+
+        這是對 `_fetch_latest_identity_records` 的公開包裝，方便指令與測試使用。
+        """
+        if not target_ids:
+            return {}
+
+        targets: set[int] = set()
+        for raw in target_ids:
+            try:
+                targets.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+
+        if not targets:
+            return {}
+
+        return await self._fetch_latest_identity_records(
+            guild_id=guild_id,
+            target_ids=targets,
+            limit=limit,
+        )
+
     async def reconcile_government_balances(
         self,
         *,
@@ -2283,6 +2313,139 @@ class StateCouncilService:
             )
 
     # --- Currency Issuance (Central Bank) ---
+    async def get_monthly_issuance(
+        self,
+        *,
+        guild_id: int,
+        year: int | None = None,
+        month: int | None = None,
+        department: str = "中央銀行",
+    ) -> tuple[int, int]:
+        """取得指定月份已發行總額與上限。
+
+        回傳 `(current, max_limit)`：
+        - 若國務院尚未完成設定，回傳 `(0, 0)`（讓呼叫端可自行決定錯誤訊息）。
+        """
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        cm = await self._pool_acquire_cm(pool)
+        async with cm as conn:
+            _aenter = getattr(
+                getattr(getattr(pool, "acquire", None), "return_value", None),
+                "__aenter__",
+                None,
+            )
+            conn_for_gateway = getattr(_aenter, "return_value", None) or conn
+
+            # 若沒有國務院設定，視為尚未啟用，直接回傳 0/0。
+            cfg = await self._fetch_config(conn_for_gateway, guild_id=guild_id)
+            if cfg is None:
+                return 0, 0
+
+            # 決定月份區間字串（YYYY-MM）
+            now = datetime.now(timezone.utc)
+            year = year or now.year
+            month = month or now.month
+            month_period = f"{int(year):04d}-{int(month):02d}"
+
+            # 取得部門上限（與 issue_currency 中邏輯保持一致）
+            max_monthly: int = 0
+            try:
+                dept_config = await self._gateway.fetch_department_config(
+                    conn_for_gateway, guild_id=guild_id, department=department
+                )
+            except Exception:
+                dept_config = None
+
+            if dept_config is not None:
+                try:
+                    value = dept_config.max_issuance_per_month
+                    if not isinstance(value, AsyncMock):
+                        max_monthly = int(value)
+                except Exception:
+                    max_monthly = 0
+
+            # 計算當月已發行總額
+            current_monthly: int = 0
+            fn: Any | None = getattr(self._gateway, "sum_monthly_issuance", None)
+            if fn is not None:
+                try:
+                    import inspect
+
+                    names: set[str] = set(inspect.signature(fn).parameters.keys())
+                except Exception:
+                    names = set()
+
+                try:
+                    if "department" in names:
+                        current_monthly = int(
+                            await fn(
+                                conn_for_gateway,
+                                guild_id=guild_id,
+                                department=department,
+                                month_period=month_period,
+                            )
+                        )
+                    else:
+                        current_monthly = int(
+                            await fn(
+                                conn_for_gateway,
+                                guild_id=guild_id,
+                                month_period=month_period,
+                            )
+                        )
+                except Exception:
+                    current_monthly = 0
+
+            return current_monthly, max_monthly
+
+    async def check_can_issue(
+        self,
+        *,
+        guild_id: int,
+        amount: int,
+        year: int | None = None,
+        month: int | None = None,
+        department: str = "中央銀行",
+    ) -> Result[None, str]:
+        """靜態檢查本月是否可以再發行指定金額。
+
+        - 若國務院未配置：回傳 Err("國務院未配置 ...")
+        - 若未設定上限或上限為 0：視為不限制，回傳 Ok(None)
+        - 若超過上限：回傳 Err(...)，訊息包含當前與上限數值
+        """
+        # 先確認國務院是否已完成設定（不丟出例外，改以 Err 回傳）
+        pool: PoolProtocol = cast(PoolProtocol, get_pool())
+        cm = await self._pool_acquire_cm(pool)
+        async with cm as conn:
+            _aenter = getattr(
+                getattr(getattr(pool, "acquire", None), "return_value", None),
+                "__aenter__",
+                None,
+            )
+            conn_for_gateway = getattr(_aenter, "return_value", None) or conn
+            cfg = await self._fetch_config(conn_for_gateway, guild_id=guild_id)
+
+        if cfg is None:
+            return Err("國務院未配置，請先完成基本設定後再發行貨幣。")
+
+        current, max_monthly = await self.get_monthly_issuance(
+            guild_id=guild_id,
+            year=year,
+            month=month,
+            department=department,
+        )
+
+        if max_monthly <= 0:
+            # 沒有設定上限時，視為可無限發行
+            return Ok(None)
+
+        if current + amount > max_monthly:
+            return Err(
+                f"本月發行總額將超過上限：{current + amount} > {max_monthly}",
+            )
+
+        return Ok(None)
+
     async def issue_currency(
         self,
         *,

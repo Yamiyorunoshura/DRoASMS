@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, cast
+from typing import Any, Awaitable, Callable, TypeVar, cast
 from uuid import UUID
 
 import discord
@@ -37,6 +37,8 @@ from src.infra.events.supreme_assembly_events import (
 )
 from src.infra.result import Err, Error, Ok, Result
 from src.infra.types.db import ConnectionProtocol, PoolProtocol
+
+T = TypeVar("T")
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -216,8 +218,16 @@ def build_supreme_assembly_group(
         method: str, **kwargs: Any
     ) -> tuple[Any | None, Error | Exception | None]:
         try:
-            value = await getattr(service, method)(**kwargs)
-            return value, None
+            result: Result[Any, Error] | Any = await getattr(service, method)(**kwargs)
+            if isinstance(result, Ok):
+                # Cast to access value property with proper type
+                ok_result = cast(Ok[Any, Error], result)
+                return ok_result.value, None
+            if isinstance(result, Err):
+                # Cast to access error property with proper type
+                err_result = cast(Err[Any, Error], result)
+                return None, err_result.error
+            return result, None
         except Exception as exc:  # pragma: no cover - defensive
             return None, exc
 
@@ -258,10 +268,14 @@ def build_supreme_assembly_group(
                 interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
             )
             return
-        existing_cfg, cfg_error = await _invoke_supreme(
+        existing_cfg: Any | None
+        cfg_error: Error | Exception | None = None
+        existing_cfg_result, cfg_error_result = await _invoke_supreme(
             "get_config",
             guild_id=interaction.guild_id,
         )
+        existing_cfg = existing_cfg_result
+        cfg_error = cfg_error_result
 
         bootstrapped = False
         member_role_id = 0
@@ -283,12 +297,16 @@ def build_supreme_assembly_group(
             )
             return
 
-        _, set_error = await _invoke_supreme(
+        _set_result: Any | None
+        set_error: Error | Exception | None = None
+        _set_result_result, set_error_result = await _invoke_supreme(
             "set_config",
             guild_id=interaction.guild_id,
             speaker_role_id=role.id,
             member_role_id=member_role_id,
         )
+        _set_result = _set_result_result
+        set_error = set_error_result
         if set_error is not None:
             await _reply_supreme_error(
                 interaction=interaction,
@@ -338,10 +356,14 @@ def build_supreme_assembly_group(
                 interaction, content="需要管理員或管理伺服器權限。", ephemeral=True
             )
             return
-        existing_cfg, cfg_error = await _invoke_supreme(
+        existing_cfg: Any | None
+        cfg_error: Error | Exception | None = None
+        existing_cfg_result, cfg_error_result = await _invoke_supreme(
             "get_config",
             guild_id=interaction.guild_id,
         )
+        existing_cfg = existing_cfg_result
+        cfg_error = cfg_error_result
 
         bootstrapped = False
         speaker_role_id = 0
@@ -363,12 +385,16 @@ def build_supreme_assembly_group(
             )
             return
 
-        _, set_error = await _invoke_supreme(
+        _set_result: Any | None
+        set_error: Error | Exception | None = None
+        _set_result_result, set_error_result = await _invoke_supreme(
             "set_config",
             guild_id=interaction.guild_id,
             speaker_role_id=speaker_role_id,
             member_role_id=role.id,
         )
+        _set_result = _set_result_result
+        set_error = set_error_result
         if set_error is not None:
             await _reply_supreme_error(
                 interaction=interaction,

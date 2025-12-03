@@ -36,7 +36,7 @@ from src.db.gateway.supreme_assembly_governance import (
     Proposal,
     SupremeAssemblyConfig,
 )
-from src.infra.result import Ok
+from src.infra.result import Err, Ok
 
 
 def _snowflake() -> int:
@@ -518,6 +518,99 @@ class TestSupremeAssemblyCommandIntegration:
         # 檢查基本權限驗證邏輯
         assert mock_interaction.user.guild_permissions.administrator is True
         assert mock_interaction.user.guild_permissions.manage_guild is True
+
+    async def test_config_speaker_role_handles_result_bootstrap(
+        self, mock_interaction: MagicMock, mock_role: MagicMock, mock_service: MagicMock
+    ) -> None:
+        """當 get_config 回傳 Err 時應能正常啟動並回覆成功訊息。"""
+
+        guild_id = mock_interaction.guild_id
+        mock_interaction.guild = MagicMock()
+        mock_interaction.user.id = _snowflake()
+
+        mock_service.get_config.return_value = Err(GovernanceNotConfiguredError("未配置"))
+
+        expected_config = SupremeAssemblyConfig(
+            guild_id=guild_id,
+            speaker_role_id=mock_role.id,
+            member_role_id=0,
+            created_at=datetime.now(tz=timezone.utc),
+            updated_at=datetime.now(tz=timezone.utc),
+        )
+        mock_service.set_config.return_value = Ok(expected_config)
+        mock_service.get_or_create_account_id = AsyncMock(return_value=987654321)
+
+        group = build_supreme_assembly_group(mock_service)
+        config_cmd = None
+        for cmd in cast(Any, group)._children.values():
+            if getattr(cmd, "name", None) == "config_speaker_role":
+                config_cmd = cmd
+                break
+
+        assert config_cmd is not None
+
+        with patch(
+            "src.bot.commands.supreme_assembly.send_message_compat", new_callable=AsyncMock
+        ) as mock_send:
+            await config_cmd.callback(mock_interaction, mock_role)
+
+        mock_service.set_config.assert_awaited_once_with(
+            guild_id=guild_id, speaker_role_id=mock_role.id, member_role_id=0
+        )
+        mock_service.get_or_create_account_id.assert_awaited_once_with(guild_id)
+
+        mock_send.assert_called_once()
+        kwargs = mock_send.call_args.kwargs
+        assert "已設定議長角色" in kwargs.get("content", "")
+        assert kwargs.get("ephemeral") is True
+
+    async def test_config_member_role_surfaces_set_config_err(
+        self, mock_interaction: MagicMock, mock_role: MagicMock, mock_service: MagicMock
+    ) -> None:
+        """set_config 回傳 Err 時應回覆錯誤而非成功訊息。"""
+
+        guild_id = mock_interaction.guild_id
+        mock_interaction.guild = MagicMock()
+        mock_interaction.user.id = _snowflake()
+
+        existing_config = SupremeAssemblyConfig(
+            guild_id=guild_id,
+            speaker_role_id=_snowflake(),
+            member_role_id=0,
+            created_at=datetime.now(tz=timezone.utc),
+            updated_at=datetime.now(tz=timezone.utc),
+        )
+        mock_service.get_config.return_value = Ok(existing_config)
+        mock_service.set_config.return_value = Err(PermissionDeniedError("缺少權限"))
+        mock_service.get_or_create_account_id = AsyncMock(return_value=123456789)
+
+        group = build_supreme_assembly_group(mock_service)
+        config_cmd = None
+        for cmd in cast(Any, group)._children.values():
+            if getattr(cmd, "name", None) == "config_member_role":
+                config_cmd = cmd
+                break
+
+        assert config_cmd is not None
+
+        with patch(
+            "src.bot.commands.supreme_assembly.send_message_compat", new_callable=AsyncMock
+        ) as mock_send:
+            await config_cmd.callback(mock_interaction, mock_role)
+
+        mock_service.set_config.assert_awaited_once_with(
+            guild_id=guild_id,
+            speaker_role_id=existing_config.speaker_role_id,
+            member_role_id=mock_role.id,
+        )
+
+        mock_send.assert_called_once()
+        kwargs = mock_send.call_args.kwargs
+        embed = kwargs.get("embed")
+        assert embed is not None
+        assert embed.title == "設定議員身分組失敗"
+        assert embed.description == "缺少權限"
+        assert kwargs.get("ephemeral") is True
 
     async def test_config_permissions_denied(
         self, mock_interaction: MagicMock, mock_service: MagicMock
